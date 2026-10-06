@@ -37,6 +37,8 @@ dist-ssr
 
 # Wrangler local state
 .wrangler/
+# Temporary output of apps/worker/scripts/check-types.mjs
+worker-configuration.check.d.ts
 
 # Claude Code local settings
 .claude/settings.local.json

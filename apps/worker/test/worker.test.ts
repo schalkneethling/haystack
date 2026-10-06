@@ -14,8 +14,13 @@ afterAll(async () => {
 });
 
 describe("worker", () => {
-  it("answers 404 while no routes exist", async () => {
-    const response = await server.fetch("/");
+  it.each([
+    ["GET", "/"],
+    ["GET", "/save?url=https://example.com/"],
+    ["GET", "/auth/callback"],
+    ["POST", "/bookmarks/1/delete"],
+  ])("answers 404 to %s %s while no routes exist", async (method, path) => {
+    const response = await server.fetch(path, { method });
 
     expect(response.status).toBe(404);
     expect(await response.text()).toBe("Not found");
