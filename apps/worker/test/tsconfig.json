@@ -1,0 +1,8 @@
+// Node-side code in this package: the tests and the Vite config.
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": [".", "../vite.config.ts"]
+}
