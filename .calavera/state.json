@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "profile": "default",
+  "integrations": [
+    "editorconfig",
+    "knip",
+    "html-validate",
+    "varlock",
+    "github-repository-controls",
+    "stylelint",
+    "stylelint-standard",
+    "stylelint-order",
+    "stylelint-baseline",
+    "stylelint-logical-css",
+    "css-property-type-validator"
+  ],
+  "files": [
+    ".editorconfig",
+    ".stylelintrc.json",
+    ".htmlvalidate.json",
+    ".htmlvalidateignore",
+    "knip.json",
+    ".github/repository-controls.json",
+    ".github/dependabot.yml",
+    "scripts/repository-controls.mjs",
+    "docs/repository-controls.md"
+  ],
+  "managedFiles": [
+    {
+      "path": ".editorconfig",
+      "hash": "3a15156"
+    },
+    {
+      "path": ".stylelintrc.json",
+      "hash": "20fa4a0"
+    },
+    {
+      "path": ".htmlvalidate.json",
+      "hash": "7423705"
+    },
+    {
+      "path": ".htmlvalidateignore",
+      "hash": "a07c739"
+    },
+    {
+      "path": "knip.json",
+      "hash": "0f92de4"
+    },
+    {
+      "path": ".github/repository-controls.json",
+      "hash": "7cf0553"
+    },
+    {
+      "path": ".github/dependabot.yml",
+      "hash": "73591e2"
+    },
+    {
+      "path": "scripts/repository-controls.mjs",
+      "hash": "9b9524f"
+    },
+    {
+      "path": "docs/repository-controls.md",
+      "hash": "acf0b9a"
+    }
+  ],
+  "aiArtifacts": [
+    {
+      "type": "skill",
+      "name": "frontend-engineering",
+      "source": "skill-frontend-engineering",
+      "path": ".agents/skills/frontend-engineering",
+      "hash": "c4b98ee"
+    },
+    {
+      "type": "skill",
+      "name": "frontend-security",
+      "source": "skill-frontend-security",
+      "path": ".agents/skills/frontend-security",
+      "hash": "f2b529c"
+    },
+    {
+      "type": "skill",
+      "name": "frontend-testing",
+      "source": "skill-frontend-testing",
+      "path": ".agents/skills/frontend-testing",
+      "hash": "6a9da71"
+    },
+    {
+      "type": "skill",
+      "name": "more-secure-dependabot-config",
+      "source": "skill-more-secure-dependabot-config",
+      "path": ".agents/skills/more-secure-dependabot-config",
+      "hash": "19407f0"
+    },
+    {
+      "type": "skill",
+      "name": "release-with-confidence",
+      "source": "skill-release-with-confidence",
+      "path": ".agents/skills/release-with-confidence",
+      "hash": "1686c7b"
+    },
+    {
+      "type": "agent",
+      "name": "technical-devils-advocate",
+      "source": "agent-technical-devils-advocate",
+      "target": "claude-code",
+      "path": ".agents/agents/claude-code/technical-devils-advocate.md",
+      "hash": "4737cee"
+    }
+  ]
+}

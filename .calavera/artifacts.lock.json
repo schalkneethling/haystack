@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "artifacts": [
+    {
+      "id": "skill-frontend-engineering",
+      "type": "skill",
+      "package": "@schalkneethling/calavera-skill-frontend-engineering",
+      "version": "0.2.2",
+      "resolved": "https://registry.npmjs.org/@schalkneethling/calavera-skill-frontend-engineering/-/calavera-skill-frontend-engineering-0.2.2.tgz",
+      "integrity": "sha512-Mk06mmKcEFd95/GNNOyYpoOO90a8Vmn8pdobMt/W8qPPcj8gn50+C1NUan/8WthXGqImR7+LTuyPeN2HxQOSzA==",
+      "tag": "latest",
+      "manifestVersion": 1,
+      "destination": ".agents/skills/frontend-engineering",
+      "payloadHash": "151843e8029247b93439bea3de7f3fbe93a7f41e20764098f77e2b700b2b2fca"
+    },
+    {
+      "id": "skill-frontend-security",
+      "type": "skill",
+      "package": "@schalkneethling/calavera-skill-frontend-security",
+      "version": "0.2.2",
+      "resolved": "https://registry.npmjs.org/@schalkneethling/calavera-skill-frontend-security/-/calavera-skill-frontend-security-0.2.2.tgz",
+      "integrity": "sha512-1xalTlNdupNIWZIS+TPKSJ1i6oEPzFYexKK7G87X5jBHGgOeBd6I7EIJwCctW6ztGr2ifI/WlqFsJulWK3yRVw==",
+      "tag": "latest",
+      "manifestVersion": 1,
+      "destination": ".agents/skills/frontend-security",
+      "payloadHash": "c729311d7615571958a1dcde7fd6f1efab13d6f6977edaef0398a12526f49b28"
+    },
+    {
+      "id": "skill-frontend-testing",
+      "type": "skill",
+      "package": "@schalkneethling/calavera-skill-frontend-testing",
+      "version": "0.2.2",
+      "resolved": "https://registry.npmjs.org/@schalkneethling/calavera-skill-frontend-testing/-/calavera-skill-frontend-testing-0.2.2.tgz",
+      "integrity": "sha512-Rez1B5/MM0leoSBDy4dHiyAmJpSpHzr58usKwI/CZtjP50DBzdcH73Lal3UdUq0NlLXyiMSPsDdBkMoQ821ZmA==",
+      "tag": "latest",
+      "manifestVersion": 1,
+      "destination": ".agents/skills/frontend-testing",
+      "payloadHash": "4a2ea9c7c746447add68540380b403503247735e6b2511c6139bce86cd050a6a"
+    },
+    {
+      "id": "skill-more-secure-dependabot-config",
+      "type": "skill",
+      "package": "@schalkneethling/calavera-skill-more-secure-dependabot-config",
+      "version": "0.2.1",
+      "resolved": "https://registry.npmjs.org/@schalkneethling/calavera-skill-more-secure-dependabot-config/-/calavera-skill-more-secure-dependabot-config-0.2.1.tgz",
+      "integrity": "sha512-8PPD+I1r6IOXAkcC7cUDl2plkda0WlaQl1g3fjArCXvqeVjZesHWHL0HKefRx9tE6mjIPAR9nvorlYIjVkijVQ==",
+      "tag": "latest",
+      "manifestVersion": 1,
+      "destination": ".agents/skills/more-secure-dependabot-config",
+      "payloadHash": "07faa859c3d2542307c863b0d47ec9e404c042124fa6fa7e30c3c8c32806763b"
+    },
+    {
+      "id": "skill-release-with-confidence",
+      "type": "skill",
+      "package": "@schalkneethling/calavera-skill-release-with-confidence",
+      "version": "0.2.2",
+      "resolved": "https://registry.npmjs.org/@schalkneethling/calavera-skill-release-with-confidence/-/calavera-skill-release-with-confidence-0.2.2.tgz",
+      "integrity": "sha512-QGWPKM4mAq9R/gUKLOuhttc84UKlcHSeX165kPVdgSy7gfXjnyFYsrxaTOpKKA5mVm5MhPNgdoE9KA7jSxi99g==",
+      "tag": "latest",
+      "manifestVersion": 1,
+      "destination": ".agents/skills/release-with-confidence",
+      "payloadHash": "1759717a9abd58b0b14a073d64ad320a3abe0a7897ff3325c428f298e01abb74"
+    },
+    {
+      "id": "agent-technical-devils-advocate",
+      "type": "agent",
+      "package": "@schalkneethling/calavera-agent-technical-devils-advocate",
+      "version": "0.2.2",
+      "resolved": "https://registry.npmjs.org/@schalkneethling/calavera-agent-technical-devils-advocate/-/calavera-agent-technical-devils-advocate-0.2.2.tgz",
+      "integrity": "sha512-RVouxttd0RqSd/wS4SuisnFaFKs+sgEBcgM80ekei3z3L/uLx2xjmBv5a2OperRD62udxIdNFCBfzOf6Qy/PsQ==",
+      "tag": "latest",
+      "manifestVersion": 1,
+      "target": "claude-code",
+      "destination": ".agents/agents/claude-code/technical-devils-advocate.md",
+      "payloadHash": "4737ceebed24eb8826c3faaed5d2b08830e2f92f44b04ad348ba999455307329"
+    }
+  ]
+}

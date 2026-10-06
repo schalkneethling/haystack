@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "repository": "schalkneethling/haystack",
+  "defaultBranch": "main",
+  "repositorySettings": {
+    "wiki": false,
+    "projects": false,
+    "mergeMethods": ["squash"],
+    "autoMerge": true,
+    "deleteBranchOnMerge": true,
+    "updateBranch": true
+  },
+  "workflowPermissions": {
+    "defaultWorkflowPermissions": "read",
+    "canApprovePullRequestReviews": false
+  },
+  "security": {
+    "dependabotAlerts": true,
+    "dependabotSecurityUpdates": true,
+    "codeqlDefaultSetup": {
+      "state": "configured",
+      "languages": ["actions", "javascript-typescript"],
+      "querySuite": "extended",
+      "threatModel": "remote",
+      "runnerType": "standard",
+      "runnerLabel": null
+    }
+  },
+  "mainRuleset": {
+    "name": "protect-default-branch",
+    "codeScanning": {
+      "alertsThreshold": "errors_and_warnings",
+      "securityAlertsThreshold": "medium_or_higher"
+    },
+    "requiredChecks": ["quality"],
+    "allowedMergeMethods": ["squash"]
+  },
+  "releaseEnvironment": null,
+  "manualControls": {
+    "dependabotMalwareAlerts": true,
+    "disableEnvironmentAdminBypass": false
+  }
+}

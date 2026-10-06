@@ -1,0 +1,28 @@
+{
+  "extends": ["stylelint-config-standard", "stylelint-plugin-logical-css/configs/recommended"],
+  "ignoreFiles": [
+    "coverage/**",
+    "dist/**",
+    "**/dist/**",
+    "**/dist-types/**",
+    "dist-web/**",
+    "node_modules/**"
+  ],
+  "plugins": [
+    "stylelint-order",
+    "stylelint-plugin-use-baseline",
+    "stylelint-plugin-logical-css",
+    "@schalkneethling/stylelint-plugin-css-property-type-validator"
+  ],
+  "rules": {
+    "order/properties-alphabetical-order": true,
+    "plugin/use-baseline": [
+      true,
+      {
+        "available": "newly",
+        "severity": "warning"
+      }
+    ],
+    "css-property-type-validator/valid-property-types": true
+  }
+}
