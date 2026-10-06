@@ -23,7 +23,7 @@
     "stylelint-order": "^8.1.1",
     "stylelint-plugin-logical-css": "^2.1.0",
     "stylelint-plugin-use-baseline": "^1.4.6",
-    "typescript": "~6.0.2",
+    "typescript": "~7.0.2",
     "varlock": "^1.21.1",
     "vite": "catalog:",
     "vite-plus": "catalog:"
