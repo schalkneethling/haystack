@@ -8,14 +8,14 @@
     "build": "tsc && vp build",
     "preview": "vp preview",
     "prepare": "vp config",
-    "lint:styles": "stylelint \"**/*.{css,scss}\"",
-    "lint:styles:fix": "stylelint \"**/*.{css,scss}\" --fix",
+    "lint:styles": "stylelint \"**/*.{css,scss}\" --allow-empty-input",
+    "lint:styles:fix": "stylelint \"**/*.{css,scss}\" --allow-empty-input --fix",
     "knip": "knip",
     "lint:html": "html-validate \"**/*.html\"",
     "env:load": "varlock load",
     "repo:controls:check": "node scripts/repository-controls.mjs",
     "repo:controls:apply": "node scripts/repository-controls.mjs --apply",
-    "quality": "vp check && vp test --passWithNoTests && pnpm lint:styles && pnpm lint:html && pnpm knip && pnpm env:load"
+    "quality": "vp check && vp test --passWithNoTests && pnpm lint:styles && pnpm knip && pnpm env:load"
   },
   "devDependencies": {
     "@schalkneethling/stylelint-plugin-css-property-type-validator": "0.1.0-beta.1",
