@@ -1,0 +1,16 @@
+{
+  "name": "@haystack/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "types": "wrangler types",
+    "types:check": "wrangler types --check"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.62.5",
+    "@types/node": "^24.19.1",
+    "vite": "catalog:",
+    "wrangler": "4.147.0"
+  }
+}

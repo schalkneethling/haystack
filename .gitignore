@@ -34,3 +34,9 @@ dist-ssr
 !.env.schema
 .env.local
 .env.*.local
+
+# Wrangler local state
+.wrangler/
+
+# Claude Code local settings
+.claude/settings.local.json

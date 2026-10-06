@@ -38,7 +38,7 @@ These decisions came out of the planning conversation and should not be reopened
 8. **Evidence goes in state.** The query and the bookmark are placed in the Jev `state`. The judgment goes in `instructions`, and the possible answers go in `criteria`. Bookmark content never goes in the criteria.
 9. **Google sign-in from day one, on the site only.** The site signs users in with Google (OpenID Connect). Because the extension only opens pages, the site session is the single authentication mechanism. `user_id` always comes from the session, never from the client. v1 restricts sign-in to an allowlist of email addresses, so real multi-user support exists without opening the service to strangers who would spend the LLM and Jev budget.
 10. **Voice input in v1 uses the browser's Web Speech recognition only.** Voice is progressive enhancement layered on the text input, which always works. Web Speech needs no server code, and Schalk searches mostly in Chrome. Whisper transcription on Workers AI is in the backlog for browsers without Web Speech, such as Firefox. (Revised 2026-10-06; this decision originally included both voice modes.)
-11. **Secrets** are managed with varlock and its 1Password plugin locally, and deployed with `varlock-wrangler`. Secret names are declared under `[secrets] required` in `wrangler.toml`.
+11. **Secrets** are managed with varlock and its 1Password plugin locally, and deployed with `varlock-wrangler`. Secret names are declared in `secrets.required` in `apps/worker/wrangler.jsonc`.
 12. **The share-style save flow.** `/save` serves the extension today and is designed to serve other entry points later (a bookmarklet, and the Web Share Target API for an installed web app) without changes to the flow.
 13. **No model routing.** Each provider adapter has its model chosen in configuration ahead of time. Jev does not route enrichment between models.
 14. **Capture ships first.** Milestone 1 is deployed with saving only. Bookmarks saved before Milestone 2 have no enrichment, and that is exactly the set the first enrichment run processes.
@@ -47,7 +47,7 @@ These decisions came out of the planning conversation and should not be reopened
 17. **Bookmarks are not editable after saving, but their owner can delete them.** The title and description are confirmed on the save form before submission, and that is the only chance to change them. Deletion is available from the recent saves list, the search results, and the review page at `/held`. See "Deleting bookmarks."
 18. **URLs that carry secrets must never be saved.** Haystack tells users plainly not to save them, and refuses the patterns it can recognize, in the extension before the URL is sent and again on the server. From Milestone 2, Jev adds a probabilistic check on a redacted form of the URL: it warns on the save form, and it gates enrichment so that nothing unchecked is sent to a third party. Jev never sees the raw URL. See "Sensitive URLs."
 19. **Agent access through MCP and WebMCP is part of the product, starting search-only.** Milestone 4 adds a WebMCP tool on the search page and a remote MCP server, both exposing only search. The remote server targets the stateless MCP specification (2026-07-28), so there are no protocol sessions to manage. To keep Milestone 4 cheap, search is built from Milestone 3 onward as one service, `searchBookmarks(userId, query, { channel, inputMode })`, that the web API, WebMCP, and MCP all call. `inputMode` is set only for the web channel, and it is passed so that the service can log it. See "Agent access."
-20. **Runtime switches use Cloudflare Flagship.** Settings that must change without a deploy are Flagship flags, read through the Worker binding. These settings are listed under "Secrets and configuration." Static configuration stays in `[vars]`, and secrets stay secrets. Flagship is in public beta. See Q13. (Added 2026-10-06.)
+20. **Runtime switches use Cloudflare Flagship.** Settings that must change without a deploy are Flagship flags, read through the Worker binding. These settings are listed under "Secrets and configuration." Static configuration stays in `vars`, and secrets stay secrets. Flagship is in public beta. See Q13. (Added 2026-10-06.)
 21. **v1 starts on Wrangler and moves to the `cf` CLI later.** Cloudflare's `cf` CLI (beta since 2026-09-28) will replace Wrangler. Wrangler gets 18 months of maintenance after the `cf` beta ends. v1 uses Wrangler, because `cf` does not yet support three things this project needs: varlock for secrets, a command that sets a single secret (it only uploads secrets from a file on disk with `--secrets-file`), and a confirmed replacement for Wrangler's `createTestHarness`. Choices made now favor a later `cf migrate`, such as building through the Cloudflare Vite plugin (Q10 (b)). See Q14 for when to switch. Do not run `cf dev`, `cf build`, or `cf deploy` in this repository before `cf migrate`. The `cf` documentation warns that they can overwrite `package.json` and `vite.config.ts`, and Calavera manages both files. `cf` resource commands, such as `cf d1 list`, are safe to use alongside Wrangler. (Added 2026-10-06.)
 
 ## Open questions
@@ -79,7 +79,7 @@ These must be answered before the phase that depends on them starts.
 - **Pure modules** run as ordinary `vp test` unit tests: the Valibot schemas, URL normalization, `detectSensitiveUrl`, `describeUrlForJudgment`, `match_text` derivation, the derived enrichment state, ranking, and the chunker. Most of the logic in this plan is in these modules, so keep it out of request handlers.
 - **Integration tests** also run under `vp test`, but they start the Worker in the local Workers runtime with Wrangler's `createTestHarness` (exported by `wrangler` 4.147.0, and not marked unstable). Tests send requests with `fetch`, apply migrations to the real local D1 with `applyD1Migrations`, seed and check rows through the D1 binding from `getEnv`, trigger the cron handler with `scheduled`, and set test-only `vars` and `secrets`. Before Phase 0 depends on them, read the harness's type declarations in the installed version again to confirm these methods. Do not build on `getPlatformProxy` or `unstable_startWorker` for this.
 
-In this model the Worker runs in a separate runtime from the test, so a test cannot replace `fetch` inside the Worker. The Jev, LLM provider, GitHub, and Google base URLs are therefore configuration in `[vars]`. Integration tests point them at a fixture Worker that serves recorded responses, run in the same harness. Phase 0 includes a spike test that proves the Worker can reach a fixture Worker this way. If it cannot, stop and revisit this decision before Phase 2.
+In this model the Worker runs in a separate runtime from the test, so a test cannot replace `fetch` inside the Worker. The Jev, LLM provider, GitHub, and Google base URLs are therefore configuration in `vars`. Integration tests point them at a fixture Worker that serves recorded responses, run in the same harness. Phase 0 includes a spike test that proves the Worker can reach a fixture Worker this way. If it cannot, stop and revisit this decision before Phase 2.
 
 (b) **How the Worker is built and run locally. Resolved 2026-10-06: the Cloudflare Vite plugin.** Either `vp dev` and `vp build` run the Worker through the Cloudflare Vite plugin, or Wrangler builds the Worker and Vite builds only the client assets. `@cloudflare/vite-plugin` 1.62.5 accepts `vite: ^8.0.0`, and Vite+ bundles Vite 8.3.1 as `@voidzero-dev/vite-plus-core`, so the plugin is probably compatible. A local run must confirm it. Confirm also how `varlock-wrangler` and the test harness fit with the choice. The recommendation is the Vite plugin. It is the build path that the `cf` CLI recommends, so it keeps the later move to `cf` small (decision 21). Use the stable 1.x plugin, which works with Wrangler, not the 2.0 beta that `cf` uses.
 
@@ -93,7 +93,7 @@ Calavera owns some files in this repository, so make tooling changes through Cal
 
 **Q13. Flagship availability and local behavior.** Flagship has been in public beta since 2026-05-26. Its documentation does not state the pricing, whether the Workers Free plan can use it, or whether a binding call counts as a subrequest. Confirm these. Local behavior also needs a check, because the sources disagree. The Flagship documentation says local Workers read the live Flagship app and there is no local flag store. The Wrangler 4.147.0 configuration schema has a `remote` option on the `flagship` binding, which chooses between the live app and a "local simulator." The Phase 0 spike finds out how the binding behaves under `createTestHarness`, and how a test sets a flag value. Integration tests must not depend on live flag values. If the harness cannot set flags, tests rely on the defaults described under "Secrets and configuration." _Blocks Phase 8, the first phase that reads a flag._
 
-**Q14. When to move from Wrangler to `cf`.** This does not block any phase. Check it at each milestone deploy. Move with `cf migrate` (run `cf migrate --dry-run` first) when all of the following hold: `cf` has left beta; varlock supports `cf`, or there is another way to pass secrets without writing them to a file; `cf` can set a single secret; and there is a test harness for `cf` projects with the capabilities used from `createTestHarness`. The move replaces `wrangler.toml` with `cloudflare.config.ts`, `[secrets] required` with `bindings.secret()`, and `wrangler d1 migrations apply` with `cf d1 migrations apply`. Decision 16's rule stays: one tool applies migrations. Confirm each command against the `cf` documentation at that time.
+**Q14. When to move from Wrangler to `cf`.** This does not block any phase. Check it at each milestone deploy. Move with `cf migrate` (run `cf migrate --dry-run` first) when all of the following hold: `cf` has left beta; varlock supports `cf`, or there is another way to pass secrets without writing them to a file; `cf` can set a single secret; and there is a test harness for `cf` projects with the capabilities used from `createTestHarness`. The move replaces `wrangler.jsonc` with `cloudflare.config.ts`, `secrets.required` with `bindings.secret()`, and `wrangler d1 migrations apply` with `cf d1 migrations apply`. Decision 16's rule stays: one tool applies migrations. Confirm each command against the `cf` documentation at that time.
 
 ## Architecture
 
@@ -141,7 +141,7 @@ Recommended repository layout. The layout is the target, and Q10 decides how the
 ```
 haystack/
   apps/
-    worker/            Worker source, Vitest tests
+    worker/            Worker source, wrangler.jsonc, tests
       src/db/schema.ts Drizzle schema (source of truth for tables)
       migrations/      SQL migrations generated by drizzle-kit, applied by wrangler
     web/               CSS, JS, and image assets (HTML is rendered by the Worker)
@@ -150,7 +150,6 @@ haystack/
     schemas/           Valibot schemas shared by worker and extension
   evals/               labeled query set and replay scripts (not unit tests)
   .env.schema          varlock schema
-  wrangler.toml
 ```
 
 ## Data model
@@ -625,38 +624,40 @@ No endpoint accepts a `user_id` from the client. Session IDs are compared by has
 
 `.env.schema` declares every variable for varlock, with sensitive values resolved from 1Password. Deploy and local development go through `varlock-wrangler`, which passes secrets through a named pipe and stdin rather than through process arguments.
 
-`wrangler.toml` declares the secret names under `[secrets] required`. Deploy fails if a required secret is missing, so the list grows with each milestone instead of listing everything up front. A secret is added to the list in the same change that first uses it.
+`apps/worker/wrangler.jsonc` declares the secret names in `secrets.required`. The project uses JSONC rather than TOML, because newer Wrangler configuration features are JSON-only. Deploy fails if a required secret is missing, so the list grows with each milestone instead of listing everything up front. A secret is added to the list in the same change that first uses it.
 
-```toml
-# Milestone 1: Capture
-[secrets]
-required = ["GOOGLE_CLIENT_SECRET"]
-
-# Milestone 2: Enrichment adds (the TypeSafe key also powers the sensitivity check)
-#   "TYPESAFE_API_KEY", "ANTHROPIC_API_KEY", "GITHUB_TOKEN"
-#   (plus the AI Gateway token, if the gateway is configured to require one)
-#
-# Post-v1, with the OpenAI and OpenRouter adapters:
-#   "OPENAI_API_KEY", "OPENROUTER_API_KEY"
+```jsonc
+{
+  // Milestone 1: Capture
+  "secrets": {
+    "required": ["GOOGLE_CLIENT_SECRET"],
+  },
+  // Milestone 2: Enrichment adds (the TypeSafe key also powers the sensitivity check)
+  //   "TYPESAFE_API_KEY", "ANTHROPIC_API_KEY", "GITHUB_TOKEN"
+  //   (plus the AI Gateway token, if the gateway is configured to require one)
+  //
+  // Post-v1, with the OpenAI and OpenRouter adapters:
+  //   "OPENAI_API_KEY", "OPENROUTER_API_KEY"
+}
 ```
 
-Non-secret static configuration, such as the base URLs for Jev, the LLM providers, GitHub, and Google (so integration tests can point them at fixtures), the AI Gateway account and gateway IDs, the model chosen for each provider, the sweep frequency and attempt limit, `SENSITIVE_WARN_THRESHOLD`, `GOOGLE_CLIENT_ID`, and `ALLOWED_EMAILS`, goes in `[vars]`. Never run `wrangler secret put` with a value in the command line.
+Non-secret static configuration, such as the base URLs for Jev, the LLM providers, GitHub, and Google (so integration tests can point them at fixtures), the AI Gateway account and gateway IDs, the model chosen for each provider, the sweep frequency and attempt limit, `SENSITIVE_WARN_THRESHOLD`, `GOOGLE_CLIENT_ID`, and `ALLOWED_EMAILS`, goes in `vars`. Never run `wrangler secret put` with a value in the command line.
 
-**Runtime switches** are Flagship flags (decision 20): the search questions (`both`, `noul`, or `score`), the display signal, the Noul and Score thresholds, the request mode, whether the sweep is enabled, and the sweep batch size. These are the settings that change during evaluation and operation. `SENSITIVE_WARN_THRESHOLD` and `ALLOWED_EMAILS` stay in `[vars]` on purpose. Changing the sensitivity threshold changes which bookmarks are Held, and changing the allowlist changes who can sign in, so both should be reviewed changes that go through a deploy.
+**Runtime switches** are Flagship flags (decision 20): the search questions (`both`, `noul`, or `score`), the display signal, the Noul and Score thresholds, the request mode, whether the sweep is enabled, and the sweep batch size. These are the settings that change during evaluation and operation. `SENSITIVE_WARN_THRESHOLD` and `ALLOWED_EMAILS` stay in `vars` on purpose. Changing the sensitivity threshold changes which bookmarks are Held, and changing the allowlist changes who can sign in, so both should be reviewed changes that go through a deploy.
 
 The Worker reads flags through a binding, declared as follows (field names checked against the Wrangler 4.147.0 configuration schema):
 
-```toml
-[[flagship]]
-binding = "FLAGS"
-app_id = "<APP_ID>"
+```jsonc
+{
+  "flagship": [{ "binding": "FLAGS", "app_id": "<APP_ID>" }],
+}
 ```
 
 One configuration module reads every flag once per request, or once per sweep run, and passes the values on. No other code calls the binding. Each flag's default value is a constant in that module, so the defaults are reviewed in code. The binding never throws, and it returns the default when evaluation fails, so a Flagship outage means the Worker runs with those defaults. The defaults are the safe values: both questions, the Score signal, batched mode, and the sweep enabled with a small batch size.
 
 ## Testing strategy
 
-**Unit and integration tests** run with `vp test` (Vitest 5, bundled with Vite+). See Q10 (a) for the reasons behind this approach. Pure modules have plain unit tests. Integration tests start the Worker in the local Workers runtime with Wrangler's `createTestHarness`, and use a real local D1 binding. Before running, they apply the same migration files as production with the harness's `applyD1Migrations`, so the tested schema is always the migrated schema. Jev, LLM, GitHub, and Google calls go to a fixture Worker in the same harness that serves recorded responses. The base URLs for those services are `[vars]`, which the tests override. No unit test calls a live paid API. Recorded fixtures can drift from the live APIs, so `evals/` also contains a small contract check. It sends one live request to each external API, validates the response with the same Valibot schemas the clients use, and runs before each milestone deploy.
+**Unit and integration tests** run with `vp test` (Vitest 5, bundled with Vite+). See Q10 (a) for the reasons behind this approach. Pure modules have plain unit tests. Integration tests start the Worker in the local Workers runtime with Wrangler's `createTestHarness`, and use a real local D1 binding. Before running, they apply the same migration files as production with the harness's `applyD1Migrations`, so the tested schema is always the migrated schema. Jev, LLM, GitHub, and Google calls go to a fixture Worker in the same harness that serves recorded responses. The base URLs for those services are `vars`, which the tests override. No unit test calls a live paid API. Recorded fixtures can drift from the live APIs, so `evals/` also contains a small contract check. It sends one live request to each external API, validates the response with the same Valibot schemas the clients use, and runs before each milestone deploy.
 
 **Markup validation.** Haystack has no `.html` files, because the Worker renders every page (decision 1). The `html-validate "**/*.html"` script therefore has no input, and it is not part of `pnpm quality`. Integration tests render each page through the test harness and validate the result with html-validate's programmatic API and the existing `.htmlvalidate.json` configuration (issue #3).
 
@@ -674,9 +675,9 @@ Goal: save bookmarks from the extension into production, so the collection start
 
 #### Phase 0: Scaffold
 
-Q10 is resolved. The Vite starter files and their `dev`, `build`, and `preview` scripts were removed in #2. Replace the starter `tsconfig.json`, which still includes the removed `src/` directory, and set up the repository layout, TypeScript, Drizzle with the D1 driver and drizzle-kit, Wrangler and the test harness described in Q10 (a), Playwright, varlock with 1Password, `varlock-wrangler`, the `[secrets]` declaration, and the D1 database with its initial migration generated from the Drizzle schema. Milestone 1 needs only the `users`, `sessions`, `auth_flows`, and `bookmarks` tables. The enrichment and search tables arrive in their own milestones through reviewed migrations.
+Q10 is resolved. The Vite starter files and their `dev`, `build`, and `preview` scripts were removed in #2. Phase 0 is split into issues #5 to #8. #5 replaces the starter `tsconfig.json` and sets up the workspace and the Worker shell. Set up the repository layout, TypeScript, Drizzle with the D1 driver and drizzle-kit, Wrangler and the test harness described in Q10 (a), Playwright, varlock with 1Password, `varlock-wrangler`, the `secrets.required` declaration, and the D1 database with its initial migration generated from the Drizzle schema. Milestone 1 needs only the `users`, `sessions`, `auth_flows`, and `bookmarks` tables. The enrichment and search tables arrive in their own milestones through reviewed migrations.
 
-Tests: a smoke test that the Worker responds through the test harness, a test that the migrated database contains the expected tables after `applyD1Migrations`, a spike test proving that the Worker can call a fixture Worker through a base URL set in `[vars]` (see Q10 (a)), a test that triggers the `scheduled()` handler through the harness, a spike test of the Flagship binding under the harness that answers Q13's local behavior question, a test that the static assets directory contains no HTML files (run against the build output, not the source tree), and `vp check` and the `quality` script passing on the scaffold.
+Tests: a smoke test that the Worker responds through the test harness, a test that the migrated database contains the expected tables after `applyD1Migrations`, a spike test proving that the Worker can call a fixture Worker through a base URL set in `vars` (see Q10 (a)), a test that triggers the `scheduled()` handler through the harness, a spike test of the Flagship binding under the harness that answers Q13's local behavior question, a test that the static assets directory contains no HTML files (run against the build output, not the source tree), and `vp check` and the `quality` script passing on the scaffold.
 Acceptance: `varlock-wrangler dev` runs locally with `GOOGLE_CLIENT_SECRET` resolved from 1Password, no secret value appears in process arguments, and a migration generated by drizzle-kit applies cleanly with `wrangler d1 migrations apply`.
 
 #### Phase 1: Capture payload schema
@@ -735,7 +736,7 @@ Acceptance: calling the module on a fixture bookmark produces a valid enrichment
 
 #### Phase 8: Enrichment sweep
 
-Implement `enrichPending`, the `match_text` refresh, expired session cleanup, the `scheduled()` handler, the Cron Trigger, and the configuration for the batch size, the attempt limit, the frequency, and the enabled flag, as described under "Enrichment sweep." The enabled flag and the batch size are Flagship flags, and the frequency and attempt limit are `[vars]`. Q3 and Q13 must be resolved first.
+Implement `enrichPending`, the `match_text` refresh, expired session cleanup, the `scheduled()` handler, the Cron Trigger, and the configuration for the batch size, the attempt limit, the frequency, and the enabled flag, as described under "Enrichment sweep." The enabled flag and the batch size are Flagship flags, and the frequency and attempt limit are `vars`. Q3 and Q13 must be resolved first.
 
 Tests: the derived states are computed correctly for each case in the state table, only Pending and Outdated bookmarks are selected, bookmarks at the attempt limit for the current version are skipped, raising `schema_version` resets the attempt count, one failing bookmark does not stop the batch, a second run with nothing outstanding makes no provider calls, raising `schema_version` makes previously enriched bookmarks eligible again while search can still use their older enrichment, raising `match_text_version` rewrites `match_text` without any provider call, expired sessions and `auth_flows` rows are deleted, the batch size is respected, a bookmark within its backoff window is skipped, a run stops early when its first calls all fail transiently, and the disabled flag makes the handler do nothing.
 Acceptance: `wrangler dev --test-scheduled` drains a local backlog of fixture bookmarks over several runs.

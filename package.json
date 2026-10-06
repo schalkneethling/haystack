@@ -12,7 +12,7 @@
     "env:load": "varlock load",
     "repo:controls:check": "node scripts/repository-controls.mjs",
     "repo:controls:apply": "node scripts/repository-controls.mjs --apply",
-    "quality": "vp check && vp test --passWithNoTests && pnpm lint:styles && pnpm knip && pnpm env:load"
+    "quality": "vp run -r types:check && vp check && vp test --passWithNoTests && pnpm lint:styles && pnpm knip && pnpm env:load"
   },
   "devDependencies": {
     "@schalkneethling/stylelint-plugin-css-property-type-validator": "0.1.0-beta.1",
@@ -25,7 +25,6 @@
     "stylelint-plugin-use-baseline": "^1.4.6",
     "typescript": "~7.0.2",
     "varlock": "^1.21.1",
-    "vite": "catalog:",
     "vite-plus": "catalog:"
   },
   "devEngines": {

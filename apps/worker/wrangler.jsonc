@@ -1,0 +1,7 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "haystack",
+  "main": "src/index.ts",
+  // The newest date the installed workerd (1.20261001.1) supports.
+  "compatibility_date": "2026-10-01",
+}
