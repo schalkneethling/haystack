@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "types": "wrangler types",
-    "types:check": "node scripts/check-types.mjs"
+    "types:check": "wrangler types --check"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.62.5",
