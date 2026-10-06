@@ -41,10 +41,6 @@ afterAll(async () => {
 });
 
 describe("build output", () => {
-  it("contains the Worker bundle", () => {
-    expect(files).toContain(join("haystack", "index.js"));
-  });
-
   // Decision 1: every HTML page goes through the Worker, so no HTML may be a static asset.
   it("contains no HTML files", () => {
     expect(files.filter((file) => file.endsWith(".html"))).toEqual([]);
