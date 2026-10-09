@@ -169,7 +169,15 @@ haystack/
 
 Use Drizzle with the D1 driver for the schema definition and all queries. Drizzle is a thin, SQL-shaped query builder, so queries stay close to the SQL below while gaining types inferred from the schema.
 
-Migrations follow one path. `drizzle-kit generate` writes a SQL migration from changes to `src/db/schema.ts` into `apps/worker/migrations`, a person reviews the generated SQL, and `wrangler d1 migrations apply` is the only tool that applies migrations, locally and remotely. Never use `drizzle-kit push` or `drizzle-kit migrate`, because two tools applying migrations would disagree about what has been applied. Before Phase 0 is complete, confirm in the current Drizzle documentation that the generated migration files work with Wrangler's migration tracking.
+Migrations follow one path. `drizzle-kit generate` writes a SQL migration from changes to `src/db/schema.ts` into `apps/worker/migrations`, a person reviews the generated SQL, and `wrangler d1 migrations apply` is the only tool that applies migrations, locally and remotely. Never use `drizzle-kit push` or `drizzle-kit migrate`, because two tools applying migrations would disagree about what has been applied. `drizzle.config.ts` has no database credentials, so those commands cannot run.
+
+Compatibility with Wrangler's migration tracking was confirmed in #7, on the stable lines (drizzle-orm 0.45, drizzle-kit 0.31) with Wrangler 4.147.0. Drizzle's [D1 page](https://orm.drizzle.team/docs/connect-cloudflare-d1) only says to set `migrations_dir` in the Wrangler configuration, and it already targets the Drizzle 1.0 release candidate. So the check used the tools themselves:
+
+- drizzle-kit 0.31 writes flat files (`migrations/0000_init.sql`), plus its own `migrations/meta/` folder.
+- Wrangler reads `migrations_dir/*.sql` by default (its `getD1MigrationFiles`), so it ignores `meta/`. It records each migration by file name in `d1_migrations`. Applying twice applies nothing the second time.
+- Drizzle 1.0 writes one folder per migration (`migrations/<name>/migration.sql`). Wrangler 4.147.0 supports that layout through `migrations_pattern`, and it warns about Drizzle's layout by name when that option is missing. The recorded names then change, so a switch must happen before the first production deploy, or with a planned rename of the rows in `d1_migrations`. See #13.
+
+Name each migration, because the name is recorded in `d1_migrations` permanently: `vp run db:generate --name <slug>`. Without `--name`, drizzle-kit picks a random name.
 
 From the first production deploy at the end of Milestone 1, the database holds real data. Every schema change after that point is a reviewed, forward-only migration. A destructive change (dropping or renaming a column) requires a note in the migration explaining what happens to existing rows.
 
@@ -177,7 +185,7 @@ Rolling back a Worker deployment does not roll back D1. Every migration must the
 
 Before Phase 6, confirm D1's point-in-time recovery (Time Travel) retention on the chosen plan, and write down the restore procedure. Also take a `wrangler d1 export` before each remote migration. From Milestone 1 onward, the bookmarks exist only in this database.
 
-**Conventions.** All timestamps are `INTEGER` Unix epoch milliseconds, and application code sets them. Do not use `datetime('now')` defaults. SQLite's `datetime('now')` gives `2026-10-05 21:14:00`, and JavaScript's `toISOString()` gives `2026-10-05T21:14:00.000Z`. If both formats are compared as text, for example `expires_at < ?` in the session lookup, the comparison is wrong on the same day, because a space sorts before `T`. One numeric representation removes that type of bug. Application code generates IDs with `crypto.randomUUID()`. Cascading deletes need foreign key enforcement. Confirm that D1 enforces foreign keys by default, and keep the deletion tests as the proof.
+**Conventions.** All timestamps are `INTEGER` Unix epoch milliseconds, and application code sets them. Do not use `datetime('now')` defaults. SQLite's `datetime('now')` gives `2026-10-05 21:14:00`, and JavaScript's `toISOString()` gives `2026-10-05T21:14:00.000Z`. If both formats are compared as text, for example `expires_at < ?` in the session lookup, the comparison is wrong on the same day, because a space sorts before `T`. One numeric representation removes that type of bug. Application code generates IDs with `crypto.randomUUID()`. Cascading deletes need foreign key enforcement. D1 enforces foreign keys by default, equivalent to SQLite's `PRAGMA foreign_keys = on` ([D1 foreign keys](https://developers.cloudflare.com/d1/sql-api/foreign-keys/)). The deletion tests in `apps/worker/test/db.test.ts` prove the schema's delete behavior in the local runtime: deleting a user deletes their sessions, and a user who still has bookmarks cannot be deleted.
 
 D1 does not support interactive transactions. Where several writes must succeed or fail together, such as inserting an enrichment and clearing its failure record, use Drizzle's `batch`, which D1 executes atomically.
 
