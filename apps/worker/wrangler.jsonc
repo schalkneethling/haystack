@@ -14,7 +14,7 @@
     },
   ],
   // Values come from .env.schema through varlock. A secret is added here in the change
-  // that first uses it.
+  // that first uses it (GOOGLE_CLIENT_SECRET is the exception, see #8).
   "secrets": {
     "required": ["GOOGLE_CLIENT_SECRET"],
   },

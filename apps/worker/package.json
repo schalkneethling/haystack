@@ -19,6 +19,7 @@
     "@varlock/1password-plugin": "^2.0.5",
     "@varlock/cloudflare-integration": "^1.6.1",
     "drizzle-kit": "^0.31.11",
+    "varlock": "^1.22.0",
     "vite": "catalog:",
     "wrangler": "4.147.0"
   }
