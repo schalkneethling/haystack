@@ -13,4 +13,11 @@
       "migrations_dir": "migrations",
     },
   ],
+  // Values come from .env.schema through varlock. A secret is added here in the change
+  // that first uses it (GOOGLE_CLIENT_SECRET is the exception, see #8).
+  "secrets": {
+    "required": ["GOOGLE_CLIENT_SECRET"],
+  },
+  // Runtime switches (plan decision 20). Only the configuration module reads this binding.
+  "flagship": [{ "binding": "FLAGS", "app_id": "0166d45b-a0b5-41e5-9eef-53c0b9987d81" }],
 }

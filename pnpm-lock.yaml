@@ -206,8 +206,8 @@ importers:
         specifier: ~7.0.2
         version: 7.0.2
       varlock:
-        specifier: ^1.21.1
-        version: 1.21.1
+        specifier: ^1.22.0
+        version: 1.22.0
       vite-plus:
         specifier: 'catalog:'
         version: 1.0.0(@types/node@24.19.1)(@vitest/ui@5.0.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1)
@@ -224,9 +224,18 @@ importers:
       '@types/node':
         specifier: ^24.19.1
         version: 24.19.1
+      '@varlock/1password-plugin':
+        specifier: ^2.0.5
+        version: 2.0.5(varlock@1.22.0)
+      '@varlock/cloudflare-integration':
+        specifier: ^1.6.1
+        version: 1.6.1(@cloudflare/vite-plugin@1.62.5(@types/node@24.19.1)(@voidzero-dev/vite-plus-core@1.0.0(@types/node@24.19.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1))(wrangler@4.147.0(@types/node@24.19.1)))(@voidzero-dev/vite-plus-core@1.0.0(@types/node@24.19.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1))(varlock@1.22.0)(wrangler@4.147.0(@types/node@24.19.1))
       drizzle-kit:
         specifier: ^0.31.11
         version: 0.31.11
+      varlock:
+        specifier: ^1.22.0
+        version: 1.22.0
       vite:
         specifier: 'catalog:'
         version: '@voidzero-dev/vite-plus-core@1.0.0(@types/node@24.19.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1)'
@@ -1727,22 +1736,45 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@varlock/native-helper-darwin@1.21.1':
-    resolution: {integrity: sha512-hh7lB6cO/qEVJTgPY5ebVicwnbM7ROkIWjOkZ+k6PYWaoyj+UrUTymF5nHkqzg0TaZ+EA5z/eboFoZhrbsOHGw==}
+  '@varlock/1password-plugin@2.0.5':
+    resolution: {integrity: sha512-QmthT9YxOocsp6J/EerOdeIwsm4DzKgnDoF7RdSiL8vDBy8Y0O0wSL0TWwp+3VxRfWjA7V7qGIzQkWRabu1e1Q==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      varlock: ^1.22.0
+
+  '@varlock/cloudflare-integration@1.6.1':
+    resolution: {integrity: sha512-INjIIlGSA3dld5b8Qrts/W7qnokjAuRIMt5+T+0jKiGrmsLtN/j0N2M4m9kiHg3Dz9l+SJNx+0v4azo6peeiDQ==}
+    engines: {node: '>=22'}
+    hasBin: true
+    peerDependencies:
+      '@cloudflare/vite-plugin': '>=1'
+      varlock: ^1.22.0
+      vite: '>=5'
+      wrangler: '>=3'
+    peerDependenciesMeta:
+      '@cloudflare/vite-plugin':
+        optional: true
+      vite:
+        optional: true
+      wrangler:
+        optional: true
+
+  '@varlock/native-helper-darwin@1.22.0':
+    resolution: {integrity: sha512-SseBFiqO9kugEc8Key8QsthdzrfUwj/vBRJeH4oC+gmT97I/aqmVjG6UH5a3n4RyLE2As2V+Es4aJoeNGav8dA==}
     os: [darwin]
 
-  '@varlock/native-helper-linux-arm64@1.21.1':
-    resolution: {integrity: sha512-ppN2UIrJKDVALBzZwVXzIokAch8j2eyeABEHZn5LkMS3auXBVdVVkqN9QPIe7/Ii91LIV5mwWMeVJrV1paTI5Q==}
+  '@varlock/native-helper-linux-arm64@1.22.0':
+    resolution: {integrity: sha512-n4xymSJvI3cw7ggGvaiqaVU0+/md3DinB14C7oYGQMMOHbw90XcM0rXTPM79xQRseBwEm5XOX3P8H6m6Lb1rkw==}
     cpu: [arm64]
     os: [linux]
 
-  '@varlock/native-helper-linux-x64@1.21.1':
-    resolution: {integrity: sha512-jAbIyjBJ0gyyg4C95P7KXufXtCR/K624Gib/6CUasO6dBnYVJ0SpbK2Ym41jgDYlJuYgkLKJuUHSrGNcAflzcA==}
+  '@varlock/native-helper-linux-x64@1.22.0':
+    resolution: {integrity: sha512-tWKekf01VSq3/1xrqEAZVUjGkw2gntR1oLOH6Djz9cZTYJ/WD8tB2yX6WbiFQicbMokJt5nxA2v67O+2UZTT+A==}
     cpu: [x64]
     os: [linux]
 
-  '@varlock/native-helper-win32-x64@1.21.1':
-    resolution: {integrity: sha512-HaEry0HnJPY+opHiNUgQvpQ1yFZMMIVmpLZExTinQXu9Im81aovoR1By6LQsx1H4qFDyeEqcq2glV74WzHCNyA==}
+  '@varlock/native-helper-win32-x64@1.22.0':
+    resolution: {integrity: sha512-vtoa2TDL45vGw7IFanI6FMPJDz2Brth8hOWeAttNW+NqGJiToOPX3NxCE/kFyXpSMtferuyp8rmsY7Q/cY8qZw==}
     os: [win32, linux]
 
   '@vitest/browser-preview@5.0.1':
@@ -2954,8 +2986,8 @@ packages:
   util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
 
-  varlock@1.21.1:
-    resolution: {integrity: sha512-Qfy8/3DBEDlPcfQ8gR/Qs7YA5ERmUT2g0GqMPwz/uL00UqP8/heAAUGrwoBO8H6l4tWjPG35Ews680I78Ci0Aw==}
+  varlock@1.22.0:
+    resolution: {integrity: sha512-xpGiBtpmk3mfbLfJWqR1yEiopcXdUMzWLyidiT2slTktB/LPQuWk3+zvhjO0jSL7pn0MiX8qt1F/hjEQD4E/WA==}
     engines: {bun: '>=1.3.3', node: '>=22.3.0'}
     hasBin: true
 
@@ -3977,16 +4009,28 @@ snapshots:
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
 
-  '@varlock/native-helper-darwin@1.21.1':
+  '@varlock/1password-plugin@2.0.5(varlock@1.22.0)':
+    dependencies:
+      varlock: 1.22.0
+
+  '@varlock/cloudflare-integration@1.6.1(@cloudflare/vite-plugin@1.62.5(@types/node@24.19.1)(@voidzero-dev/vite-plus-core@1.0.0(@types/node@24.19.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1))(wrangler@4.147.0(@types/node@24.19.1)))(@voidzero-dev/vite-plus-core@1.0.0(@types/node@24.19.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1))(varlock@1.22.0)(wrangler@4.147.0(@types/node@24.19.1))':
+    dependencies:
+      varlock: 1.22.0
+    optionalDependencies:
+      '@cloudflare/vite-plugin': 1.62.5(@types/node@24.19.1)(@voidzero-dev/vite-plus-core@1.0.0(@types/node@24.19.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1))(wrangler@4.147.0(@types/node@24.19.1))
+      vite: '@voidzero-dev/vite-plus-core@1.0.0(@types/node@24.19.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1)'
+      wrangler: 4.147.0(@types/node@24.19.1)
+
+  '@varlock/native-helper-darwin@1.22.0':
     optional: true
 
-  '@varlock/native-helper-linux-arm64@1.21.1':
+  '@varlock/native-helper-linux-arm64@1.22.0':
     optional: true
 
-  '@varlock/native-helper-linux-x64@1.21.1':
+  '@varlock/native-helper-linux-x64@1.22.0':
     optional: true
 
-  '@varlock/native-helper-win32-x64@1.21.1':
+  '@varlock/native-helper-win32-x64@1.22.0':
     optional: true
 
   '@vitest/browser-preview@5.0.1(@voidzero-dev/vite-plus-core@1.0.0(@types/node@24.19.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1))(vitest@5.0.1)':
@@ -5074,12 +5118,12 @@ snapshots:
 
   util-deprecate@1.0.2: {}
 
-  varlock@1.21.1:
+  varlock@1.22.0:
     optionalDependencies:
-      '@varlock/native-helper-darwin': 1.21.1
-      '@varlock/native-helper-linux-arm64': 1.21.1
-      '@varlock/native-helper-linux-x64': 1.21.1
-      '@varlock/native-helper-win32-x64': 1.21.1
+      '@varlock/native-helper-darwin': 1.22.0
+      '@varlock/native-helper-linux-arm64': 1.22.0
+      '@varlock/native-helper-linux-x64': 1.22.0
+      '@varlock/native-helper-win32-x64': 1.22.0
 
   vite-plus@1.0.0(@types/node@24.19.1)(@vitest/ui@5.0.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1):
     dependencies:

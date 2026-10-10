@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "varlock-wrangler dev",
     "types": "wrangler types",
     "types:check": "wrangler types --check",
     "db:generate": "drizzle-kit generate",
@@ -15,7 +16,10 @@
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.62.5",
     "@types/node": "^24.19.1",
+    "@varlock/1password-plugin": "^2.0.5",
+    "@varlock/cloudflare-integration": "^1.6.1",
     "drizzle-kit": "^0.31.11",
+    "varlock": "^1.22.0",
     "vite": "catalog:",
     "wrangler": "4.147.0"
   }
