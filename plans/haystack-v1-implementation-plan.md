@@ -104,7 +104,15 @@ Calavera owns some files in this repository, so make tooling changes through Cal
 
 **Q12. D1 limits and search logging volume.** Every search writes one `search_answers` row per candidate and reads every enriched bookmark. For example, 1,000 bookmarks and 50 searches a day is 50,000 rows written and more than 50,000 rows read each day, before the sweep and sessions are counted. Verify the current D1 limits on the chosen plan: rows written and rows read per day, storage per database, and bound parameters per statement (this sets how many answer rows go in one insert). If the limits are close, add a retention window for `search_answers` (for example, keep only runs that are labeled or newer than 90 days) before Phase 11. Do not sample, because sampling stops offline replay. _Blocks Phase 11._
 
-**Q13. Flagship availability and local behavior.** Flagship has been in public beta since 2026-05-26. Its documentation does not state the pricing, whether the Workers Free plan can use it, or whether a binding call counts as a subrequest. Confirm these. Local behavior also needs a check, because the sources disagree. The Flagship documentation says local Workers read the live Flagship app and there is no local flag store. The Wrangler 4.147.0 configuration schema has a `remote` option on the `flagship` binding, which chooses between the live app and a "local simulator." An experiment in #8 finds out how the binding behaves under `createTestHarness`, and how a test sets a flag value. Record the result here, and do not keep the experiment as a test. Integration tests must not depend on live flag values. If the harness cannot set flags, tests rely on the defaults described under "Secrets and configuration." _Blocks Phase 8, the first phase that reads a flag._
+**Q13. Flagship availability and local behavior.** Flagship has been in public beta since 2026-05-26. Its documentation does not state the pricing, whether the Workers Free plan can use it, or whether a binding call counts as a subrequest. Confirm these. Local behavior also needs a check, because the sources disagree. The Flagship documentation says local Workers read the live Flagship app and there is no local flag store. The Wrangler 4.147.0 configuration schema has a `remote` option on the `flagship` binding, which chooses between the live app and a "local simulator." An experiment in #8 found out how the binding behaves under `createTestHarness`, and how a test sets a flag value. It was not kept as a test.
+
+**Local behavior, resolved 2026-10-10 (#8)**, with Wrangler 4.147.0 and Miniflare 5.20261001.0:
+
+- Without `remote: true`, the binding uses Miniflare's local simulator, both under `createTestHarness` and under `varlock-wrangler dev`, where the binding table shows `FLAGS … Flagship local`. The simulator keeps flags in a local Durable Object and evaluates them with its own copy of the rules engine. It never contacts the live app. The harness starts with empty storage, so every flag is missing.
+- A missing flag returns the default passed by the caller. `getBooleanDetails` reports `reason: "ERROR"` and `errorCode: "FLAG_NOT_FOUND"`, and the call does not throw.
+- A test can set a flag only through an internal RPC method on the binding, `FLAGS["FlagshipBinding::admin_api"]()`, whose `putFlag` and `createFlag` write to the simulator. Neither the harness types nor the Local Explorer API documents a way to set flags. Tests do not build on the internal method. Integration tests rely on the defaults described under "Secrets and configuration", which is the fallback this question planned for.
+
+**Still open:** pricing, whether the Workers Free plan can use Flagship, and whether a binding call counts as a subrequest. _These block Phase 8, the first phase that reads a flag._
 
 **Q14. When to move from Wrangler to `cf`.** This does not block any phase. Check it at each milestone deploy. Move with `cf migrate` (run `cf migrate --dry-run` first) when all of the following hold: `cf` has left beta; varlock supports `cf`, or there is another way to pass secrets without writing them to a file; `cf` can set a single secret; and there is a test harness for `cf` projects with the capabilities used from `createTestHarness`. The move replaces `wrangler.jsonc` with `cloudflare.config.ts`, `secrets.required` with `bindings.secret()`, and `wrangler d1 migrations apply` with `cf d1 migrations apply`. Decision 16's rule stays: one tool applies migrations. Confirm each command against the `cf` documentation at that time.
 
@@ -162,7 +170,7 @@ haystack/
   packages/
     schemas/           Valibot schemas shared by worker and extension
   evals/               labeled query set and replay scripts (not unit tests)
-  .env.schema          varlock schema
+  .env.schema          varlock schema (shared items; apps/worker/.env.schema imports it)
 ```
 
 ## Data model
@@ -643,7 +651,9 @@ No endpoint accepts a `user_id` from the client. Session IDs are compared by has
 
 ## Secrets and configuration
 
-`.env.schema` declares every variable for varlock, with sensitive values resolved from 1Password. Deploy and local development go through `varlock-wrangler`, which passes secrets through a named pipe and stdin rather than through process arguments.
+`.env.schema` declares every variable for varlock, with sensitive values resolved from 1Password. varlock resolves a schema from the directory where it runs. The root `.env.schema` holds shared items (`APP_ENV`), and `apps/worker/.env.schema` imports it with `@import(../../)` and declares the Worker's own variables and the 1Password plugin. The root `varlock load` in `quality` therefore needs no 1Password access, and CI needs no secrets. Locally, the 1Password desktop app authenticates (`allowAppAuth=forEnv(development)`, account `my.1password.com`). Deploys use a service account token in `OP_TOKEN`.
+
+Deploy and local development go through `varlock-wrangler`: `vp run dev` in `apps/worker` runs `varlock-wrangler dev`. varlock passes the resolved values to Wrangler through a named pipe (`--env-file` pointing at a FIFO), so they appear neither on disk nor in process arguments. This was verified in #8. Wrangler then loads them into its own `process.env`, so the local `workerd` processes inherit the secret in their environment, which only the same user can read. `apps/worker/vite.config.ts` keeps the plain `cloudflare()` plugin and not varlock's Vite wrapper. The wrapper resolves every variable when the Vite configuration loads, so every build, including the build test in CI, would need 1Password. #15 revisits this choice when Phase 3 adds web assets.
 
 `apps/worker/wrangler.jsonc` declares the secret names in `secrets.required`. Deploy fails if a required secret is missing, so the list grows with each milestone instead of listing everything up front. A secret is added to the list in the same change that first uses it.
 
@@ -698,7 +708,7 @@ Goal: save bookmarks from the extension into production, so the collection start
 
 Q10 is resolved. The Vite starter files and their `dev`, `build`, and `preview` scripts were removed in #2. Phase 0 is split into issues #5 to #8. #5 sets up the workspace layout, TypeScript, Wrangler, the Cloudflare Vite plugin, and the test harness described in Q10 (a). Playwright is set up in #11, before Phase 3. The remaining steps set up Drizzle with the D1 driver and drizzle-kit, varlock with 1Password, `varlock-wrangler`, the `secrets.required` declaration, and the D1 database with its initial migration generated from the Drizzle schema. Milestone 1 needs only the `users`, `sessions`, `auth_flows`, and `bookmarks` tables. The enrichment and search tables arrive in their own milestones through reviewed migrations.
 
-Tests: a smoke test that the Worker responds through the test harness, a test that the migrated database contains the expected tables after `applyD1Migrations`, a test that the static assets directory contains no HTML files (run against the build output, not the source tree), and `vp check` and the `quality` script passing on the scaffold. The Q10 (a) experiments are recorded in Q10 (a). The Q13 experiment is recorded in Q13 when #8 runs. Neither is kept as a test.
+Tests: a smoke test that the Worker responds through the test harness, a test that the migrated database contains the expected tables after `applyD1Migrations`, a test that the static assets directory contains no HTML files (run against the build output, not the source tree), and `vp check` and the `quality` script passing on the scaffold. The Q10 (a) experiments are recorded in Q10 (a). The Q13 experiment is recorded in Q13. Neither is kept as a test.
 Acceptance: `varlock-wrangler dev` runs locally with `GOOGLE_CLIENT_SECRET` resolved from 1Password, no secret value appears in process arguments, and a migration generated by drizzle-kit applies cleanly with `wrangler d1 migrations apply`.
 
 #### Phase 1: Capture payload schema

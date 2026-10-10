@@ -24,7 +24,7 @@
     "stylelint-plugin-logical-css": "^2.1.0",
     "stylelint-plugin-use-baseline": "^1.4.6",
     "typescript": "~7.0.2",
-    "varlock": "^1.21.1",
+    "varlock": "^1.22.0",
     "vite-plus": "catalog:"
   },
   "devEngines": {
