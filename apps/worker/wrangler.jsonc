@@ -4,4 +4,13 @@
   "main": "src/index.ts",
   // The newest date the installed workerd (1.20261001.1) supports.
   "compatibility_date": "2026-10-01",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "haystack",
+      "database_id": "e899dd90-3f7f-424f-bd6f-f4f93577eb1e",
+      // Written by drizzle-kit generate, applied only by wrangler d1 migrations apply.
+      "migrations_dir": "migrations",
+    },
+  ],
 }

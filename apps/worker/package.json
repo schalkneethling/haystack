@@ -5,11 +5,17 @@
   "type": "module",
   "scripts": {
     "types": "wrangler types",
-    "types:check": "wrangler types --check"
+    "types:check": "wrangler types --check",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.4"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.62.5",
     "@types/node": "^24.19.1",
+    "drizzle-kit": "^0.31.11",
     "vite": "catalog:",
     "wrangler": "4.147.0"
   }
