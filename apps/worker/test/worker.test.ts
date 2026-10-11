@@ -13,13 +13,13 @@ afterAll(async () => {
   await server.close();
 });
 
+// Smoke test: the Worker starts and answers. Routes behind the session gate are covered in
+// auth.test.ts.
 describe("worker", () => {
   it.each([
-    ["GET", "/"],
-    ["GET", "/save?url=https://example.com/"],
-    ["GET", "/auth/callback"],
-    ["POST", "/bookmarks/1/delete"],
-  ])("answers 404 to %s %s while no routes exist", async (method, path) => {
+    ["GET", "/auth/unknown"],
+    ["GET", "/auth/callback-not-yet"],
+  ])("answers 404 to %s %s", async (method, path) => {
     const response = await server.fetch(path, { method });
 
     expect(response.status).toBe(404);

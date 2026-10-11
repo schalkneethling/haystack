@@ -673,7 +673,12 @@ On success, the server creates a session with a random ID, stores only its SHA-2
 
 Sessions last 30 days and slide: a request in the second half of a session's life extends its expiry, so the database is not written on every request. Every request also checks the session user's email against `ALLOWED_EMAILS`, so removing an address takes effect immediately rather than when the session expires. The allowlist check needs the email stored on the user row, which is refreshed at each sign-in. Expired sessions are deleted by the scheduled handler once it exists in Milestone 2. Until then, expired rows are ignored by the session lookup.
 
-Every page and API route except `/auth/*` requires a session. Unauthenticated page requests redirect to sign-in, and unauthenticated API requests return 401. Static assets (CSS, JavaScript, fonts, images) are public, and must never contain user data.
+Every page and API route except `/auth/*` requires a session. Unauthenticated page requests redirect to sign-in, and unauthenticated API requests return 401. A page request is a GET or HEAD whose `Accept` header includes `text/html`; every other request counts as an API request. Implemented in #25:
+
+- The cookie is `__Host-session`. The stored hash is hex SHA-256 of a 32-byte random ID, base64url-encoded.
+- `ALLOWED_EMAILS` is a comma-separated `vars` entry, matched case-insensitively.
+- The `Origin` check applies to every method other than GET, HEAD, and OPTIONS, including `/auth/*`.
+- Sign-out is `POST /auth/sign-out`, which redirects to `/auth/signed-out`. Static assets (CSS, JavaScript, fonts, images) are public, and must never contain user data.
 
 By default, Workers serves a matching static asset without running the Worker. Keep all HTML out of the assets directory so that every page goes through the Worker. If an HTML route must ever live in the assets directory, configure Wrangler to run the Worker first for that path (verify the current `run_worker_first` configuration) and add a test proving it redirects without a session.
 
