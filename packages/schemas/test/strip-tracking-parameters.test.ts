@@ -29,6 +29,11 @@ const cases: [string, string, string][] = [
     "https://example.com/a?b=1",
   ],
   [
+    "removes a tracking key with a valid and an invalid escape",
+    "https://example.com/a?utm%5Fsource%zz=x&b=1",
+    "https://example.com/a?b=1",
+  ],
+  [
     "keeps the order of other parameters",
     "https://example.com/a?z=1&utm_id=x&a=2",
     "https://example.com/a?z=1&a=2",

@@ -24,22 +24,16 @@ export const TRACKING_PARAMETERS: readonly string[] = Object.freeze([
 
 const trackingParameters = new Set(TRACKING_PARAMETERS);
 
-// Keys as a server reads them: `+` is a space, and percent-escapes are decoded.
-function decodeKey(rawKey: string): string {
-  try {
-    return decodeURIComponent(rawKey.replaceAll("+", " "));
-  } catch {
-    return rawKey;
-  }
-}
-
 function isTrackingKey(key: string): boolean {
   const lowerKey = key.toLowerCase();
   return lowerKey.startsWith("utm_") || trackingParameters.has(lowerKey);
 }
 
+// The key as a server reads it, with URLSearchParams decoding: `+` is a space, valid
+// percent-escapes are decoded, and invalid ones (`%zz`) stay as written. A pair contains no
+// `&`, so it parses to at most one entry.
 function keyOf(pair: string): string {
-  return decodeKey(pair.split("=", 1)[0] ?? "");
+  return new URLSearchParams(pair).keys().next().value ?? "";
 }
 
 // Each pair stays as the URL parser serialized it, so percent-encoding is not normalized.

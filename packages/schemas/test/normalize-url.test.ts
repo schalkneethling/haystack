@@ -84,6 +84,12 @@ describe("normalizeUrl", () => {
     },
   );
 
+  it("removes a tracking key with a valid and an invalid escape", () => {
+    expect(normalizeUrl("https://example.com/a?utm%5Fsource%zz=x&b=1")).toBe(
+      "https://example.com/a?b=1",
+    );
+  });
+
   it("removes a percent-encoded tracking key", () => {
     expect(normalizeUrl("https://example.com/a?utm%5Fsource=x")).toBe("https://example.com/a");
   });
