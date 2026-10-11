@@ -127,6 +127,12 @@ describe("CapturePayload", () => {
     },
   );
 
+  it.each(["url", "canonical_url"] as const)("rejects a lone surrogate in %s", (field) => {
+    expect(
+      v.safeParse(CapturePayload, { ...full, [field]: "https://example.com/a\ud800b" }).success,
+    ).toBe(false);
+  });
+
   it("drops unknown keys", () => {
     expect(v.parse(CapturePayload, { url: full.url, extra: "x" })).toEqual({ url: full.url });
   });

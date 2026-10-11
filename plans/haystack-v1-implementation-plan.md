@@ -351,10 +351,13 @@ The schema is `CapturePayload` in `packages/schemas` (#18):
 The caps alone do not keep the save URL under Cloudflare's 16 KB URL limit:
 
 - Text percent-encodes to up to 9 characters per code unit.
-- The extension sends both URLs as serialized by `new URL(…).href`, which is ASCII, and an ASCII character encodes to at most 3. Each URL therefore encodes to at most 6,144 characters.
+- The extension sends both URLs as serialized by `new URL(…).href`, which is ASCII, and an ASCII character encodes to at most 3. The 2,048 cap applies to that serialized form, so a URL that passes validation encodes to at most 6,144 characters. Serializing can make a URL much longer than the original (each non-ASCII character becomes up to 9 ASCII characters), so the extension validates the serialized form, not the original.
 - At full caps, the save URL can still reach about 22,000 characters.
 
-The extension (Phase 5) therefore measures the encoded save URL. Above 8,000 characters, it drops optional fields in this order until the URL fits: `og_description`, `description`, `og_title`, `og_site_name`, `canonical_url`. The required `url` alone always fits.
+The extension (Phase 5) therefore measures the encoded save URL. Above 8,000 characters, it drops optional fields in this order until the URL fits: `og_description`, `description`, `og_title`, `og_site_name`, `canonical_url`. A `url` that passes validation always fits on its own. The extension never truncates `url` or `canonical_url`, because a shortened URL can point somewhere else:
+
+- A serialized `canonical_url` over its cap is dropped.
+- A serialized `url` over its cap means the page cannot be saved. The popup says the address is too long to save, and no tab is opened.
 
 ### GitHub enrichment
 
@@ -766,7 +769,7 @@ Acceptance: a bookmark saved through `/save` appears at the top of the list and 
 
 Build the popup capture, validation and truncation, and the `/save` URL builder. Q4 must be resolved first.
 
-Tests: unit tests for the extraction function against fixture documents, for truncation to the shared caps without splitting a surrogate pair, for the encoded-length budget that drops optional fields in order, for the fallback on pages that cannot be scripted, and for a sensitive URL stopping the flow before any tab is opened. A Playwright test loads the extension, opens a fixture page, clicks the action, and asserts that the prefilled `/save` form opens.
+Tests: unit tests for the extraction function against fixture documents, for truncation to the shared caps without splitting a surrogate pair, for the encoded-length budget that drops optional fields in order, for a URL whose serialized form exceeds the cap being refused (not truncated), for the fallback on pages that cannot be scripted, and for a sensitive URL stopping the flow before any tab is opened. A Playwright test loads the extension, opens a fixture page, clicks the action, and asserts that the prefilled `/save` form opens.
 Acceptance: in Chrome (automated) and Firefox (manual check with `web-ext run`), the save form opens prefilled from the current page.
 
 #### Phase 6: Capture deploy

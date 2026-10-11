@@ -72,6 +72,7 @@ export const CapturePayload = v.pipe(
     url: v.pipe(
       v.string(),
       v.trim(),
+      v.check(isWellFormed, NOT_WELL_FORMED),
       v.maxLength(CAPTURE_CAPS.url),
       v.check(isHttpUrl, NOT_HTTP_URL),
     ),
