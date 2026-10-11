@@ -594,6 +594,8 @@ Detection can only be partial. Many capability URLs look like ordinary URLs, so 
 - query parameters or fragments carrying credentials, such as `access_token`, `id_token`, `refresh_token`, `api_key`, `apikey`, `password`, and `client_secret`
 - credentials embedded in the URL itself (`https://user:password@host`)
 
+The function is `detectSensitiveUrl` (#20). A parameter counts only when it has a non-empty value, so a documentation anchor such as `#access_token` is accepted. Parameter names match case-insensitively. Storage signatures count in the query string only. Credential parameters also count in the fragment, including a hash route's query (`#/callback?access_token=…`). The function checks the URL as submitted, not the normalized one, which has no fragment or credentials left. A token nested inside another parameter's encoded value (for example an encoded `redirect=` URL) is not detected. The Milestone 2 check covers what this list cannot.
+
 The list is deliberately narrow, because a match is a hard refusal with no override. Broad signals such as a parameter named `token` or `code` appear in too many legitimate URLs (documentation sites, OAuth guides) to refuse outright. Additions to the list are made in code, each with a test case, including a test proving that a similar legitimate URL is still accepted.
 
 The check runs in three places:
@@ -751,7 +753,7 @@ Acceptance: `varlock-wrangler dev` runs locally with `GOOGLE_CLIENT_SECRET` reso
 
 Write the Valibot schema for the capture payload, the URL normalization function, and `detectSensitiveUrl`, all shared from `packages/schemas`.
 
-Tests: valid and invalid payloads, length caps, trimming, rejection of non-HTTP schemes for the URL and the canonical URL, a table of normalization cases (case, default ports, fragments, tracking parameters, parameter order, trailing slashes), and a table of sensitive URL cases: every signal in the list is detected, in the query string, the fragment, and with differing case, embedded credentials are detected, and similar legitimate URLs (for example, documentation pages with `token` or `code` parameters) are accepted.
+Tests: valid and invalid payloads, length caps, trimming, rejection of non-HTTP schemes for the URL and the canonical URL, a table of normalization cases (case, default ports, fragments, tracking parameters, parameter order, trailing slashes), and a table of sensitive URL cases: every signal in the list is detected with differing case, the credential parameters in the query string, the fragment, and a hash route's query, and the storage signals in the query string only (see "Refusing recognizable patterns"), embedded credentials are detected, and similar legitimate URLs (for example, documentation pages with `token` or `code` parameters) are accepted.
 Acceptance: the Worker and the extension import the schema from one package.
 
 #### Phase 2: Authentication
