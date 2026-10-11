@@ -4,7 +4,17 @@ import {
   serializeClearedSessionCookie,
   serializeSessionCookie,
 } from "./auth/cookie.ts";
-import { type AuthenticatedSession, authenticateSession, deleteSession } from "./auth/sessions.ts";
+import { consumeAuthFlow, createAuthFlow } from "./auth/auth-flows.ts";
+import { authorizationUrl, completeSignIn } from "./auth/google.ts";
+import { safeReturnTarget } from "./auth/return-target.ts";
+import {
+  type AuthenticatedSession,
+  authenticateSession,
+  createSession,
+  deleteSession,
+} from "./auth/sessions.ts";
+import { upsertUser } from "./auth/users.ts";
+import { isEmailAllowed } from "./auth/allowlist.ts";
 import { createDb, type Db } from "./db/client.ts";
 
 // Until Phase 3 adds the escaping templating approach, responses are plain text and never
@@ -39,7 +49,49 @@ function isPageRequest(request: Request): boolean {
   return isReadRequest(request) && (request.headers.get("accept") ?? "").includes("text/html");
 }
 
-async function handleAuthRoute(request: Request, db: Db, path: string): Promise<Response> {
+function redirectUri(request: Request): string {
+  return `${new URL(request.url).origin}/auth/callback`;
+}
+
+async function signIn(request: Request, env: Env, db: Db): Promise<Response> {
+  const returnTo = safeReturnTarget(new URL(request.url).searchParams.get("return_to"));
+  const { state, codeChallenge } = await createAuthFlow(db, returnTo, Date.now());
+  return redirect(authorizationUrl(env, redirectUri(request), state, codeChallenge), 302);
+}
+
+// Failures are logged by kind only: the callback URL carries the code and state.
+async function callback(request: Request, env: Env, db: Db): Promise<Response> {
+  const url = new URL(request.url);
+  const state = url.searchParams.get("state");
+  const now = Date.now();
+  const flow = state === null ? undefined : await consumeAuthFlow(db, state, now);
+  if (state === null || flow === undefined) {
+    return text("This sign-in link has expired or was already used. Please sign in again.", 400);
+  }
+  let identity;
+  try {
+    identity = await completeSignIn(env, url, state, flow.codeVerifier, redirectUri(request));
+  } catch (error) {
+    console.error("Sign-in failed:", error instanceof Error ? error.name : "unknown error");
+    return text("Sign-in failed. Please try again.", 400);
+  }
+  if (!isEmailAllowed(parseAllowedEmails(env.ALLOWED_EMAILS), identity.email)) {
+    return text("This Google account is not allowed to use Haystack.", 403);
+  }
+  const userId = await upsertUser(db, identity, now);
+  const { sessionId, expiresAt } = await createSession(db, userId, now);
+  const maxAgeSeconds = Math.floor((expiresAt - now) / 1000);
+  return redirect(safeReturnTarget(flow.returnTo), 302, {
+    "set-cookie": serializeSessionCookie(sessionId, maxAgeSeconds),
+  });
+}
+
+async function handleAuthRoute(
+  request: Request,
+  env: Env,
+  db: Db,
+  path: string,
+): Promise<Response> {
   if (path === "/auth/sign-out" && request.method === "POST") {
     const sessionId = readSessionCookie(request.headers.get("cookie"));
     if (sessionId !== undefined) {
@@ -50,9 +102,11 @@ async function handleAuthRoute(request: Request, db: Db, path: string): Promise<
   if (path === "/auth/signed-out" && isReadRequest(request)) {
     return text("You are signed out of Haystack.", 200);
   }
-  if (path === "/auth/sign-in" && isReadRequest(request)) {
-    // Google sign-in arrives in #26.
-    return text("Sign-in is not available yet.", 501);
+  if (path === "/auth/sign-in" && request.method === "GET") {
+    return signIn(request, env, db);
+  }
+  if (path === "/auth/callback" && request.method === "GET") {
+    return callback(request, env, db);
   }
   return text("Not found", 404);
 }
@@ -62,12 +116,17 @@ function handleAppRoute(_request: Request, _session: AuthenticatedSession): Resp
   return text("Not found", 404);
 }
 
+function signInLocation(request: Request): string {
+  const { pathname, search } = new URL(request.url);
+  return `/auth/sign-in?return_to=${encodeURIComponent(pathname + search)}`;
+}
+
 function unauthenticated(request: Request, hadCookie: boolean): Response {
   const headers: Record<string, string> = hadCookie
     ? { "set-cookie": serializeClearedSessionCookie() }
     : {};
   return isPageRequest(request)
-    ? redirect("/auth/sign-in", 302, headers)
+    ? redirect(signInLocation(request), 302, headers)
     : text("Unauthorized", 401, headers);
 }
 
@@ -79,7 +138,7 @@ export default {
     const db = createDb(env.DB);
     const path = new URL(request.url).pathname;
     if (path.startsWith("/auth/")) {
-      return handleAuthRoute(request, db, path);
+      return handleAuthRoute(request, env, db, path);
     }
 
     const now = Date.now();

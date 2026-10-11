@@ -82,10 +82,12 @@ function cookieFor(sessionId: string) {
 const page = { accept: "text/html,application/xhtml+xml" };
 
 describe("without a session", () => {
-  it("redirects a page request to sign-in", async () => {
-    const response = await get("/", page);
+  it("redirects a page request to sign-in, with the page as the return target", async () => {
+    const response = await get("/save?url=https%3A%2F%2Fexample.com%2F&title=A", page);
     expect(response.status).toBe(302);
-    expect(response.headers.get("location")).toBe("/auth/sign-in");
+    expect(response.headers.get("location")).toBe(
+      `/auth/sign-in?return_to=${encodeURIComponent("/save?url=https%3A%2F%2Fexample.com%2F&title=A")}`,
+    );
   });
 
   it("redirects a HEAD page request to sign-in", async () => {
