@@ -337,11 +337,24 @@ The extension puts the URL, the canonical URL if present, `document.title`, the 
 
 The schema is `CapturePayload` in `packages/schemas` (#18):
 
-- **Query keys:** `url`, `canonical_url`, `title`, `description`, `og_title`, `og_description`, `og_site_name`.
-- **Caps (`CAPTURE_CAPS`, in characters):** 2,048 for both URLs, 200 for the titles, 300 for the descriptions, and 100 for the site name. With these caps, a worst-case save URL (non-ASCII text, percent-encoded) stays under 16 KB.
+- **Query keys:** `url`, `canonical_url`, `title`, `description`, `og_title`, `og_description`, `og_site_name`. Unknown keys are dropped.
+- **Caps (`CAPTURE_CAPS`):** 2,048 for both URLs, 200 for the titles, 300 for the descriptions, and 100 for the site name.
+  - The caps count UTF-16 code units (`String.prototype.length`), so an emoji counts as 2.
+  - Text containing a lone surrogate is rejected, because `encodeURIComponent` throws on it.
+  - The extension truncates without splitting a surrogate pair.
 - **Over-cap values are rejected, not truncated.** The extension truncates to the exported caps before validating.
-- **Empty values:** an optional field that is empty after trimming is absent.
-- **The URL** keeps its submitted form, apart from trimming.
+- **Empty values:** an optional field that is empty after trimming is left out of the result, not set to `undefined`.
+- **The URL** keeps its submitted form, apart from trimming. Because the stored string must be what the URL parser reads, a URL is rejected when it:
+  - contains a control character, tab, or newline
+  - does not start with an explicit `http://` or `https://` (`https:example.com` parses, but as a link it resolves against the page's own origin)
+
+The caps alone do not keep the save URL under Cloudflare's 16 KB URL limit:
+
+- Text percent-encodes to up to 9 characters per code unit.
+- The extension sends both URLs as serialized by `new URL(…).href`, which is ASCII, and an ASCII character encodes to at most 3. Each URL therefore encodes to at most 6,144 characters.
+- At full caps, the save URL can still reach about 22,000 characters.
+
+The extension (Phase 5) therefore measures the encoded save URL. Above 8,000 characters, it drops optional fields in this order until the URL fits: `og_description`, `description`, `og_title`, `og_site_name`, `canonical_url`. The required `url` alone always fits.
 
 ### GitHub enrichment
 
@@ -753,7 +766,7 @@ Acceptance: a bookmark saved through `/save` appears at the top of the list and 
 
 Build the popup capture, validation and truncation, and the `/save` URL builder. Q4 must be resolved first.
 
-Tests: unit tests for the extraction function against fixture documents, for truncation to the shared caps, for the fallback on pages that cannot be scripted, and for a sensitive URL stopping the flow before any tab is opened. A Playwright test loads the extension, opens a fixture page, clicks the action, and asserts that the prefilled `/save` form opens.
+Tests: unit tests for the extraction function against fixture documents, for truncation to the shared caps without splitting a surrogate pair, for the encoded-length budget that drops optional fields in order, for the fallback on pages that cannot be scripted, and for a sensitive URL stopping the flow before any tab is opened. A Playwright test loads the extension, opens a fixture page, clicks the action, and asserts that the prefilled `/save` form opens.
 Acceptance: in Chrome (automated) and Firefox (manual check with `web-ext run`), the save form opens prefilled from the current page.
 
 #### Phase 6: Capture deploy

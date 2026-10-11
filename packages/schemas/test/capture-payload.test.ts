@@ -64,7 +64,7 @@ describe("CapturePayload", () => {
     "treats a whitespace-only %s as absent",
     (field) => {
       const result = v.parse(CapturePayload, { ...full, [field]: " \t " });
-      expect(result[field]).toBeUndefined();
+      expect(result).not.toHaveProperty(field);
     },
   );
 
@@ -85,6 +85,48 @@ describe("CapturePayload", () => {
     it.each(["http://example.com/", "HTTPS://EXAMPLE.COM/"])("accepts %s", (value) => {
       expect(v.safeParse(CapturePayload, { ...full, [field]: value }).success).toBe(true);
     });
+  });
+
+  it.each(["", "   "])("rejects the URL %j", (url) => {
+    expect(v.safeParse(CapturePayload, { url }).success).toBe(false);
+  });
+
+  it.each([
+    ["an array", ["https://example.com/", "https://example.org/"]],
+    ["null", null],
+    ["a number", 42],
+  ])("rejects %s as the URL", (_, url) => {
+    expect(v.safeParse(CapturePayload, { url }).success).toBe(false);
+  });
+
+  describe.each(["url", "canonical_url"] as const)("%s as the parser reads it", (field) => {
+    it.each([
+      ["a leading control character", "\u0001https://example.com/"],
+      ["a tab inside", "ht\ttps://example.com/"],
+      ["a newline inside", "https://example.com/a\nb"],
+      ["a DEL character", "https://example.com/\u007f"],
+      ["no slashes after the scheme", "https:example.com"],
+      ["one slash after the scheme", "http:/example.com"],
+    ])("rejects %s", (_, value) => {
+      expect(v.safeParse(CapturePayload, { ...full, [field]: value }).success).toBe(false);
+    });
+  });
+
+  it("counts an emoji as two units toward the cap", () => {
+    const atCap = "\u{1F600}".repeat(CAPTURE_CAPS.title / 2);
+    expect(v.parse(CapturePayload, { ...full, title: atCap }).title).toBe(atCap);
+    expect(v.safeParse(CapturePayload, { ...full, title: `${atCap}a` }).success).toBe(false);
+  });
+
+  it.each(["\ud83d", "\ude00", "a\ud83db"])(
+    "rejects a lone surrogate in a text field (%j)",
+    (value) => {
+      expect(v.safeParse(CapturePayload, { ...full, title: value }).success).toBe(false);
+    },
+  );
+
+  it("drops unknown keys", () => {
+    expect(v.parse(CapturePayload, { url: full.url, extra: "x" })).toEqual({ url: full.url });
   });
 
   it("keeps the URL as submitted, apart from trimming", () => {
