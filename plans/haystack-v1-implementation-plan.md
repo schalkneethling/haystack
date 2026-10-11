@@ -325,6 +325,14 @@ Held is evaluated against the current `SENSITIVE_WARN_THRESHOLD`, not against th
 
 `normalized_url` is derived in code, and is used only for duplicate detection. The original `url` is what the bookmark links to. Normalization lowercases the scheme and host, removes default ports, removes the fragment, removes common tracking parameters (`utm_*`, `fbclid`, `gclid`, and similar, as an explicit list), sorts the remaining query parameters, and removes a trailing slash from the path. It is a pure function in `packages/schemas`, with a table of test cases.
 
+The function is `normalizeUrl` (#19). Details that are part of the rules, so changing them also needs the migration described below:
+
+- It removes credentials (`user:pass@`). Such URLs are refused by `detectSensitiveUrl` anyway.
+- The tracking list is `TRACKING_PARAMETERS`, plus every `utm_*` key, matched case-insensitively on the decoded key.
+- Query pairs keep the encoding the URL parser gives them, and are sorted by decoded key. Pairs with the same decoded key keep their order.
+- It rejects anything other than `http` and `https`.
+- It is applied to the URL as submitted, never to a stored normalized value. It is not idempotent for paths that end in several slashes.
+
 `normalized_url` is stored, so a change to the normalization function (for example, a new tracking parameter in the list) makes existing rows out of date. When recomputed, two existing bookmarks can collide on `UNIQUE (user_id, normalized_url)`. Such a change therefore needs a migration that recomputes the column and states how collisions are resolved (keep the oldest bookmark, and report the others). It is not a code-only change.
 
 Two submissions of the same URL can race, for example from two tabs. The second insert then fails on the unique constraint. `POST /save` must show the "already saved" result for that case, not an error page.

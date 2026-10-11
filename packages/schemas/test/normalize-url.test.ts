@@ -1,6 +1,25 @@
 import { describe, expect, it } from "vite-plus/test";
 import { normalizeUrl, TRACKING_PARAMETERS } from "../src/index.ts";
 
+// Written out, not read from TRACKING_PARAMETERS: changing the list changes stored
+// normalized_url values and needs a migration, so it must also change this test.
+const TRACKING_LIST = [
+  "fbclid",
+  "gclid",
+  "dclid",
+  "gbraid",
+  "wbraid",
+  "msclkid",
+  "yclid",
+  "twclid",
+  "igshid",
+  "mc_cid",
+  "mc_eid",
+  "_hsenc",
+  "_hsmi",
+  "mkt_tok",
+];
+
 describe("normalizeUrl", () => {
   it.each([
     ["lowercases the scheme and host", "HTTPS://Example.COM/Path", "https://example.com/Path"],
@@ -51,7 +70,7 @@ describe("normalizeUrl", () => {
     "utm_term",
     "utm_content",
     "utm_id",
-    ...TRACKING_PARAMETERS,
+    ...TRACKING_LIST,
   ])("removes the tracking parameter %s", (key) => {
     expect(normalizeUrl(`https://example.com/a?${key}=x&keep=1`)).toBe(
       "https://example.com/a?keep=1",
@@ -80,6 +99,51 @@ describe("normalizeUrl", () => {
     expect(normalizeUrl("https://example.com/a?b=1#utm_source=x")).toBe(
       "https://example.com/a?b=1",
     );
+  });
+
+  it("exports exactly the tracking parameters listed in this test", () => {
+    expect(TRACKING_PARAMETERS).toEqual(TRACKING_LIST);
+  });
+
+  it("does not let importers change the tracking list", () => {
+    expect(Object.isFrozen(TRACKING_PARAMETERS)).toBe(true);
+  });
+
+  it.each([
+    ["a value containing =", "https://example.com/a?b=c=d", "https://example.com/a?b=c=d"],
+    [
+      "malformed percent-encoding in a key",
+      "https://example.com/a?%zz=1&a=2",
+      "https://example.com/a?%zz=1&a=2",
+    ],
+    [
+      "a tracking key without a value",
+      "https://example.com/a?utm_source&b=1",
+      "https://example.com/a?b=1",
+    ],
+    ["a query after a trailing slash", "https://example.com/a/?b=1", "https://example.com/a?b=1"],
+    ["an empty path with a query", "https://example.com?b=1", "https://example.com?b=1"],
+  ])("handles %s", (_, input, expected) => {
+    expect(normalizeUrl(input)).toBe(expected);
+  });
+
+  it("sorts by decoded key, keeping the order of keys that decode to the same name", () => {
+    expect(normalizeUrl("https://example.com/?a+b=2&a%20b=1&a=0")).toBe(
+      "https://example.com?a=0&a+b=2&a%20b=1",
+    );
+    expect(normalizeUrl("https://example.com/?a%20b=1&a+b=2")).not.toBe(
+      normalizeUrl("https://example.com/?a+b=2&a%20b=1"),
+    );
+  });
+
+  it.each([
+    "mailto:a@example.com",
+    "javascript:alert(1)",
+    "file:///etc/passwd",
+    "ftp://example.com/a",
+    "blob:https://example.com/id",
+  ])("throws for the non-http URL %s", (input) => {
+    expect(() => normalizeUrl(input)).toThrow(TypeError);
   });
 
   it("throws for a value that is not a URL", () => {
