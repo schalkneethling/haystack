@@ -335,6 +335,30 @@ Two submissions of the same URL can race, for example from two tabs. The second 
 
 The extension puts the URL, the canonical URL if present, `document.title`, the meta description, and the Open Graph title, description, and site name into the `/save` query string. The same Valibot schema in `packages/schemas` validates the payload twice: in the extension before building the URL, and on the server for both the GET prefill and the POST submission. Every field except the URL is optional, and strings are trimmed and length-capped. The extension truncates to the same caps so the save URL stays well within URL length limits. The URL must use the `http` or `https` scheme. The canonical URL, if present, must too.
 
+The schema is `CapturePayload` in `packages/schemas` (#18):
+
+- **Query keys:** `url`, `canonical_url`, `title`, `description`, `og_title`, `og_description`, `og_site_name`. Unknown keys are dropped.
+- **Caps (`CAPTURE_CAPS`):** 2,048 for both URLs, 200 for the titles, 300 for the descriptions, and 100 for the site name.
+  - The caps count UTF-16 code units (`String.prototype.length`), so an emoji counts as 2.
+  - Text containing a lone surrogate is rejected, because `encodeURIComponent` throws on it.
+  - The extension truncates without splitting a surrogate pair.
+- **Over-cap values are rejected, not truncated.** The extension truncates to the exported caps before validating.
+- **Empty values:** an optional field that is empty after trimming is left out of the result, not set to `undefined`.
+- **The URL** keeps its submitted form, apart from trimming. Because the stored string must be what the URL parser reads, a URL is rejected when it:
+  - contains a control character, tab, newline, or space (the parser strips or percent-encodes them; browsers already send spaces as `%20`)
+  - does not start with an explicit `http://` or `https://` (`https:example.com` parses, but as a link it resolves against the page's own origin)
+
+The caps alone do not keep the save URL under Cloudflare's 16 KB URL limit:
+
+- Text percent-encodes to up to 9 characters per code unit.
+- The extension sends both URLs as serialized by `new URL(…).href`, which is ASCII, and an ASCII character encodes to at most 3. The 2,048 cap applies to that serialized form, so a URL that passes validation encodes to at most 6,144 characters. Serializing can make a URL much longer than the original (each non-ASCII character becomes up to 9 ASCII characters), so the extension validates the serialized form, not the original.
+- At full caps, the save URL can still reach about 22,000 characters.
+
+The extension (Phase 5) therefore measures the encoded save URL. Above 8,000 characters, it drops optional fields in this order until the URL fits: `og_description`, `description`, `og_title`, `og_site_name`, `canonical_url`. A `url` that passes validation always fits on its own. The extension never truncates `url` or `canonical_url`, because a shortened URL can point somewhere else:
+
+- A serialized `canonical_url` over its cap is dropped.
+- A serialized `url` over its cap means the page cannot be saved. The popup says the address is too long to save, and no tab is opened.
+
 ### GitHub enrichment
 
 For repository URLs, call `GET /repos/{owner}/{repo}` and `GET /repos/{owner}/{repo}/readme`. Keep a README excerpt of roughly the first 2,000 characters, with Markdown syntax stripped. Use a `GITHUB_TOKEN` secret to avoid the low rate limit for unauthenticated requests. A GitHub failure must not fail the bookmark. Fall back to the captured payload.
@@ -745,7 +769,7 @@ Acceptance: a bookmark saved through `/save` appears at the top of the list and 
 
 Build the popup capture, validation and truncation, and the `/save` URL builder. Q4 must be resolved first.
 
-Tests: unit tests for the extraction function against fixture documents, for truncation to the shared caps, for the fallback on pages that cannot be scripted, and for a sensitive URL stopping the flow before any tab is opened. A Playwright test loads the extension, opens a fixture page, clicks the action, and asserts that the prefilled `/save` form opens.
+Tests: unit tests for the extraction function against fixture documents, for truncation to the shared caps without splitting a surrogate pair, for the encoded-length budget that drops optional fields in order, for a URL whose serialized form exceeds the cap being refused (not truncated), for the fallback on pages that cannot be scripted, and for a sensitive URL stopping the flow before any tab is opened. A Playwright test loads the extension, opens a fixture page, clicks the action, and asserts that the prefilled `/save` form opens.
 Acceptance: in Chrome (automated) and Firefox (manual check with `web-ext run`), the save form opens prefilled from the current page.
 
 #### Phase 6: Capture deploy

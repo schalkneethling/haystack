@@ -1,0 +1,11 @@
+// Shared by the Worker and the extension. The WebWorker lib provides URL and the other
+// worker-global APIs but no document or storage. It does not prove that an API exists in both
+// runtimes, so check each new global against both.
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "WebWorker"],
+    "types": []
+  },
+  "include": ["src"]
+}
