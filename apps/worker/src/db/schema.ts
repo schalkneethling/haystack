@@ -50,7 +50,7 @@ export const bookmarks = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id),
-    // Exactly as submitted.
+    // As submitted, minus tracking parameters (stripTrackingParameters).
     url: text("url").notNull(),
     // See "URL normalization". Used to find duplicates.
     normalizedUrl: text("normalized_url").notNull(),

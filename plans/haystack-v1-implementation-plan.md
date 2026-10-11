@@ -228,7 +228,7 @@ CREATE TABLE auth_flows (
 CREATE TABLE bookmarks (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id),
-  url TEXT NOT NULL,                   -- exactly as submitted
+  url TEXT NOT NULL,                   -- as submitted, minus tracking parameters
   normalized_url TEXT NOT NULL,        -- see "URL normalization"; used for duplicates
   title TEXT NOT NULL,                 -- as confirmed on the save form
   description TEXT,                    -- as confirmed on the save form
@@ -323,7 +323,15 @@ Held is evaluated against the current `SENSITIVE_WARN_THRESHOLD`, not against th
 
 ### URL normalization
 
-`normalized_url` is derived in code, and is used only for duplicate detection. The original `url` is what the bookmark links to. Normalization lowercases the scheme and host, removes default ports, removes the fragment, removes common tracking parameters (`utm_*`, `fbclid`, `gclid`, and similar, as an explicit list), sorts the remaining query parameters, and removes a trailing slash from the path. It is a pure function in `packages/schemas`, with a table of test cases.
+`normalized_url` is derived in code, and is used only for duplicate detection. The stored `url` is what the bookmark links to. It is the submitted URL with tracking parameters removed by `stripTrackingParameters`, which uses the same tracking list as normalization. Everything else stays as submitted: case, encoding, parameter order, the trailing slash, and the fragment. `GET /save` shows the stripped URL on the form, and `POST /save` strips again before storing, because the hidden input can be tampered with. Changing the tracking list affects new saves only. Stored `url` values are not recomputed, and that difference is intentional: an old link that still has a tracking parameter works the same. Pairs are split on `&` only, so with `?utm_source=x;b=1` the whole pair is removed, including `b=1`. The same is true for normalization. (Added 2026-10-11.) Normalization lowercases the scheme and host, removes default ports, removes the fragment, removes common tracking parameters (`utm_*`, `fbclid`, `gclid`, and similar, as an explicit list), sorts the remaining query parameters, and removes a trailing slash from the path. It is a pure function in `packages/schemas`, with a table of test cases.
+
+The function is `normalizeUrl` (#19). Details that are part of the rules, so changing them also needs the migration described below:
+
+- It removes credentials (`user:pass@`). Such URLs are refused by `detectSensitiveUrl` anyway.
+- The tracking list is `TRACKING_PARAMETERS`, plus every `utm_*` key, matched case-insensitively on the decoded key.
+- Query pairs keep the encoding the URL parser gives them, and are sorted by decoded key. Pairs with the same decoded key keep their order.
+- It rejects anything other than `http` and `https`.
+- It is applied to the URL as submitted, never to a stored normalized value. It is not idempotent for paths that end in several slashes.
 
 `normalized_url` is stored, so a change to the normalization function (for example, a new tracking parameter in the list) makes existing rows out of date. When recomputed, two existing bookmarks can collide on `UNIQUE (user_id, normalized_url)`. Such a change therefore needs a migration that recomputes the column and states how collisions are resolved (keep the oldest bookmark, and report the others). It is not a code-only change.
 
@@ -344,7 +352,7 @@ The schema is `CapturePayload` in `packages/schemas` (#18):
   - The extension truncates without splitting a surrogate pair.
 - **Over-cap values are rejected, not truncated.** The extension truncates to the exported caps before validating.
 - **Empty values:** an optional field that is empty after trimming is left out of the result, not set to `undefined`.
-- **The URL** keeps its submitted form, apart from trimming. Because the stored string must be what the URL parser reads, a URL is rejected when it:
+- **The URL** keeps its submitted form, apart from trimming. The Worker then removes tracking parameters before showing and storing it (see "URL normalization"). Because the stored string must be what the URL parser reads, a URL is rejected when it:
   - contains a control character, tab, newline, or space (the parser strips or percent-encodes them; browsers already send spaces as `%20`)
   - does not start with an explicit `http://` or `https://` (`https:example.com` parses, but as a link it resolves against the page's own origin)
 
@@ -558,15 +566,17 @@ The Haystack origin is a build-time constant, with separate builds for local dev
 
 ## Save flow
 
-`GET /save` requires a session. Without one, it redirects to Google sign-in and carries the full `/save` path and query as the return target (see "Authentication"). With a session, it validates the query parameters, renders the form with the values prefilled and editable, and never writes anything. If the URL is already saved for this user, the page says so and links to the existing bookmark instead of offering a duplicate.
+`GET /save` requires a session. Without one, it redirects to Google sign-in and carries the full `/save` path and query as the return target (see "Authentication"). With a session, it validates the query parameters, runs `detectSensitiveUrl` on the submitted URL, removes tracking parameters, renders the form with the values prefilled and editable, and never writes anything. If the URL is already saved for this user, the page says so and links to the existing bookmark instead of offering a duplicate.
 
-`POST /save` requires a session and a same-origin `Origin` header, validates the submitted fields, computes `normalized_url`, inserts the bookmark, and renders a saved state. From Milestone 2 onward, it also starts enrichment through the on-save fast path (see "Enrichment sweep").
+`POST /save` requires a session and a same-origin `Origin` header, validates the submitted fields, runs `detectSensitiveUrl` on the submitted URL, removes tracking parameters with `stripTrackingParameters`, computes `normalized_url`, inserts the bookmark, and renders a saved state. From Milestone 2 onward, it also starts enrichment through the on-save fast path (see "Enrichment sweep").
 
 The form is never submitted automatically by script. A GET request that saved, or a page that auto-submitted, would let any website add bookmarks to a signed-in user's collection by navigating them to a crafted `/save` URL. The confirmation click is the protection. It also lets the user correct a bad title before enrichment runs.
 
 Application code does not log `/save` query strings. Cloudflare's own invocation logs may record full request URLs if Workers Logs is enabled; that is acceptable for v1, and is revisited before sign-up is opened to other people (see the backlog).
 
-The form is plain HTML and works without JavaScript. It is a `<form method="post">` with a labeled, editable title input and a labeled, editable description field. The title is prefilled from the Open Graph title, falling back to the document title and then to the URL. The description is prefilled from the Open Graph description, falling back to the meta description. The URL is shown as read-only text, next to the notice about sensitive URLs. The URL and every raw captured value (canonical URL, document title, meta description, and the Open Graph title, description, and site name) travel as hidden inputs, so `POST /save` receives them unchanged.
+The form is plain HTML and works without JavaScript. It is a `<form method="post">` with a labeled, editable title input and a labeled, editable description field. The title is prefilled from the Open Graph title, falling back to the document title and then to the URL. The description is prefilled from the Open Graph description, falling back to the meta description. The URL is shown as read-only text, next to the notice about sensitive URLs. The URL (with tracking parameters already removed, as shown) and every raw captured value (canonical URL, document title, meta description, and the Open Graph title, description, and site name) travel as hidden inputs, so `POST /save` receives them unchanged. `POST /save` validates and strips them again, because hidden inputs can be tampered with and a POST can be built by hand.
+
+The sensitive URL check always runs on the URL as submitted, before tracking parameters are removed, on both `GET` and `POST`. The extension checks the raw URL too, so the server must not see a cleaner URL than the extension did.
 
 On submission, the edited values are stored as the bookmark's `title` and `description`, and the raw captured values are stored alongside them as evidence for enrichment. The recent saves list and the search result cards show the confirmed `title` and `description`. There is no editing after saving.
 
@@ -755,7 +765,7 @@ Acceptance: Schalk can sign in to the site with Google, and a non-allowlisted ac
 
 Implement `GET /save` and `POST /save` as described under "Save flow." In this milestone, `POST /save` inserts the bookmark and does nothing else.
 
-Tests: GET without a session redirects to sign-in and returns to the same prefilled URL afterward, GET never writes to the database, GET with invalid parameters shows a validation message rather than an error page, GET for an already-saved URL, including one that differs only by tracking parameters or a fragment, links to the existing bookmark, the title and description are prefilled by the fallback rules, edited values are stored as `title` and `description` while the raw captured values are stored unchanged, POST without a session or with a cross-origin `Origin` is rejected, a `javascript:` or `data:` URL is rejected, the same URL can be saved independently by two users, the user ID comes from the session and never from the form, application code does not log `/save` query strings, a sensitive URL is refused on GET and on POST without echoing the URL, the form shows the sensitive URL notice, two concurrent submissions of the same URL produce one bookmark and an "already saved" result rather than an error, a title containing markup is rendered as text with the Content Security Policy header present, and the rendered save form passes html-validate (issue #3).
+Tests: GET without a session redirects to sign-in and returns to the same prefilled URL afterward, GET never writes to the database, GET with invalid parameters shows a validation message rather than an error page, GET for an already-saved URL, including one that differs only by tracking parameters or a fragment, links to the existing bookmark, the title and description are prefilled by the fallback rules, edited values are stored as `title` and `description` while the raw captured values are stored unchanged, the form shows and `POST /save` stores the URL with tracking parameters removed (including when the hidden input was tampered with to add them back), the sensitive URL check runs on the URL before stripping, POST without a session or with a cross-origin `Origin` is rejected, a `javascript:` or `data:` URL is rejected, the same URL can be saved independently by two users, the user ID comes from the session and never from the form, application code does not log `/save` query strings, a sensitive URL is refused on GET and on POST without echoing the URL, the form shows the sensitive URL notice, two concurrent submissions of the same URL produce one bookmark and an "already saved" result rather than an error, a title containing markup is rendered as text with the Content Security Policy header present, and the rendered save form passes html-validate (issue #3).
 Acceptance: opening a hand-built `/save` URL while signed in, then confirming, creates a bookmark under the right user with the confirmed title and description. The form works with JavaScript disabled.
 
 #### Phase 4: Recent saves list
