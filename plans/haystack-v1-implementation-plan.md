@@ -753,7 +753,7 @@ Acceptance: `varlock-wrangler dev` runs locally with `GOOGLE_CLIENT_SECRET` reso
 
 Write the Valibot schema for the capture payload, the URL normalization function, and `detectSensitiveUrl`, all shared from `packages/schemas`.
 
-Tests: valid and invalid payloads, length caps, trimming, rejection of non-HTTP schemes for the URL and the canonical URL, a table of normalization cases (case, default ports, fragments, tracking parameters, parameter order, trailing slashes), and a table of sensitive URL cases: every signal in the list is detected, in the query string, the fragment, and with differing case, embedded credentials are detected, and similar legitimate URLs (for example, documentation pages with `token` or `code` parameters) are accepted.
+Tests: valid and invalid payloads, length caps, trimming, rejection of non-HTTP schemes for the URL and the canonical URL, a table of normalization cases (case, default ports, fragments, tracking parameters, parameter order, trailing slashes), and a table of sensitive URL cases: every signal in the list is detected with differing case, the credential parameters in the query string, the fragment, and a hash route's query, and the storage signals in the query string only (see "Refusing recognizable patterns"), embedded credentials are detected, and similar legitimate URLs (for example, documentation pages with `token` or `code` parameters) are accepted.
 Acceptance: the Worker and the extension import the schema from one package.
 
 #### Phase 2: Authentication
