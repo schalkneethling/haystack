@@ -105,6 +105,8 @@ describe("CapturePayload", () => {
       ["a tab inside", "ht\ttps://example.com/"],
       ["a newline inside", "https://example.com/a\nb"],
       ["a DEL character", "https://example.com/\u007f"],
+      ["a space in the query", "https://example.com/search?q=hello world"],
+      ["a space before another parameter", "https://example.com/search?q=hello &b=1"],
       ["no slashes after the scheme", "https:example.com"],
       ["one slash after the scheme", "http:/example.com"],
     ])("rejects %s", (_, value) => {

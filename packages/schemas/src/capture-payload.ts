@@ -16,16 +16,18 @@ export const CAPTURE_CAPS = {
   og_site_name: 100,
 } as const;
 
-// The URL parser silently strips leading control characters and removes tab, CR, and LF
-// anywhere. The stored URL is the submitted string, so it must already be what the parser
-// reads: no C0 control characters or DEL, and an explicit `http://` or `https://` prefix
-// (`https:example.com` parses, but as a link it resolves against the page's own origin).
+// The URL parser silently strips leading control characters, removes tab, CR, and LF
+// anywhere, trims trailing spaces, and percent-encodes inner ones. The stored URL is the
+// submitted string, so it must already be what the parser reads: no C0 control characters,
+// spaces, or DEL, and an explicit `http://` or `https://` prefix (`https:example.com` parses,
+// but as a link it resolves against the page's own origin). Browsers serialize URLs with
+// spaces encoded, so only hand-built links are affected.
 // oxlint-disable-next-line no-control-regex -- matching control characters is the point.
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
+const CHARACTERS_THE_PARSER_CHANGES = /[\u0000-\u0020\u007f]/;
 const HTTP_PREFIX = /^https?:\/\//i;
 
 function isHttpUrl(value: string): boolean {
-  if (CONTROL_CHARACTERS.test(value) || !HTTP_PREFIX.test(value)) {
+  if (CHARACTERS_THE_PARSER_CHANGES.test(value) || !HTTP_PREFIX.test(value)) {
     return false;
   }
   try {

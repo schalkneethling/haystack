@@ -345,7 +345,7 @@ The schema is `CapturePayload` in `packages/schemas` (#18):
 - **Over-cap values are rejected, not truncated.** The extension truncates to the exported caps before validating.
 - **Empty values:** an optional field that is empty after trimming is left out of the result, not set to `undefined`.
 - **The URL** keeps its submitted form, apart from trimming. Because the stored string must be what the URL parser reads, a URL is rejected when it:
-  - contains a control character, tab, or newline
+  - contains a control character, tab, newline, or space (the parser strips or percent-encodes them; browsers already send spaces as `%20`)
   - does not start with an explicit `http://` or `https://` (`https:example.com` parses, but as a link it resolves against the page's own origin)
 
 The caps alone do not keep the save URL under Cloudflare's 16 KB URL limit:
