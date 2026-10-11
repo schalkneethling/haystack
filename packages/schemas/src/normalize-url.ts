@@ -31,6 +31,15 @@ function decodeKey(rawKey: string): string {
   }
 }
 
+function isTrackingKey(key: string): boolean {
+  const lowerKey = key.toLowerCase();
+  return lowerKey.startsWith("utm_") || trackingParameters.has(lowerKey);
+}
+
+function keyOf(pair: string): string {
+  return decodeKey(pair.split("=", 1)[0] ?? "");
+}
+
 // Each pair stays as the URL parser serialized it, so percent-encoding is not normalized.
 // Sorting compares decoded keys, so pairs whose keys decode to the same name keep their order.
 function normalizeQuery(search: string): string {
@@ -38,11 +47,8 @@ function normalizeQuery(search: string): string {
     .slice(1)
     .split("&")
     .filter((pair) => pair !== "")
-    .map((pair) => ({ pair, key: decodeKey(pair.split("=", 1)[0] ?? "") }))
-    .filter(({ key }) => {
-      const lowerKey = key.toLowerCase();
-      return !lowerKey.startsWith("utm_") && !trackingParameters.has(lowerKey);
-    });
+    .map((pair) => ({ pair, key: keyOf(pair) }))
+    .filter(({ key }) => !isTrackingKey(key));
   // Array.prototype.sort is stable, so repeated keys keep their order.
   pairs.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return pairs.length === 0 ? "" : `?${pairs.map(({ pair }) => pair).join("&")}`;
@@ -65,4 +71,28 @@ export function normalizeUrl(input: string): string {
   }
   const path = url.pathname.endsWith("/") ? url.pathname.slice(0, -1) : url.pathname;
   return `${url.origin}${path}${normalizeQuery(url.search)}`;
+}
+
+/**
+ * Removes tracking parameters (the same rule as normalizeUrl) from a URL before it is shown on
+ * the save form and stored as `bookmarks.url`. Everything else stays as submitted: case,
+ * encoding, parameter order, the trailing slash, and the fragment. Following the URL standard,
+ * the query starts at the first `?` and ends at the first `#` after it. Callers validate the URL
+ * first (CapturePayload).
+ */
+export function stripTrackingParameters(input: string): string {
+  const fragmentStart = input.indexOf("#");
+  const beforeFragment = fragmentStart === -1 ? input : input.slice(0, fragmentStart);
+  const fragment = fragmentStart === -1 ? "" : input.slice(fragmentStart);
+  const queryStart = beforeFragment.indexOf("?");
+  if (queryStart === -1) {
+    return input;
+  }
+  const pairs = beforeFragment.slice(queryStart + 1).split("&");
+  const kept = pairs.filter((pair) => !isTrackingKey(keyOf(pair)));
+  if (kept.length === pairs.length) {
+    return input;
+  }
+  const query = kept.some((pair) => pair !== "") ? `?${kept.join("&")}` : "";
+  return `${beforeFragment.slice(0, queryStart)}${query}${fragment}`;
 }

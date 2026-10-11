@@ -228,7 +228,7 @@ CREATE TABLE auth_flows (
 CREATE TABLE bookmarks (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id),
-  url TEXT NOT NULL,                   -- exactly as submitted
+  url TEXT NOT NULL,                   -- as submitted, minus tracking parameters
   normalized_url TEXT NOT NULL,        -- see "URL normalization"; used for duplicates
   title TEXT NOT NULL,                 -- as confirmed on the save form
   description TEXT,                    -- as confirmed on the save form
@@ -323,7 +323,7 @@ Held is evaluated against the current `SENSITIVE_WARN_THRESHOLD`, not against th
 
 ### URL normalization
 
-`normalized_url` is derived in code, and is used only for duplicate detection. The original `url` is what the bookmark links to. Normalization lowercases the scheme and host, removes default ports, removes the fragment, removes common tracking parameters (`utm_*`, `fbclid`, `gclid`, and similar, as an explicit list), sorts the remaining query parameters, and removes a trailing slash from the path. It is a pure function in `packages/schemas`, with a table of test cases.
+`normalized_url` is derived in code, and is used only for duplicate detection. The stored `url` is what the bookmark links to. It is the submitted URL with tracking parameters removed by `stripTrackingParameters`, which uses the same tracking list as normalization. Everything else stays as submitted: case, encoding, parameter order, the trailing slash, and the fragment. `GET /save` shows the stripped URL on the form, and `POST /save` strips again before storing, because the form value can be edited. (Added 2026-10-11.) Normalization lowercases the scheme and host, removes default ports, removes the fragment, removes common tracking parameters (`utm_*`, `fbclid`, `gclid`, and similar, as an explicit list), sorts the remaining query parameters, and removes a trailing slash from the path. It is a pure function in `packages/schemas`, with a table of test cases.
 
 The function is `normalizeUrl` (#19). Details that are part of the rules, so changing them also needs the migration described below:
 
@@ -352,7 +352,7 @@ The schema is `CapturePayload` in `packages/schemas` (#18):
   - The extension truncates without splitting a surrogate pair.
 - **Over-cap values are rejected, not truncated.** The extension truncates to the exported caps before validating.
 - **Empty values:** an optional field that is empty after trimming is left out of the result, not set to `undefined`.
-- **The URL** keeps its submitted form, apart from trimming. Because the stored string must be what the URL parser reads, a URL is rejected when it:
+- **The URL** keeps its submitted form, apart from trimming. The Worker then removes tracking parameters before showing and storing it (see "URL normalization"). Because the stored string must be what the URL parser reads, a URL is rejected when it:
   - contains a control character, tab, newline, or space (the parser strips or percent-encodes them; browsers already send spaces as `%20`)
   - does not start with an explicit `http://` or `https://` (`https:example.com` parses, but as a link it resolves against the page's own origin)
 
@@ -763,7 +763,7 @@ Acceptance: Schalk can sign in to the site with Google, and a non-allowlisted ac
 
 Implement `GET /save` and `POST /save` as described under "Save flow." In this milestone, `POST /save` inserts the bookmark and does nothing else.
 
-Tests: GET without a session redirects to sign-in and returns to the same prefilled URL afterward, GET never writes to the database, GET with invalid parameters shows a validation message rather than an error page, GET for an already-saved URL, including one that differs only by tracking parameters or a fragment, links to the existing bookmark, the title and description are prefilled by the fallback rules, edited values are stored as `title` and `description` while the raw captured values are stored unchanged, POST without a session or with a cross-origin `Origin` is rejected, a `javascript:` or `data:` URL is rejected, the same URL can be saved independently by two users, the user ID comes from the session and never from the form, application code does not log `/save` query strings, a sensitive URL is refused on GET and on POST without echoing the URL, the form shows the sensitive URL notice, two concurrent submissions of the same URL produce one bookmark and an "already saved" result rather than an error, a title containing markup is rendered as text with the Content Security Policy header present, and the rendered save form passes html-validate (issue #3).
+Tests: GET without a session redirects to sign-in and returns to the same prefilled URL afterward, GET never writes to the database, GET with invalid parameters shows a validation message rather than an error page, GET for an already-saved URL, including one that differs only by tracking parameters or a fragment, links to the existing bookmark, the title and description are prefilled by the fallback rules, edited values are stored as `title` and `description` while the raw captured values are stored unchanged, the form shows and `POST /save` stores the URL with tracking parameters removed (including when the form value was edited to add them back), POST without a session or with a cross-origin `Origin` is rejected, a `javascript:` or `data:` URL is rejected, the same URL can be saved independently by two users, the user ID comes from the session and never from the form, application code does not log `/save` query strings, a sensitive URL is refused on GET and on POST without echoing the URL, the form shows the sensitive URL notice, two concurrent submissions of the same URL produce one bookmark and an "already saved" result rather than an error, a title containing markup is rendered as text with the Content Security Policy header present, and the rendered save form passes html-validate (issue #3).
 Acceptance: opening a hand-built `/save` URL while signed in, then confirming, creates a bookmark under the right user with the confirmed title and description. The form works with JavaScript disabled.
 
 #### Phase 4: Recent saves list

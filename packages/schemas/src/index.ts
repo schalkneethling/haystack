@@ -1,2 +1,2 @@
 export { CAPTURE_CAPS, CapturePayload } from "./capture-payload.ts";
-export { normalizeUrl, TRACKING_PARAMETERS } from "./normalize-url.ts";
+export { normalizeUrl, stripTrackingParameters, TRACKING_PARAMETERS } from "./normalize-url.ts";
