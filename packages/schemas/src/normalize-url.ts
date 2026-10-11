@@ -1,6 +1,8 @@
 // normalized_url is stored and used only for duplicate detection. See "URL normalization" in
 // plans/haystack-v1-implementation-plan.md: changing these rules makes stored rows out of date,
-// so a change needs a migration that recomputes the column and resolves collisions.
+// so a change needs a migration that recomputes the column and resolves collisions. The same
+// tracking rule strips the stored `url` (stripTrackingParameters). Stored `url` values are not
+// recomputed when the list changes; only new saves are affected.
 
 // Tracking parameters, matched case-insensitively. Every `utm_*` key is also removed.
 export const TRACKING_PARAMETERS: readonly string[] = Object.freeze([
@@ -77,8 +79,9 @@ export function normalizeUrl(input: string): string {
  * Removes tracking parameters (the same rule as normalizeUrl) from a URL before it is shown on
  * the save form and stored as `bookmarks.url`. Everything else stays as submitted: case,
  * encoding, parameter order, the trailing slash, and the fragment. Following the URL standard,
- * the query starts at the first `?` and ends at the first `#` after it. Callers validate the URL
- * first (CapturePayload).
+ * the fragment starts at the first `#`, and the query runs from the first `?` before it to the
+ * fragment. Callers validate the URL first with CapturePayload, which rejects raw spaces and
+ * control characters; a trailing raw space would otherwise be trimmed by the parser.
  */
 export function stripTrackingParameters(input: string): string {
   const fragmentStart = input.indexOf("#");
