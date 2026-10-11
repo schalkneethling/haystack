@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  AZURE_SAS_PARAMETERS,
   CREDENTIAL_PARAMETERS,
   detectSensitiveUrl,
   SIGNED_STORAGE_PARAMETERS,
@@ -10,6 +11,18 @@ function detect(url: string): SensitiveUrlReason | undefined {
   return detectSensitiveUrl(new URL(url));
 }
 
+// Written out, not read from the exported lists: removing a signal must fail a test.
+const SIGNED_STORAGE_LIST = ["x-amz-signature", "x-amz-credential", "x-goog-signature"];
+const CREDENTIAL_LIST = [
+  "access_token",
+  "id_token",
+  "refresh_token",
+  "api_key",
+  "apikey",
+  "password",
+  "client_secret",
+];
+
 // Each name in its listed form, in uppercase, and in mixed case.
 function caseVariants(name: string): string[] {
   // The names are ASCII, so each UTF-16 code unit is one character.
@@ -17,37 +30,55 @@ function caseVariants(name: string): string[] {
   return [name, name.toUpperCase(), mixed];
 }
 
-// Where a parameter can appear: the query string, the fragment, and a hash route's query.
-const placements: [string, (param: string) => string][] = [
+// Credential parameters can appear in the query string, the fragment, and a hash route's query.
+const credentialPlacements: [string, (param: string) => string][] = [
   ["query", (param) => `https://example.com/file?${param}`],
   ["fragment", (param) => `https://example.com/callback#${param}`],
   ["hash route", (param) => `https://example.com/#/callback?${param}`],
 ];
 
 describe("detectSensitiveUrl", () => {
-  describe.each(placements)("in the %s", (_, build) => {
-    it.each([...SIGNED_STORAGE_PARAMETERS].flatMap(caseVariants))(
-      "detects %s as a signed storage URL",
-      (name) => {
-        expect(detect(build(`${name}=abc123&other=1`))).toBe("signed-storage-url");
-      },
-    );
+  it("exports exactly the signals listed in this test", () => {
+    expect(SIGNED_STORAGE_PARAMETERS).toEqual(SIGNED_STORAGE_LIST);
+    expect(AZURE_SAS_PARAMETERS).toEqual(["sig", "se"]);
+    expect(CREDENTIAL_PARAMETERS).toEqual(CREDENTIAL_LIST);
+  });
 
-    it.each([...caseVariants("sig").map((sig) => [sig, "se"]), ["sig", "SE"]])(
-      "detects Azure SAS (%s with %s)",
-      (sig, se) => {
-        expect(detect(build(`sv=2024-01-01&${se}=2026-10-11&${sig}=abc123`))).toBe(
-          "signed-storage-url",
-        );
-      },
-    );
+  it("does not let importers change the lists", () => {
+    expect(Object.isFrozen(SIGNED_STORAGE_PARAMETERS)).toBe(true);
+    expect(Object.isFrozen(AZURE_SAS_PARAMETERS)).toBe(true);
+    expect(Object.isFrozen(CREDENTIAL_PARAMETERS)).toBe(true);
+  });
 
-    it.each([...CREDENTIAL_PARAMETERS].flatMap(caseVariants))(
+  it.each(SIGNED_STORAGE_LIST.flatMap(caseVariants))(
+    "detects %s in the query as a signed storage URL",
+    (name) => {
+      expect(detect(`https://example.com/file?${name}=abc123&other=1`)).toBe("signed-storage-url");
+    },
+  );
+
+  const [sigName, seName] = AZURE_SAS_PARAMETERS;
+  it.each(caseVariants(sigName).flatMap((sig) => caseVariants(seName).map((se) => [sig, se])))(
+    "detects Azure SAS (%s with %s) in the query",
+    (sig, se) => {
+      expect(detect(`https://example.com/f?sv=2024-01-01&${se}=2026-10-11&${sig}=abc`)).toBe(
+        "signed-storage-url",
+      );
+    },
+  );
+
+  describe.each(credentialPlacements)("in the %s", (_, build) => {
+    it.each(CREDENTIAL_LIST.flatMap(caseVariants))(
       "detects %s as a credential parameter",
       (name) => {
         expect(detect(build(`${name}=abc123`))).toBe("credential-parameter");
       },
     );
+
+    it.each(CREDENTIAL_LIST)("accepts %s without a value", (name) => {
+      expect(detect(build(`${name}=`))).toBeUndefined();
+      expect(detect(build(name))).toBeUndefined();
+    });
   });
 
   it("detects an S3 pre-signed URL", () => {
@@ -76,6 +107,12 @@ describe("detectSensitiveUrl", () => {
     ["a credential name as a value", "https://example.com/docs?param=access_token"],
     ["a credential name as part of a longer name", "https://example.com/docs?access_token_docs=1"],
     ["a fragment that is a heading id", "https://example.com/docs#access-token"],
+    ["a heading anchor named like a credential", "https://docs.example.com/oauth#access_token"],
+    ["a heading anchor named like an API key", "https://docs.example.com/config#api_key"],
+    ["a bare password parameter", "https://example.com/docs?password"],
+    ["a storage signature name in the fragment", "https://example.com/docs#x-amz-signature=abc"],
+    ["Azure SAS names split across query and fragment", "https://example.com/?sig=on#se=x"],
+    ["Azure SAS names in the fragment", "https://example.com/#sig=a&se=b"],
     ["an ordinary URL", "https://example.com/article?page=2#comments"],
   ])("accepts %s", (_, url) => {
     expect(detect(url)).toBeUndefined();

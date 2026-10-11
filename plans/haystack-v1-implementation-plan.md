@@ -594,6 +594,8 @@ Detection can only be partial. Many capability URLs look like ordinary URLs, so 
 - query parameters or fragments carrying credentials, such as `access_token`, `id_token`, `refresh_token`, `api_key`, `apikey`, `password`, and `client_secret`
 - credentials embedded in the URL itself (`https://user:password@host`)
 
+The function is `detectSensitiveUrl` (#20). A parameter counts only when it has a non-empty value, so a documentation anchor such as `#access_token` is accepted. Parameter names match case-insensitively. Storage signatures count in the query string only. Credential parameters also count in the fragment, including a hash route's query (`#/callback?access_token=…`). The function checks the URL as submitted, not the normalized one, which has no fragment or credentials left. A token nested inside another parameter's encoded value (for example an encoded `redirect=` URL) is not detected. The Milestone 2 check covers what this list cannot.
+
 The list is deliberately narrow, because a match is a hard refusal with no override. Broad signals such as a parameter named `token` or `code` appear in too many legitimate URLs (documentation sites, OAuth guides) to refuse outright. Additions to the list are made in code, each with a test case, including a test proving that a similar legitimate URL is still accepted.
 
 The check runs in three places:
