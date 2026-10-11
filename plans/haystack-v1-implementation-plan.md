@@ -335,6 +335,14 @@ Two submissions of the same URL can race, for example from two tabs. The second 
 
 The extension puts the URL, the canonical URL if present, `document.title`, the meta description, and the Open Graph title, description, and site name into the `/save` query string. The same Valibot schema in `packages/schemas` validates the payload twice: in the extension before building the URL, and on the server for both the GET prefill and the POST submission. Every field except the URL is optional, and strings are trimmed and length-capped. The extension truncates to the same caps so the save URL stays well within URL length limits. The URL must use the `http` or `https` scheme. The canonical URL, if present, must too.
 
+The schema is `CapturePayload` in `packages/schemas` (#18):
+
+- **Query keys:** `url`, `canonical_url`, `title`, `description`, `og_title`, `og_description`, `og_site_name`.
+- **Caps (`CAPTURE_CAPS`, in characters):** 2,048 for both URLs, 200 for the titles, 300 for the descriptions, and 100 for the site name. With these caps, a worst-case save URL (non-ASCII text, percent-encoded) stays under 16 KB.
+- **Over-cap values are rejected, not truncated.** The extension truncates to the exported caps before validating.
+- **Empty values:** an optional field that is empty after trimming is absent.
+- **The URL** keeps its submitted form, apart from trimming.
+
 ### GitHub enrichment
 
 For repository URLs, call `GET /repos/{owner}/{repo}` and `GET /repos/{owner}/{repo}/readme`. Keep a README excerpt of roughly the first 2,000 characters, with Markdown syntax stripped. Use a `GITHUB_TOKEN` secret to avoid the low rate limit for unauthenticated requests. A GitHub failure must not fail the bookmark. Fall back to the captured payload.

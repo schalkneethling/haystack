@@ -1,0 +1,9 @@
+// Shared by the Worker and the extension, so only APIs common to both (DOM's URL).
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"],
+    "types": []
+  },
+  "include": ["src"]
+}
