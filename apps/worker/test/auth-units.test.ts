@@ -28,6 +28,13 @@ describe("parseAllowedEmails", () => {
     expect(isEmailAllowed(parseAllowedEmails("a@example.com"), " A@EXAMPLE.com ")).toBe(true);
   });
 
+  it("does not fold non-ASCII characters into ASCII", () => {
+    // U+212A KELVIN SIGN lowercases to "k" with toLowerCase().
+    expect(isEmailAllowed(parseAllowedEmails("kate@example.com"), "\u212Aate@example.com")).toBe(
+      false,
+    );
+  });
+
   it("does not match a different address", () => {
     expect(isEmailAllowed(parseAllowedEmails("a@example.com"), "a@example.co")).toBe(false);
   });
@@ -72,7 +79,7 @@ describe("session tokens", () => {
 
   it.each([
     ["at the start of its life", SESSION_LIFETIME_MS, false],
-    ["just before the midpoint", SESSION_LIFETIME_MS / 2, false],
+    ["at the midpoint", SESSION_LIFETIME_MS / 2, false],
     ["just after the midpoint", SESSION_LIFETIME_MS / 2 - 1, true],
     ["near expiry", 1000, true],
   ])("extends a session %s: %s", (_, remaining, expected) => {

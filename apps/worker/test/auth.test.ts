@@ -88,6 +88,11 @@ describe("without a session", () => {
     expect(response.headers.get("location")).toBe("/auth/sign-in");
   });
 
+  it("redirects a HEAD page request to sign-in", async () => {
+    const response = await server.fetch("/", { method: "HEAD", headers: page, redirect: "manual" });
+    expect(response.status).toBe(302);
+  });
+
   it("answers 401 to any other request", async () => {
     const response = await get("/api/search");
     expect(response.status).toBe(401);
@@ -97,6 +102,11 @@ describe("without a session", () => {
     const response = await get("/auth/signed-out", page);
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("You are signed out of Haystack.");
+  });
+
+  it("answers HEAD on an /auth/* page", async () => {
+    const response = await server.fetch("/auth/signed-out", { method: "HEAD" });
+    expect(response.status).toBe(200);
   });
 
   it("rejects a cookie that is not a stored session, and clears it", async () => {
@@ -148,6 +158,7 @@ describe("with a session", () => {
     const { sessionId, idHash } = await seedSession("owner@example.com", -1);
     const response = await get("/", { ...page, ...cookieFor(sessionId) });
     expect(response.status).toBe(302);
+    expect(response.headers.get("set-cookie")).toContain("__Host-session=; Max-Age=0");
     expect(await sessionExpiry(idHash)).toBeUndefined();
   });
 
@@ -173,6 +184,26 @@ describe("Origin check", () => {
       redirect: "manual",
     });
     expect(response.status).toBe(403);
+  });
+
+  it("rejects a cross-origin POST to an app route with a valid session", async () => {
+    const { sessionId } = await seedSession("owner@example.com", SESSION_LIFETIME_MS - DAY);
+    const response = await server.fetch("/bookmarks/1/delete", {
+      method: "POST",
+      headers: { origin: "https://evil.example", ...cookieFor(sessionId) },
+      redirect: "manual",
+    });
+    expect(response.status).toBe(403);
+  });
+
+  it("lets a same-origin POST to an app route reach the router", async () => {
+    const { sessionId } = await seedSession("owner@example.com", SESSION_LIFETIME_MS - DAY);
+    const response = await server.fetch("/bookmarks/1/delete", {
+      method: "POST",
+      headers: { origin, ...cookieFor(sessionId) },
+      redirect: "manual",
+    });
+    expect(response.status).toBe(404);
   });
 
   it("rejects a cross-origin POST even with a valid session", async () => {

@@ -31,11 +31,12 @@ function isSameOriginRequest(request: Request): boolean {
   return request.headers.get("origin") === new URL(request.url).origin;
 }
 
+function isReadRequest(request: Request): boolean {
+  return request.method === "GET" || request.method === "HEAD";
+}
+
 function isPageRequest(request: Request): boolean {
-  return (
-    (request.method === "GET" || request.method === "HEAD") &&
-    (request.headers.get("accept") ?? "").includes("text/html")
-  );
+  return isReadRequest(request) && (request.headers.get("accept") ?? "").includes("text/html");
 }
 
 async function handleAuthRoute(request: Request, db: Db, path: string): Promise<Response> {
@@ -46,10 +47,10 @@ async function handleAuthRoute(request: Request, db: Db, path: string): Promise<
     }
     return redirect("/auth/signed-out", 303, { "set-cookie": serializeClearedSessionCookie() });
   }
-  if (path === "/auth/signed-out" && request.method === "GET") {
+  if (path === "/auth/signed-out" && isReadRequest(request)) {
     return text("You are signed out of Haystack.", 200);
   }
-  if (path === "/auth/sign-in" && request.method === "GET") {
+  if (path === "/auth/sign-in" && isReadRequest(request)) {
     // Google sign-in arrives in #26.
     return text("Sign-in is not available yet.", 501);
   }
@@ -92,10 +93,13 @@ export default {
     }
 
     const response = handleAppRoute(request, session);
-    if (session.extended) {
-      const maxAgeSeconds = Math.floor((session.expiresAt - now) / 1000);
-      response.headers.append("set-cookie", serializeSessionCookie(sessionId, maxAgeSeconds));
+    if (!session.extended) {
+      return response;
     }
-    return response;
+    // A response from fetch() or Response.redirect() has immutable headers, so copy it first.
+    const extended = new Response(response.body, response);
+    const maxAgeSeconds = Math.floor((session.expiresAt - now) / 1000);
+    extended.headers.append("set-cookie", serializeSessionCookie(sessionId, maxAgeSeconds));
+    return extended;
   },
 } satisfies ExportedHandler<Env>;
