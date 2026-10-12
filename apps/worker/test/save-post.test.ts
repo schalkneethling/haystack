@@ -1,0 +1,167 @@
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
+import { createTestHarness } from "wrangler";
+import { seedSignedInUser, type SeededUser } from "./seed.ts";
+import { expectValidHtml } from "./validate-html.ts";
+
+const server = createTestHarness({
+  workers: [
+    {
+      configPath: new URL("../wrangler.jsonc", import.meta.url),
+      vars: { ALLOWED_EMAILS: "owner@example.com, second@example.com" },
+    },
+  ],
+});
+let origin: string;
+
+beforeAll(async () => {
+  origin = (await server.listen()).url.origin;
+  await server.getWorker().applyD1Migrations("DB");
+});
+
+afterAll(async () => {
+  await server.close();
+});
+
+async function db() {
+  return (await server.getWorker().getEnv()).DB;
+}
+
+let owner: SeededUser;
+
+beforeEach(async () => {
+  const DB = await db();
+  await DB.batch([
+    DB.prepare("DELETE FROM bookmarks"),
+    DB.prepare("DELETE FROM sessions"),
+    DB.prepare("DELETE FROM users"),
+  ]);
+  owner = await seedSignedInUser(DB, "owner@example.com");
+});
+
+// What the form from GET /save submits for this captured page.
+const submission = {
+  url: "https://example.com/article?id=7",
+  canonical_url: "https://example.com/article?id=7",
+  title: "Document title",
+  description: "Meta description",
+  og_title: "Sharing title",
+  og_description: "Sharing description",
+  og_site_name: "Example",
+  confirmed_title: "  My title  ",
+  confirmed_description: "My description",
+};
+
+function post(fields: Record<string, string>, headers: Record<string, string> = {}) {
+  return server.fetch("/save", {
+    method: "POST",
+    headers: { origin, cookie: owner.cookie, ...headers },
+    body: new URLSearchParams(fields),
+    redirect: "manual",
+  });
+}
+
+async function bookmarks(): Promise<Record<string, unknown>[]> {
+  const { results } = await (await db()).prepare("SELECT * FROM bookmarks").all();
+  return results;
+}
+
+describe("POST /save", () => {
+  it("creates the bookmark under the signed-in user with the confirmed values", async () => {
+    const response = await post(submission);
+    expect(response.status).toBe(200);
+    const markup = await response.text();
+    expect(markup).toContain("<h1>Saved</h1>");
+    await expectValidHtml(markup);
+
+    const [bookmark] = await bookmarks();
+    expect(bookmark).toMatchObject({
+      user_id: owner.userId,
+      url: "https://example.com/article?id=7",
+      normalized_url: "https://example.com/article?id=7",
+      title: "My title",
+      description: "My description",
+      canonical_url: "https://example.com/article?id=7",
+      captured_title: "Document title",
+      captured_description: "Meta description",
+      og_title: "Sharing title",
+      og_description: "Sharing description",
+      og_site_name: "Example",
+    });
+    expect(bookmark?.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(markup).toContain(`href="/#bookmark-${String(bookmark?.id)}"`);
+  });
+
+  it("stores no description when the confirmed description is empty", async () => {
+    await post({ ...submission, confirmed_description: "   " });
+    expect((await bookmarks())[0]?.description).toBeNull();
+  });
+
+  it("removes tracking parameters, even when the hidden input was tampered with", async () => {
+    await post({ ...submission, url: "https://example.com/article?id=7&utm_source=mail&fbclid=x" });
+    expect((await bookmarks())[0]?.url).toBe("https://example.com/article?id=7");
+  });
+
+  it("ignores a user_id in the form", async () => {
+    const other = await seedSignedInUser(await db(), "second@example.com");
+    await post({ ...submission, user_id: other.userId });
+    expect((await bookmarks())[0]?.user_id).toBe(owner.userId);
+  });
+
+  it("lets two users save the same URL independently", async () => {
+    const other = await seedSignedInUser(await db(), "second@example.com");
+    await post(submission);
+    await post(submission, { cookie: other.cookie });
+    expect((await bookmarks()).map((b) => b.user_id).sort()).toEqual(
+      [owner.userId, other.userId].sort(),
+    );
+  });
+
+  it("shows already saved for a URL the user saved before", async () => {
+    await post(submission);
+    const response = await post({ ...submission, url: "https://example.com/article?id=7#again" });
+    expect(await response.text()).toContain("<h1>You already saved this link</h1>");
+    expect(await bookmarks()).toHaveLength(1);
+  });
+
+  it("gives one bookmark and an already-saved result for two concurrent submissions", async () => {
+    const responses = await Promise.all([post(submission), post(submission)]);
+    const headings = await Promise.all(
+      responses.map(async (r) => /<h1>([^<]*)<\/h1>/.exec(await r.text())?.[1]),
+    );
+    expect(responses.map((r) => r.status)).toEqual([200, 200]);
+    expect(headings.sort()).toEqual(["Saved", "You already saved this link"]);
+    expect(await bookmarks()).toHaveLength(1);
+  });
+
+  it.each([
+    ["without a session", { cookie: "" }, 401],
+    ["from another origin", { origin: "https://evil.example" }, 403],
+  ])("is rejected %s", async (_, headers, status) => {
+    const response = await post(submission, headers);
+    expect(response.status).toBe(status);
+    expect(await bookmarks()).toHaveLength(0);
+  });
+
+  it.each([
+    ["a javascript: URL", { url: "javascript:alert(1)" }],
+    ["a data: URL", { url: "data:text/html,hi" }],
+    ["an empty confirmed title", { confirmed_title: "   " }],
+    ["a confirmed title over its cap", { confirmed_title: "a".repeat(201) }],
+    ["a confirmed description over its cap", { confirmed_description: "a".repeat(301) }],
+  ])("rejects %s", async (_, fields) => {
+    const response = await post({ ...submission, ...fields });
+    expect(response.status).toBe(400);
+    await expectValidHtml(await response.text());
+    expect(await bookmarks()).toHaveLength(0);
+  });
+
+  it("refuses a sensitive URL without echoing it, checked before stripping", async () => {
+    const response = await post({
+      ...submission,
+      url: "https://example.com/cb?utm_source=x&access_token=secret-value",
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).not.toContain("secret-value");
+    expect(await bookmarks()).toHaveLength(0);
+  });
+});

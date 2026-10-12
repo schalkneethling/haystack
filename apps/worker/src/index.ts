@@ -18,7 +18,7 @@ import {
 } from "./auth/sessions.ts";
 import { upsertUser } from "./auth/users.ts";
 import { createDb, type Db } from "./db/client.ts";
-import { showSaveForm } from "./save.ts";
+import { saveBookmark, showSaveForm } from "./save.ts";
 import {
   accountNotAllowedPage,
   notFoundPage,
@@ -164,6 +164,9 @@ async function handleAppRoute(
   const path = new URL(request.url).pathname;
   if (path === "/save" && request.method === "GET") {
     return showSaveForm(request, db, session.user.id);
+  }
+  if (path === "/save" && request.method === "POST") {
+    return saveBookmark(request, db, session.user.id);
   }
   return notFoundPage();
 }

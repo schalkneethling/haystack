@@ -592,6 +592,13 @@ The sensitive URL check always runs on the URL as submitted, before tracking par
 - A sensitive URL gets a refusal page with one explanation per reason code (400), and the URL is not shown.
 - An already-saved URL links to `/#bookmark-<id>` (Phase 4).
 
+`POST /save` was implemented in #32:
+
+- It validates the hidden inputs again with `validateCapturePayload`.
+- The confirmed title must be 1 to 200 characters and the description up to 300, after trimming. An empty description is stored as `NULL`.
+- It runs `detectSensitiveUrl` on the submitted URL, strips it, and inserts with `ON CONFLICT DO NOTHING RETURNING` on the `(user_id, normalized_url)` index. When nothing is returned, a concurrent submission inserted first, and the page shows the existing bookmark as "already saved". No error is raised.
+- The result is a page (no redirect), so reloading it shows "already saved".
+
 On submission, the edited values are stored as the bookmark's `title` and `description`, and the raw captured values are stored alongside them as evidence for enrichment. The recent saves list and the search result cards show the confirmed `title` and `description`. There is no editing after saving.
 
 ## Sensitive URLs
