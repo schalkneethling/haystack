@@ -752,6 +752,14 @@ One configuration module reads every flag once per request, or once per sweep ru
 
 **End-to-end tests** use Playwright for the search page and the save form, including keyboard-only operation and an axe accessibility scan. The extension is tested in Chromium by launching a persistent context with `--load-extension`. Playwright cannot load Firefox extensions, so Firefox is covered by a documented manual check using `web-ext run`.
 
+Set up in #11:
+
+- The browser tests live in `apps/worker/e2e` (`*.e2e.ts`, so Vitest does not pick them up), because they test the pages the Worker renders. The extension tests (Phase 5) live with the extension.
+- Each Playwright worker process starts the Worker with `createTestHarness` and applies the migrations (`e2e/fixtures.ts`). So the browser tests need no dev server and no secrets, and they can seed sessions in D1 like the integration tests do.
+- Only Chromium is used.
+- They run as part of `vp run quality` (`vp run -r test:e2e`), and CI installs Chromium before it.
+- The Phase 6 run against production needs a different fixture.
+
 **Evaluations** live in `evals/` and are separate from the test suite. They run only when explicitly invoked with a live key. The labeled dataset is a set of queries, each with the bookmark IDs that should and should not match. It starts with roughly 30 queries written by Schalk against his own bookmarks.
 
 ## Milestones and phases

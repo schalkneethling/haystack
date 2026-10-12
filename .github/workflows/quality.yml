@@ -27,4 +27,6 @@ jobs:
           node-version: "24"
           cache: true
 
+      # Only the browser the Playwright projects use, with its system dependencies.
+      - run: vp exec --filter @haystack/worker playwright install --with-deps chromium
       - run: vp run quality
