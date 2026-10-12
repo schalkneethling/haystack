@@ -1,4 +1,10 @@
-export { CAPTURE_CAPS, CapturePayload } from "./capture-payload.ts";
+export {
+  CAPTURE_CAPS,
+  type CaptureField,
+  CapturePayload,
+  type CaptureValidation,
+  validateCapturePayload,
+} from "./capture-payload.ts";
 export {
   AZURE_SAS_PARAMETERS,
   CREDENTIAL_PARAMETERS,

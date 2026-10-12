@@ -13,6 +13,7 @@
     "e2e:install": "playwright install --only-shell chromium"
   },
   "dependencies": {
+    "@haystack/schemas": "workspace:*",
     "drizzle-orm": "^0.45.4",
     "oauth4webapi": "^3.8.8"
   },

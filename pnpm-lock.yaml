@@ -214,6 +214,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@haystack/schemas':
+        specifier: workspace:*
+        version: link:../../packages/schemas
       drizzle-orm:
         specifier: ^0.45.4
         version: 0.45.4

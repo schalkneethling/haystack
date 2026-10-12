@@ -18,6 +18,7 @@ import {
 } from "./auth/sessions.ts";
 import { upsertUser } from "./auth/users.ts";
 import { createDb, type Db } from "./db/client.ts";
+import { showSaveForm } from "./save.ts";
 import {
   accountNotAllowedPage,
   notFoundPage,
@@ -155,7 +156,15 @@ async function handleAuthRoute(
 }
 
 // Routes that need a session. Each phase adds its own.
-function handleAppRoute(_request: Request, _session: AuthenticatedSession): Response {
+async function handleAppRoute(
+  request: Request,
+  db: Db,
+  session: AuthenticatedSession,
+): Promise<Response> {
+  const path = new URL(request.url).pathname;
+  if (path === "/save" && request.method === "GET") {
+    return showSaveForm(request, db, session.user.id);
+  }
   return notFoundPage();
 }
 
@@ -194,7 +203,7 @@ export default {
       return unauthenticated(request, sessionId !== undefined);
     }
 
-    const response = handleAppRoute(request, session);
+    const response = await handleAppRoute(request, db, session);
     if (!session.extended) {
       return response;
     }
