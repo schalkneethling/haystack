@@ -37,7 +37,7 @@ const SENSITIVE_REASONS: Record<SensitiveUrlReason, string> = {
     "This link contains an access token, key, or password, so it could let anyone who has it act as you.",
 };
 
-const SENSITIVE_NOTICE = html`<p>
+const SENSITIVE_NOTICE = html`<p id="sensitive-notice">
   Do not save links that contain access tokens, private shares, or sign-in and password reset
   links. Saved links are sent to the services that describe them, so a private link would no
   longer be private.
@@ -63,7 +63,10 @@ function invalidPage(invalidFields: readonly CaptureField[]): Response {
       <ul>
         ${invalidFields.map((field) => html`<li>${FIELD_LABELS[field]}</li>`)}
       </ul>
-      <p>Addresses must start with http:// or https://, and text fields have length limits.</p>`,
+      <p>
+        Addresses must be complete http:// or https:// links without spaces, and text fields have
+        length limits.
+      </p>`,
     400,
   );
 }
@@ -105,13 +108,14 @@ function truncate(value: string, maxLength: number): string {
 }
 
 function formPage(payload: CapturePayload, url: string): Response {
-  const title = payload.og_title ?? payload.title ?? url;
+  // A text input drops line breaks, which would join words, so whitespace runs become spaces.
+  const title = (payload.og_title ?? payload.title ?? url).replace(/\s+/g, " ");
   const description = payload.og_description ?? payload.description ?? "";
   return htmlResponse(
     "Save a link",
     html`<h1>Save a link</h1>
       <form method="post" action="/save">
-        <p>Address: ${url}</p>
+        <p><strong>Address:</strong> <span id="save-address">${url}</span></p>
         ${SENSITIVE_NOTICE}
         <p>
           <label for="confirmed-title">Title</label>
@@ -134,7 +138,9 @@ function formPage(payload: CapturePayload, url: string): Response {
           >${description}</textarea>
         </p>
         ${hiddenInputs(payload, url)}
-        <p><button type="submit">Save</button></p>
+        <p>
+          <button type="submit" aria-describedby="save-address sensitive-notice">Save</button>
+        </p>
       </form>`,
     200,
   );

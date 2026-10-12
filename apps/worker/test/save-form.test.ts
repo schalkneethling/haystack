@@ -49,19 +49,28 @@ async function getSave(fields: Record<string, string>, cookie: string | null = o
   });
 }
 
-async function bookmarkCount(): Promise<number> {
-  const row = await (await db()).prepare("SELECT count(*) AS n FROM bookmarks").first();
-  return row.n;
-}
+const ENTITIES: Record<string, string> = {
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&#39;": "'",
+};
 
-// The value of the named form control, as the browser would submit it.
+// The value of the named form control, as the browser would submit it. Expects `name` before
+// `value`, as the Worker renders them.
 function formValue(markup: string, name: string): string | undefined {
   const input = new RegExp(`<input[^>]*name="${name}"[^>]*value="([^"]*)"`).exec(markup);
-  if (input !== null) {
-    return input[1];
-  }
   const textarea = new RegExp(`<textarea[^>]*name="${name}"[^>]*>([^<]*)</textarea>`).exec(markup);
-  return textarea?.[1];
+  const raw = input?.[1] ?? textarea?.[1];
+  return raw?.replace(/&(amp|lt|gt|quot|#39);/g, (entity) => ENTITIES[entity] ?? entity);
+}
+
+async function rowCounts(): Promise<Record<string, number>> {
+  const DB = await db();
+  const tables = ["users", "sessions", "auth_flows", "bookmarks"];
+  const results = await DB.batch(tables.map((t) => DB.prepare(`SELECT count(*) AS n FROM ${t}`)));
+  return Object.fromEntries(tables.map((t, i) => [t, results[i].results[0].n]));
 }
 
 const article = {
@@ -84,17 +93,18 @@ describe("GET /save", () => {
   });
 
   it("shows the form without writing anything", async () => {
+    const before = await rowCounts();
     const response = await getSave(article);
     expect(response.status).toBe(200);
     const markup = await response.text();
     expect(markup).toContain('<form method="post" action="/save">');
-    expect(await bookmarkCount()).toBe(0);
+    expect(await rowCounts()).toEqual(before);
     await expectValidHtml(markup);
   });
 
   it("shows and submits the URL with tracking parameters removed", async () => {
     const markup = await (await getSave(article)).text();
-    expect(markup).toContain("<p>Address: https://example.com/article?id=7#top</p>");
+    expect(markup).toContain('<span id="save-address">https://example.com/article?id=7#top</span>');
     expect(formValue(markup, "url")).toBe("https://example.com/article?id=7#top");
   });
 
@@ -130,6 +140,34 @@ describe("GET /save", () => {
     const markup = await (await getSave(fields)).text();
     expect(formValue(markup, "confirmed_title")).toBe(title);
     expect(formValue(markup, "confirmed_description")).toBe(description);
+  });
+
+  it("collapses line breaks in the title prefill, keeping the raw value", async () => {
+    const markup = await (
+      await getSave({ url: "https://example.com/", og_title: "Hello\nWorld" })
+    ).text();
+    expect(formValue(markup, "confirmed_title")).toBe("Hello World");
+    expect(formValue(markup, "og_title")).toBe("Hello\nWorld");
+  });
+
+  it("cuts a long URL used as the title to the title cap", async () => {
+    const url = `https://example.com/${"a".repeat(300)}`;
+    expect(formValue(await (await getSave({ url })).text(), "confirmed_title")).toBe(
+      url.slice(0, 200),
+    );
+  });
+
+  it("does not split an emoji when cutting the URL used as the title", async () => {
+    const prefix = `https://example.com/${"a".repeat(179)}`;
+    expect(prefix).toHaveLength(199);
+    const url = `${prefix}\u{1F600}${"b".repeat(10)}`;
+    expect(formValue(await (await getSave({ url })).text(), "confirmed_title")).toBe(prefix);
+  });
+
+  it("describes the Save button with the address and the notice", async () => {
+    expect(await (await getSave(article)).text()).toContain(
+      'aria-describedby="save-address sensitive-notice"',
+    );
   });
 
   it("shows the sensitive URL notice", async () => {
@@ -180,9 +218,8 @@ describe("GET /save", () => {
     await expectValidHtml(markup);
   });
 
-  it("checks for sensitive URLs before removing tracking parameters", async () => {
-    // A credential parameter is not a tracking parameter, so stripping would not remove it, but
-    // the order matters for any future signal that a stripped key could hide.
+  // The detect-then-strip order cannot be observed today: no tracking key is also a signal.
+  it("refuses a credential parameter next to tracking parameters", async () => {
     const response = await getSave({
       url: "https://example.com/?utm_source=x&api_key=secret-value",
     });

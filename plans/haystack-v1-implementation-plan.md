@@ -586,7 +586,8 @@ The sensitive URL check always runs on the URL as submitted, before tracking par
 
 `GET /save` was implemented in #31:
 
-- The editable fields are named `confirmed_title` and `confirmed_description`. The hidden inputs keep the `CapturePayload` keys (`url` is the stripped URL).
+- The editable fields are named `confirmed_title` and `confirmed_description`. The hidden inputs keep the `CapturePayload` keys and carry the values as validated: trimmed, with empty fields omitted, and `url` stripped.
+- A GET writes nothing, except that a session in the second half of its life is extended (see "Site sign-in").
 - `validateCapturePayload` (`@haystack/schemas`) names the invalid fields, never their values. The validation page lists them in plain language (400).
 - A sensitive URL gets a refusal page with one explanation per reason code (400), and the URL is not shown.
 - An already-saved URL links to `/#bookmark-<id>` (Phase 4).
