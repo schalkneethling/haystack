@@ -594,8 +594,8 @@ The sensitive URL check always runs on the URL as submitted, before tracking par
 
 `POST /save` was implemented in #32:
 
-- It validates the hidden inputs again with `validateCapturePayload`.
-- The confirmed title must be 1 to 200 characters and the description up to 300, after trimming. An empty description is stored as `NULL`.
+- It validates the hidden inputs again with `validateCapturePayload`, after normalizing CRLF to LF. Browsers submit each line break as CRLF, including in hidden inputs, while GET rendered LF. The stored raw values are therefore exactly what GET validated and showed: trimmed, with LF line breaks.
+- The confirmed title must be 1 to 200 characters and the description up to 300, after trimming. Whitespace in the title is collapsed, and an empty description is stored as `NULL`. An invalid value shows the form again, with the submitted values and an inline error (`aria-invalid`, `aria-describedby`). A body that is not a form gets a 400 page.
 - It runs `detectSensitiveUrl` on the submitted URL, strips it, and inserts with `ON CONFLICT DO NOTHING RETURNING` on the `(user_id, normalized_url)` index. When nothing is returned, a concurrent submission inserted first, and the page shows the existing bookmark as "already saved". No error is raised.
 - The result is a page (no redirect), so reloading it shows "already saved".
 
