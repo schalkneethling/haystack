@@ -213,8 +213,11 @@ function formField(form: FormData, name: string): string | undefined {
 function confirmedValues(
   form: FormData,
 ): { title: string; description: string | null } | undefined {
-  const title = (formField(form, "confirmed_title") ?? "").trim();
-  const description = (formField(form, "confirmed_description") ?? "").trim();
+  // Form submission sends each line break as CRLF, while the browser's maxlength counts it as
+  // one character. Normalizing first keeps an edit the form allowed within the cap.
+  const field = (name: string) => (formField(form, name) ?? "").replaceAll("\r\n", "\n").trim();
+  const title = field("confirmed_title");
+  const description = field("confirmed_description");
   if (
     title === "" ||
     title.length > CAPTURE_CAPS.title ||

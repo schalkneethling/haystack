@@ -96,6 +96,14 @@ describe("POST /save", () => {
     expect((await bookmarks())[0]?.description).toBeNull();
   });
 
+  it("counts a submitted line break (CRLF) as one character, as the form's maxlength does", async () => {
+    const description = "ab\r\n".repeat(100);
+    expect(description).toHaveLength(400);
+    const response = await post({ ...submission, confirmed_description: description });
+    expect(response.status).toBe(200);
+    expect((await bookmarks())[0]?.description).toBe("ab\n".repeat(100).trim());
+  });
+
   it("removes tracking parameters, even when the hidden input was tampered with", async () => {
     await post({ ...submission, url: "https://example.com/article?id=7&utm_source=mail&fbclid=x" });
     expect((await bookmarks())[0]?.url).toBe("https://example.com/article?id=7");
