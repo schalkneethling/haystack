@@ -11,7 +11,8 @@
     "db:migrate:local": "wrangler d1 migrations apply DB --local"
   },
   "dependencies": {
-    "drizzle-orm": "^0.45.4"
+    "drizzle-orm": "^0.45.4",
+    "oauth4webapi": "^3.8.8"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.62.5",

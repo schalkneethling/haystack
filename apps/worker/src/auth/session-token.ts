@@ -1,6 +1,8 @@
 // Pure helpers for session IDs. The raw ID lives only in the cookie; the database stores its
 // SHA-256 hash, so a database leak does not expose usable session IDs.
 
+import { sha256Hex } from "./sha256.ts";
+
 export const SESSION_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
 
 function base64url(bytes: Uint8Array): string {
@@ -17,9 +19,8 @@ export function generateSessionId(): string {
 }
 
 /** The hex SHA-256 hash of a session ID, as stored in `sessions.id_hash`. */
-export async function hashSessionId(sessionId: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(sessionId));
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+export function hashSessionId(sessionId: string): Promise<string> {
+  return sha256Hex(sessionId);
 }
 
 /**

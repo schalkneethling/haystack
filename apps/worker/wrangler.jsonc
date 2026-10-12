@@ -13,10 +13,19 @@
       "migrations_dir": "migrations",
     },
   ],
+  // The Google OAuth client's local redirect URI is http://localhost:5173/auth/callback.
+  "dev": { "port": 5173 },
   // Static configuration (plan, "Secrets and configuration"). Tests override these.
   "vars": {
     // Comma-separated. Checked at sign-in and on every request.
     "ALLOWED_EMAILS": "volume4.schalk@gmail.com",
+    // Google OpenID Connect. The client ID is public (RFC 6749, section 2.2); the secret is in
+    // `secrets`. Endpoints match https://accounts.google.com/.well-known/openid-configuration.
+    "GOOGLE_CLIENT_ID": "1038205631826-jnqo837tfurq0hovmavo98bc62s4475k.apps.googleusercontent.com",
+    "GOOGLE_ISSUER": "https://accounts.google.com",
+    "GOOGLE_AUTHORIZATION_ENDPOINT": "https://accounts.google.com/o/oauth2/v2/auth",
+    "GOOGLE_TOKEN_ENDPOINT": "https://oauth2.googleapis.com/token",
+    "GOOGLE_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
   },
   // Values come from .env.schema through varlock. A secret is added here in the change
   // that first uses it (GOOGLE_CLIENT_SECRET is the exception, see #8).

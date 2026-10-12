@@ -3,7 +3,12 @@ import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import { sessions, users } from "../db/schema.ts";
 import { isEmailAllowed } from "./allowlist.ts";
-import { hashSessionId, SESSION_LIFETIME_MS, shouldExtendSession } from "./session-token.ts";
+import {
+  generateSessionId,
+  hashSessionId,
+  SESSION_LIFETIME_MS,
+  shouldExtendSession,
+} from "./session-token.ts";
 
 export interface SessionUser {
   id: string;
@@ -15,6 +20,20 @@ export interface AuthenticatedSession {
   expiresAt: number;
   // True when this request extended the session, so the cookie must be sent again.
   extended: boolean;
+}
+
+/** Creates a session for the user and returns the raw ID for the cookie. */
+export async function createSession(
+  db: Db,
+  userId: string,
+  now: number,
+): Promise<{ sessionId: string; expiresAt: number }> {
+  const sessionId = generateSessionId();
+  const expiresAt = now + SESSION_LIFETIME_MS;
+  await db
+    .insert(sessions)
+    .values({ idHash: await hashSessionId(sessionId), userId, expiresAt, createdAt: now });
+  return { sessionId, expiresAt };
 }
 
 /**
