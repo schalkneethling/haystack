@@ -65,7 +65,7 @@ export const test = base.extend<
     await use(() => haystackWorker.signIn(context));
   },
   query: async ({ haystackWorker }, use) => {
-    await use(haystackWorker.query);
+    await use((sql, ...values) => haystackWorker.query(sql, ...values));
   },
 });
 

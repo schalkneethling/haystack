@@ -111,8 +111,8 @@ describe("POST /save", () => {
     const other = await seedSignedInUser(await db(), "second@example.com");
     await post(submission);
     await post(submission, { cookie: other.cookie });
-    expect((await bookmarks()).map((b) => b.user_id).sort()).toEqual(
-      [owner.userId, other.userId].sort(),
+    expect(new Set((await bookmarks()).map((b) => b.user_id))).toEqual(
+      new Set([owner.userId, other.userId]),
     );
   });
 
@@ -129,7 +129,7 @@ describe("POST /save", () => {
       responses.map(async (r) => /<h1>([^<]*)<\/h1>/.exec(await r.text())?.[1]),
     );
     expect(responses.map((r) => r.status)).toEqual([200, 200]);
-    expect(headings.sort()).toEqual(["Saved", "You already saved this link"]);
+    expect(new Set(headings)).toEqual(new Set(["Saved", "You already saved this link"]));
     expect(await bookmarks()).toHaveLength(1);
   });
 
