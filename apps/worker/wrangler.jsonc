@@ -13,6 +13,11 @@
       "migrations_dir": "migrations",
     },
   ],
+  // Static configuration (plan, "Secrets and configuration"). Tests override these.
+  "vars": {
+    // Comma-separated. Checked at sign-in and on every request.
+    "ALLOWED_EMAILS": "volume4.schalk@gmail.com",
+  },
   // Values come from .env.schema through varlock. A secret is added here in the change
   // that first uses it (GOOGLE_CLIENT_SECRET is the exception, see #8).
   "secrets": {

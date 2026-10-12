@@ -671,9 +671,14 @@ The site uses the Google OpenID Connect authorization code flow with PKCE and a 
 
 On success, the server creates a session with a random ID, stores only its SHA-256 hash in `sessions`, and sets the raw ID in a cookie with the `__Host-` prefix and the `HttpOnly`, `Secure`, `SameSite=Lax`, and `Path=/` attributes. Every state-changing request also checks the `Origin` header as CSRF protection alongside `SameSite`. Sign-out deletes the session row and clears the cookie.
 
-Sessions last 30 days and slide: a request in the second half of a session's life extends its expiry, so the database is not written on every request. Every request also checks the session user's email against `ALLOWED_EMAILS`, so removing an address takes effect immediately rather than when the session expires. The allowlist check needs the email stored on the user row, which is refreshed at each sign-in. Expired sessions are deleted by the scheduled handler once it exists in Milestone 2. Until then, expired rows are ignored by the session lookup.
+Sessions last 30 days and slide: a request in the second half of a session's life extends its expiry, so the database is not written on every request. Every request also checks the session user's email against `ALLOWED_EMAILS`, so removing an address takes effect immediately rather than when the session expires. The allowlist check needs the email stored on the user row, which is refreshed at each sign-in. The session lookup deletes an expired row it finds, and the scheduled handler deletes the rest from Milestone 2.
 
-Every page and API route except `/auth/*` requires a session. Unauthenticated page requests redirect to sign-in, and unauthenticated API requests return 401. Static assets (CSS, JavaScript, fonts, images) are public, and must never contain user data.
+Every page and API route except `/auth/*` requires a session. Unauthenticated page requests redirect to sign-in, and unauthenticated API requests return 401. A page request is a GET or HEAD whose `Accept` header includes `text/html`; every other request counts as an API request. Static assets (CSS, JavaScript, fonts, images) are public, and must never contain user data. Implemented in #25:
+
+- The cookie is `__Host-session`. The session ID is 32 random bytes, base64url-encoded, and the stored hash is its hex SHA-256.
+- `ALLOWED_EMAILS` is a comma-separated `vars` entry, matched without regard to ASCII case. Only A to Z are folded, so a non-ASCII lookalike does not match.
+- The `Origin` check applies to every method other than GET, HEAD, and OPTIONS, including `/auth/*`.
+- Sign-out is `POST /auth/sign-out`, which redirects to `/auth/signed-out`.
 
 By default, Workers serves a matching static asset without running the Worker. Keep all HTML out of the assets directory so that every page goes through the Worker. If an HTML route must ever live in the assets directory, configure Wrangler to run the Worker first for that path (verify the current `run_worker_first` configuration) and add a test proving it redirects without a session.
 
@@ -683,7 +688,7 @@ When an unauthenticated request needs sign-in, the path and query to return to a
 
 ### Rules that hold everywhere
 
-No endpoint accepts a `user_id` from the client. Session IDs are compared by hash lookup, not string equality on raw values. Every query that reads or writes user data filters by the authenticated `user_id`, and a test for each endpoint proves that one user cannot read another user's bookmarks or search logs.
+No endpoint accepts a `user_id` from the client. Pages never send `Referrer-Policy: no-referrer`: with it, browsers send `Origin: null` on same-origin form posts, and the `Origin` check would reject every one. Use `strict-origin-when-cross-origin` or `same-origin`. Session IDs are compared by hash lookup, not string equality on raw values. Every query that reads or writes user data filters by the authenticated `user_id`, and a test for each endpoint proves that one user cannot read another user's bookmarks or search logs.
 
 ## Secrets and configuration
 

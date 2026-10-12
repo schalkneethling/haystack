@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "varlock-wrangler dev",
-    "types": "wrangler types",
-    "types:check": "wrangler types --check",
+    "types": "wrangler types --strict-vars=false",
+    "types:check": "wrangler types --strict-vars=false --check",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply DB --local"
   },
