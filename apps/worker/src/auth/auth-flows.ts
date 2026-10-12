@@ -1,6 +1,6 @@
 // OAuth state, PKCE verifier, and return target, kept server-side between sign-in and the
 // callback. See "Return targets" in plans/haystack-v1-implementation-plan.md.
-import { eq } from "drizzle-orm";
+import { eq, lte } from "drizzle-orm";
 import {
   calculatePKCECodeChallenge,
   generateRandomCodeVerifier,
@@ -18,6 +18,9 @@ export async function createAuthFlow(
   returnTo: string,
   now: number,
 ): Promise<{ state: string; codeChallenge: string }> {
+  // Anyone can start sign-in, so expired flows are removed here rather than left until the
+  // scheduled cleanup arrives in Milestone 2.
+  await db.delete(authFlows).where(lte(authFlows.expiresAt, now));
   const state = generateRandomState();
   const codeVerifier = generateRandomCodeVerifier();
   await db.insert(authFlows).values({

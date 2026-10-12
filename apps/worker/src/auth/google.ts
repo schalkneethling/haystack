@@ -19,13 +19,34 @@ export interface GoogleIdentity {
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
+// oauth4webapi caches Google's keys per AuthorizationServer object, so one object is kept for
+// each configuration rather than built per request.
+const authorizationServers = new Map<string, oauth.AuthorizationServer>();
+
 function authorizationServer(config: GoogleConfig): oauth.AuthorizationServer {
-  return {
-    issuer: config.GOOGLE_ISSUER,
-    authorization_endpoint: config.GOOGLE_AUTHORIZATION_ENDPOINT,
-    token_endpoint: config.GOOGLE_TOKEN_ENDPOINT,
-    jwks_uri: config.GOOGLE_JWKS_URI,
-  };
+  const key = [
+    config.GOOGLE_ISSUER,
+    config.GOOGLE_AUTHORIZATION_ENDPOINT,
+    config.GOOGLE_TOKEN_ENDPOINT,
+    config.GOOGLE_JWKS_URI,
+  ].join(" ");
+  let as = authorizationServers.get(key);
+  if (as === undefined) {
+    as = {
+      issuer: config.GOOGLE_ISSUER,
+      authorization_endpoint: config.GOOGLE_AUTHORIZATION_ENDPOINT,
+      token_endpoint: config.GOOGLE_TOKEN_ENDPOINT,
+      jwks_uri: config.GOOGLE_JWKS_URI,
+    };
+    authorizationServers.set(key, as);
+  }
+  return as;
+}
+
+function isHttpsOrLoopback(url: URL): boolean {
+  return (
+    url.protocol === "https:" || (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname))
+  );
 }
 
 // oauth4webapi refuses http: endpoints. The tests' fixture server is http: on a loopback host,
@@ -36,11 +57,7 @@ export function allowsInsecureRequests(config: GoogleConfig): boolean {
   const endpoints = [config.GOOGLE_TOKEN_ENDPOINT, config.GOOGLE_JWKS_URI].map(
     (value) => new URL(value),
   );
-  const usesHttp = endpoints.some((url) => url.protocol === "http:");
-  const httpOnlyOnLoopback = endpoints.every(
-    (url) => url.protocol === "https:" || LOOPBACK_HOSTS.has(url.hostname),
-  );
-  return usesHttp && httpOnlyOnLoopback;
+  return endpoints.some((url) => url.protocol === "http:") && endpoints.every(isHttpsOrLoopback);
 }
 
 function requestOptions(config: GoogleConfig): { [oauth.allowInsecureRequests]?: boolean } {
@@ -55,6 +72,10 @@ export function authorizationUrl(
   codeChallenge: string,
 ): string {
   const url = new URL(config.GOOGLE_AUTHORIZATION_ENDPOINT);
+  // The browser sends state and the PKCE challenge here, so it must use TLS outside tests.
+  if (!isHttpsOrLoopback(url)) {
+    throw new TypeError("The authorization endpoint must use https");
+  }
   url.searchParams.set("client_id", config.GOOGLE_CLIENT_ID);
   url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("response_type", "code");

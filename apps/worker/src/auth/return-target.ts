@@ -20,7 +20,9 @@ export function safeReturnTarget(value: string | null): string {
   } catch {
     return "/";
   }
-  if (url.origin !== PLACEHOLDER_ORIGIN) {
+  // Dot segments collapse during parsing, so `/.//host` resolves to the path `//host`, which a
+  // browser would read as another host. The result must also be safe when parsed again.
+  if (url.origin !== PLACEHOLDER_ORIGIN || url.pathname.startsWith("//")) {
     return "/";
   }
   return `${url.pathname}${url.search}${url.hash}`;

@@ -1,10 +1,13 @@
-import { parseAllowedEmails } from "./auth/allowlist.ts";
+import { isEmailAllowed, parseAllowedEmails } from "./auth/allowlist.ts";
+import { AUTH_FLOW_LIFETIME_MS, consumeAuthFlow, createAuthFlow } from "./auth/auth-flows.ts";
 import {
+  readAuthFlowCookie,
   readSessionCookie,
+  serializeAuthFlowCookie,
+  serializeClearedAuthFlowCookie,
   serializeClearedSessionCookie,
   serializeSessionCookie,
 } from "./auth/cookie.ts";
-import { consumeAuthFlow, createAuthFlow } from "./auth/auth-flows.ts";
 import { authorizationUrl, completeSignIn } from "./auth/google.ts";
 import { safeReturnTarget } from "./auth/return-target.ts";
 import {
@@ -14,7 +17,6 @@ import {
   deleteSession,
 } from "./auth/sessions.ts";
 import { upsertUser } from "./auth/users.ts";
-import { isEmailAllowed } from "./auth/allowlist.ts";
 import { createDb, type Db } from "./db/client.ts";
 
 // Until Phase 3 adds the escaping templating approach, responses are plain text and never
@@ -56,27 +58,47 @@ function redirectUri(request: Request): string {
 async function signIn(request: Request, env: Env, db: Db): Promise<Response> {
   const returnTo = safeReturnTarget(new URL(request.url).searchParams.get("return_to"));
   const { state, codeChallenge } = await createAuthFlow(db, returnTo, Date.now());
-  return redirect(authorizationUrl(env, redirectUri(request), state, codeChallenge), 302);
+  return redirect(authorizationUrl(env, redirectUri(request), state, codeChallenge), 302, {
+    "set-cookie": serializeAuthFlowCookie(state, AUTH_FLOW_LIFETIME_MS / 1000),
+  });
 }
 
-// Failures are logged by kind only: the callback URL carries the code and state.
-async function callback(request: Request, env: Env, db: Db): Promise<Response> {
+// The error code is a fixed string (for example OAUTH_JWT_CLAIM_COMPARISON_FAILED). The message
+// and cause are not logged, because they can contain the callback's parameters and claims.
+function errorCode(error: unknown): string {
+  if (error instanceof Error && "code" in error && typeof error.code === "string") {
+    return error.code;
+  }
+  return error instanceof Error ? error.name : "unknown error";
+}
+
+async function completeCallback(request: Request, env: Env, db: Db): Promise<Response> {
   const url = new URL(request.url);
   const state = url.searchParams.get("state");
+  // Login CSRF: only the browser that started this sign-in may finish it. Checked before the
+  // flow is consumed, so a forwarded link cannot use up the real user's flow.
+  if (state === null || readAuthFlowCookie(request.headers.get("cookie")) !== state) {
+    return text("This sign-in link has expired or was already used. Please sign in again.", 400);
+  }
   const now = Date.now();
-  const flow = state === null ? undefined : await consumeAuthFlow(db, state, now);
-  if (state === null || flow === undefined) {
+  const flow = await consumeAuthFlow(db, state, now);
+  if (flow === undefined) {
     return text("This sign-in link has expired or was already used. Please sign in again.", 400);
   }
   let identity;
   try {
     identity = await completeSignIn(env, url, state, flow.codeVerifier, redirectUri(request));
   } catch (error) {
-    console.error("Sign-in failed:", error instanceof Error ? error.name : "unknown error");
+    console.error("Sign-in failed:", errorCode(error));
     return text("Sign-in failed. Please try again.", 400);
   }
   if (!isEmailAllowed(parseAllowedEmails(env.ALLOWED_EMAILS), identity.email)) {
     return text("This Google account is not allowed to use Haystack.", 403);
+  }
+  // A browser that was already signed in drops its old session rather than leaving it behind.
+  const previousSessionId = readSessionCookie(request.headers.get("cookie"));
+  if (previousSessionId !== undefined) {
+    await deleteSession(db, previousSessionId);
   }
   const userId = await upsertUser(db, identity, now);
   const { sessionId, expiresAt } = await createSession(db, userId, now);
@@ -84,6 +106,13 @@ async function callback(request: Request, env: Env, db: Db): Promise<Response> {
   return redirect(safeReturnTarget(flow.returnTo), 302, {
     "set-cookie": serializeSessionCookie(sessionId, maxAgeSeconds),
   });
+}
+
+// Every callback outcome clears the flow cookie: a flow is never retried.
+async function callback(request: Request, env: Env, db: Db): Promise<Response> {
+  const response = await completeCallback(request, env, db);
+  response.headers.append("set-cookie", serializeClearedAuthFlowCookie());
+  return response;
 }
 
 async function handleAuthRoute(

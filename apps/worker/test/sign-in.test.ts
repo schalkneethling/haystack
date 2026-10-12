@@ -54,6 +54,7 @@ async function s256(verifier: string): Promise<string> {
 
 interface PendingCode {
   codeChallenge: string;
+  redirectUri: string;
   claims: Record<string, unknown>;
   signingKey: CryptoKey;
 }
@@ -89,6 +90,7 @@ function startFixture(): Promise<void> {
         form.get("grant_type") === "authorization_code" &&
         form.get("client_id") === CLIENT_ID &&
         form.get("client_secret") === CLIENT_SECRET &&
+        form.get("redirect_uri") === pending.redirectUri &&
         (await s256(verifier)) === pending.codeChallenge;
       if (!valid) {
         response.writeHead(400, { "content-type": "application/json" });
@@ -118,6 +120,7 @@ function startFixture(): Promise<void> {
 }
 
 let server: ReturnType<typeof createTestHarness>;
+let workerOrigin: string;
 
 beforeAll(async () => {
   googleKey = await generateKey();
@@ -139,7 +142,7 @@ beforeAll(async () => {
       },
     ],
   });
-  await server.listen();
+  workerOrigin = (await server.listen()).url.origin;
   await server.getWorker().applyD1Migrations("DB");
 });
 
@@ -176,32 +179,44 @@ function idTokenClaims(overrides: Record<string, unknown> = {}): Record<string, 
   };
 }
 
-// Starts sign-in and returns the authorization request parameters the Worker sent to "Google".
-async function startSignIn(returnTo?: string): Promise<URLSearchParams> {
+interface SignInStart {
+  authorization: URLSearchParams;
+  // The browser's binding cookie, as `name=value`.
+  flowCookie: string;
+}
+
+// Starts sign-in and returns what the Worker sent to "Google", and the cookie it set.
+async function startSignIn(returnTo?: string): Promise<SignInStart> {
   const query = returnTo === undefined ? "" : `?return_to=${encodeURIComponent(returnTo)}`;
   const response = await server.fetch(`/auth/sign-in${query}`, { redirect: "manual" });
   expect(response.status).toBe(302);
   const location = new URL(response.headers.get("location") ?? "");
   expect(location.origin + location.pathname).toBe(`${fixtureOrigin}/authorize`);
-  return location.searchParams;
+  const flowCookie = (response.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+  return { authorization: location.searchParams, flowCookie };
 }
 
 interface CallbackOptions {
   claims?: Record<string, unknown>;
   signingKey?: CryptoKey;
   codeChallenge?: string;
+  // The Cookie header the browser sends. Defaults to the flow cookie from startSignIn.
+  cookie?: string | null;
 }
 
 // Plays Google's side: registers a code, then sends the browser back to the callback.
-async function callBack(authorization: URLSearchParams, options: CallbackOptions = {}) {
+async function callBack({ authorization, flowCookie }: SignInStart, options: CallbackOptions = {}) {
   const code = crypto.randomUUID();
   codes.set(code, {
     codeChallenge: options.codeChallenge ?? authorization.get("code_challenge") ?? "",
+    redirectUri: authorization.get("redirect_uri") ?? "",
     claims: options.claims ?? idTokenClaims(),
     signingKey: options.signingKey ?? googleKey.privateKey,
   });
   const state = authorization.get("state") ?? "";
+  const cookie = options.cookie === undefined ? flowCookie : options.cookie;
   return server.fetch(`/auth/callback?code=${code}&state=${encodeURIComponent(state)}`, {
+    headers: cookie === null ? {} : { cookie },
     redirect: "manual",
   });
 }
@@ -217,14 +232,22 @@ async function counts(): Promise<{ users: number; sessions: number }> {
 
 describe("authorization request", () => {
   it("uses PKCE with S256, the configured client, and the callback as redirect URI", async () => {
-    const authorization = await startSignIn();
+    const { authorization } = await startSignIn();
     expect(authorization.get("client_id")).toBe(CLIENT_ID);
     expect(authorization.get("response_type")).toBe("code");
     expect(authorization.get("scope")).toBe("openid email");
     expect(authorization.get("code_challenge_method")).toBe("S256");
     expect(authorization.get("code_challenge")).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(authorization.get("state")).toMatch(/^[A-Za-z0-9_-]+$/);
-    expect(new URL(authorization.get("redirect_uri") ?? "").pathname).toBe("/auth/callback");
+    expect(authorization.get("redirect_uri")).toBe(`${workerOrigin}/auth/callback`);
+  });
+
+  it("binds the flow to the browser with a short-lived cookie", async () => {
+    const response = await server.fetch("/auth/sign-in", { redirect: "manual" });
+    const state = new URL(response.headers.get("location") ?? "").searchParams.get("state");
+    expect(response.headers.get("set-cookie")).toBe(
+      `__Host-auth_flow=${state}; Max-Age=600; Path=/; HttpOnly; Secure; SameSite=Lax`,
+    );
   });
 });
 
@@ -233,6 +256,7 @@ describe("a successful sign-in", () => {
     const response = await callBack(await startSignIn("/save?url=https%3A%2F%2Fexample.com%2F"));
     expect(response.status).toBe(302);
     expect(response.headers.get("location")).toBe("/save?url=https%3A%2F%2Fexample.com%2F");
+    expect(response.headers.get("set-cookie")).toContain("__Host-auth_flow=; Max-Age=0");
     expect(response.headers.get("set-cookie")).toMatch(
       /^__Host-session=[A-Za-z0-9_-]{43}; Max-Age=2592000;/,
     );
@@ -254,10 +278,24 @@ describe("a successful sign-in", () => {
     "//evil.example/",
     "/\\evil.example/",
     "/\t/evil.example/",
+    "/.//evil.example/",
+    "/a/..//evil.example/",
+    "/%2e%2e//evil.example/",
+    "/.\\/evil.example/",
     "save",
   ])("falls back to / for the return target %j", async (returnTo) => {
     const response = await callBack(await startSignIn(returnTo));
     expect(response.headers.get("location")).toBe("/");
+  });
+
+  it("removes the session the browser already had", async () => {
+    const first = await callBack(await startSignIn());
+    const oldCookie = (first.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+    const start = await startSignIn();
+    await callBack(start, { cookie: `${oldCookie}; ${start.flowCookie}` });
+    expect((await counts()).sessions).toBe(1);
+    const app = await server.fetch("/api/search", { headers: { cookie: oldCookie } });
+    expect(app.status).toBe(401);
   });
 
   it("matches a returning user by sub and updates their email", async () => {
@@ -273,38 +311,56 @@ describe("a successful sign-in", () => {
 describe("a rejected sign-in", () => {
   async function expectRejected(response: Response, status: number) {
     expect(response.status).toBe(status);
-    expect(response.headers.get("set-cookie")).toBeNull();
+    const cookies = response.headers.get("set-cookie") ?? "";
+    expect(cookies).not.toContain("__Host-session=");
+    expect(cookies).toContain("__Host-auth_flow=; Max-Age=0");
     expect(await counts()).toEqual({ users: 0, sessions: 0 });
   }
 
   it("rejects an unknown state", async () => {
     const authorization = new URLSearchParams({ state: "unknown", code_challenge: "x" });
-    await expectRejected(await callBack(authorization), 400);
+    const start = { authorization, flowCookie: "__Host-auth_flow=unknown" };
+    await expectRejected(await callBack(start), 400);
+  });
+
+  it.each([
+    ["without the flow cookie", null],
+    ["with another flow's cookie", "__Host-auth_flow=another-state"],
+  ])("rejects a callback %s (login CSRF), and leaves the flow usable", async (_, cookie) => {
+    const start = await startSignIn();
+    await expectRejected(await callBack(start, { cookie }), 400);
+    expect((await callBack(start)).status).toBe(302);
+  });
+
+  it("clears the flow cookie when the callback fails", async () => {
+    const start = await startSignIn();
+    const response = await callBack(start, { claims: idTokenClaims({ aud: "another-client" }) });
+    expect(response.headers.get("set-cookie")).toContain("__Host-auth_flow=; Max-Age=0");
   });
 
   it("rejects a state that was already used", async () => {
-    const authorization = await startSignIn();
-    expect((await callBack(authorization)).status).toBe(302);
+    const start = await startSignIn();
+    expect((await callBack(start)).status).toBe(302);
     const DB = await db();
     await DB.batch([DB.prepare("DELETE FROM sessions"), DB.prepare("DELETE FROM users")]);
-    await expectRejected(await callBack(authorization), 400);
+    await expectRejected(await callBack(start), 400);
   });
 
   it("rejects an expired state", async () => {
-    const authorization = await startSignIn();
+    const start = await startSignIn();
     await (
       await db()
     )
       .prepare("UPDATE auth_flows SET expires_at = ?")
       .bind(Date.now() - 1)
       .run();
-    await expectRejected(await callBack(authorization), 400);
+    await expectRejected(await callBack(start), 400);
   });
 
   it("rejects a code exchanged with the wrong PKCE verifier", async () => {
-    const authorization = await startSignIn();
+    const start = await startSignIn();
     await expectRejected(
-      await callBack(authorization, { codeChallenge: await s256("another verifier") }),
+      await callBack(start, { codeChallenge: await s256("another verifier") }),
       400,
     );
   });

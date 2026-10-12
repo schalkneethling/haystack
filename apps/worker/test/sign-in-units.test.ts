@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { allowsInsecureRequests, completeSignIn, type GoogleConfig } from "../src/auth/google.ts";
+import {
+  allowsInsecureRequests,
+  authorizationUrl,
+  completeSignIn,
+  type GoogleConfig,
+} from "../src/auth/google.ts";
 import { safeReturnTarget } from "../src/auth/return-target.ts";
 
 describe("safeReturnTarget", () => {
@@ -21,9 +26,21 @@ describe("safeReturnTarget", () => {
     ["a relative path", "save"],
     ["a javascript: URL", "javascript:alert(1)"],
     ["an empty string", ""],
+    ["a dot segment before //", "/.//evil.example/"],
+    ["a parent segment before //", "/a/..//evil.example/"],
+    ["an encoded parent segment before //", "/%2e%2e//evil.example/"],
+    ["a dot segment before a backslash", "/.\\/evil.example/"],
   ])("falls back to / for %s", (_, value) => {
     expect(safeReturnTarget(value)).toBe("/");
   });
+
+  it.each(["/a/b?c=1#d", "/.//evil.example/", "/a/../b", "https://evil.example/", "/%2F%2Fevil"])(
+    "gives a result that is unchanged when applied again (%j)",
+    (value) => {
+      const once = safeReturnTarget(value);
+      expect(safeReturnTarget(once)).toBe(once);
+    },
+  );
 });
 
 describe("completeSignIn", () => {
@@ -62,6 +79,26 @@ describe("completeSignIn", () => {
     ],
   ])("allows insecure requests with %s: %s", (_, token, jwks, expected) => {
     expect(allowsInsecureRequests(config(token, jwks))).toBe(expected);
+  });
+
+  it.each([
+    ["https", "https://accounts.google.com/o/oauth2/v2/auth", true],
+    ["http on loopback", "http://127.0.0.1:1/authorize", true],
+    ["http elsewhere", "http://accounts.example/authorize", false],
+  ])("builds an authorization URL for a %s endpoint: %s", (_, endpoint, allowed) => {
+    const endpoints = config("https://oauth.example/token", "https://oauth.example/jwks");
+    const build = () =>
+      authorizationUrl(
+        { ...endpoints, GOOGLE_AUTHORIZATION_ENDPOINT: endpoint },
+        "https://haystack.example/auth/callback",
+        "state",
+        "challenge",
+      );
+    if (allowed) {
+      expect(new URL(build()).searchParams.get("state")).toBe("state");
+    } else {
+      expect(build).toThrow(/https/);
+    }
   });
 
   it("refuses an http: token endpoint on a host that is not loopback, before any request", async () => {
