@@ -18,9 +18,15 @@ import {
 } from "./auth/sessions.ts";
 import { upsertUser } from "./auth/users.ts";
 import { createDb, type Db } from "./db/client.ts";
+import {
+  accountNotAllowedPage,
+  notFoundPage,
+  signedOutPage,
+  signInFailedPage,
+  signInLinkExpiredPage,
+} from "./pages.ts";
 
-// Until Phase 3 adds the escaping templating approach, responses are plain text and never
-// interpolate user data.
+// Plain text for API answers (401) and blocked requests (403). Pages use htmlResponse.
 function text(body: string, status: number, headers: Record<string, string> = {}): Response {
   return new Response(body, {
     status,
@@ -78,22 +84,22 @@ async function completeCallback(request: Request, env: Env, db: Db): Promise<Res
   // Login CSRF: only the browser that started this sign-in may finish it. Checked before the
   // flow is consumed, so a forwarded link cannot use up the real user's flow.
   if (state === null || readAuthFlowCookie(request.headers.get("cookie")) !== state) {
-    return text("This sign-in link has expired or was already used. Please sign in again.", 400);
+    return signInLinkExpiredPage();
   }
   const now = Date.now();
   const flow = await consumeAuthFlow(db, state, now);
   if (flow === undefined) {
-    return text("This sign-in link has expired or was already used. Please sign in again.", 400);
+    return signInLinkExpiredPage();
   }
   let identity;
   try {
     identity = await completeSignIn(env, url, state, flow.codeVerifier, redirectUri(request));
   } catch (error) {
     console.error("Sign-in failed:", errorCode(error));
-    return text("Sign-in failed. Please try again.", 400);
+    return signInFailedPage();
   }
   if (!isEmailAllowed(parseAllowedEmails(env.ALLOWED_EMAILS), identity.email)) {
-    return text("This Google account is not allowed to use Haystack.", 403);
+    return accountNotAllowedPage();
   }
   // A browser that was already signed in drops its old session rather than leaving it behind.
   const previousSessionId = readSessionCookie(request.headers.get("cookie"));
@@ -129,7 +135,7 @@ async function handleAuthRoute(
     return redirect("/auth/signed-out", 303, { "set-cookie": serializeClearedSessionCookie() });
   }
   if (path === "/auth/signed-out" && isReadRequest(request)) {
-    return text("You are signed out of Haystack.", 200);
+    return signedOutPage();
   }
   if (path === "/auth/sign-in" && request.method === "GET") {
     return signIn(request, env, db);
@@ -137,12 +143,12 @@ async function handleAuthRoute(
   if (path === "/auth/callback" && request.method === "GET") {
     return callback(request, env, db);
   }
-  return text("Not found", 404);
+  return notFoundPage();
 }
 
 // Routes that need a session. Each phase adds its own.
 function handleAppRoute(_request: Request, _session: AuthenticatedSession): Response {
-  return text("Not found", 404);
+  return notFoundPage();
 }
 
 function signInLocation(request: Request): string {

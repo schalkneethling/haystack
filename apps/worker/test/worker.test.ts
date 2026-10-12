@@ -20,7 +20,7 @@ describe("worker", () => {
     const response = await server.fetch("/auth/unknown");
 
     expect(response.status).toBe(404);
-    expect(await response.text()).toBe("Not found");
+    expect(await response.text()).toContain("<h1>Page not found</h1>");
   });
 
   it("looks up a session cookie in D1", async () => {
