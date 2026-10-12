@@ -27,6 +27,7 @@ jobs:
           node-version: "24"
           cache: true
 
-      # Only the browser the Playwright projects use, with its system dependencies.
-      - run: vp exec --filter @haystack/worker playwright install --with-deps chromium
+      # The same browser as `vp run e2e:install` locally (headless shell only), plus its Linux
+      # system libraries. --fail-if-no-match makes a renamed package fail here, not later.
+      - run: vp exec --filter @haystack/worker --fail-if-no-match playwright install --with-deps --only-shell chromium
       - run: vp run quality

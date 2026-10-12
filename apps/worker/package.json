@@ -9,7 +9,8 @@
     "types:check": "wrangler types --strict-vars=false --check",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "e2e:install": "playwright install --only-shell chromium"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.4",

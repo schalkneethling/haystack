@@ -1,10 +1,10 @@
 // Smoke test: a page the Worker renders loads in a real browser and has no axe violations.
-// Later phases add a test per page; this one moves to the first signed-in page when it lands.
+// axe runs every rule, including best practices, on every page (plan, "Testing strategy").
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "./fixtures.ts";
 
-test("the signed-out page has no axe violations", async ({ page, haystack }) => {
-  await page.goto(haystack.url("/auth/signed-out"));
+test("the signed-out page has no axe violations", async ({ page }) => {
+  await page.goto("/auth/signed-out");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
     "You are signed out of Haystack",
   );
@@ -13,8 +13,8 @@ test("the signed-out page has no axe violations", async ({ page, haystack }) => 
   expect(results.violations).toEqual([]);
 });
 
-test("the signed-out page can be used with the keyboard", async ({ page, haystack }) => {
-  await page.goto(haystack.url("/auth/signed-out"));
+test("the first Tab stop on the signed-out page is the sign-in link", async ({ page }) => {
+  await page.goto("/auth/signed-out");
   await page.keyboard.press("Tab");
   await expect(page.getByRole("link", { name: "Sign in again" })).toBeFocused();
 });

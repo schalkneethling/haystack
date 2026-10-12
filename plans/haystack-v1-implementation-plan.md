@@ -755,9 +755,10 @@ One configuration module reads every flag once per request, or once per sweep ru
 Set up in #11:
 
 - The browser tests live in `apps/worker/e2e` (`*.e2e.ts`, so Vitest does not pick them up), because they test the pages the Worker renders. The extension tests (Phase 5) live with the extension.
-- Each Playwright worker process starts the Worker with `createTestHarness` and applies the migrations (`e2e/fixtures.ts`). So the browser tests need no dev server and no secrets, and they can seed sessions in D1 like the integration tests do.
+- Each Playwright worker process starts the Worker with `createTestHarness` and applies the migrations (`e2e/fixtures.ts`), and `baseURL` is that Worker's origin. So the browser tests need no dev server and no secrets. The fixture can be extended to seed D1, for example a signed-in user, as the integration tests do.
 - Only Chromium is used.
-- They run as part of `vp run quality` (`vp run -r test:e2e`), and CI installs Chromium before it.
+- They run as part of `vp run quality` (`vp run -r test:e2e`). Before the first run, install the browser once with `vp -C apps/worker run e2e:install` (Chromium's headless shell). Do it again after a Playwright upgrade. CI installs the same browser before `quality`.
+- axe runs every rule, including the best-practice rules, with no `withTags` filter. The best-practice rules (landmarks, heading order) matter for server-rendered pages.
 - The Phase 6 run against production needs a different fixture.
 
 **Evaluations** live in `evals/` and are separate from the test suite. They run only when explicitly invoked with a live key. The labeled dataset is a set of queries, each with the bookmark IDs that should and should not match. It starts with roughly 30 queries written by Schalk against his own bookmarks.

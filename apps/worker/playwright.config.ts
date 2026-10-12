@@ -7,7 +7,7 @@ export default defineConfig({
   testDir: "./e2e",
   // `.e2e.ts`, so `vp test` (Vitest) does not pick these up.
   testMatch: "**/*.e2e.ts",
-  forbidOnly: process.env.CI !== undefined,
-  reporter: process.env.CI === undefined ? "list" : [["list"], ["github"]],
+  forbidOnly: !!process.env.CI,
+  reporter: process.env.CI ? [["list"], ["github"]] : "list",
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 });
