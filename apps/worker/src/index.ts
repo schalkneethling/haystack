@@ -62,9 +62,17 @@ function redirectUri(request: Request): string {
 }
 
 async function signIn(request: Request, env: Env, db: Db): Promise<Response> {
-  const returnTo = safeReturnTarget(new URL(request.url).searchParams.get("return_to"));
+  const parameters = new URL(request.url).searchParams;
+  const returnTo = safeReturnTarget(parameters.get("return_to"));
   const { state, codeChallenge } = await createAuthFlow(db, returnTo, Date.now());
-  return redirect(authorizationUrl(env, redirectUri(request), state, codeChallenge), 302, {
+  const location = authorizationUrl(
+    env,
+    redirectUri(request),
+    state,
+    codeChallenge,
+    parameters.has("select_account"),
+  );
+  return redirect(location, 302, {
     "set-cookie": serializeAuthFlowCookie(state, AUTH_FLOW_LIFETIME_MS / 1000),
   });
 }

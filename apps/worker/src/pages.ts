@@ -1,5 +1,6 @@
 // Pages that every phase shares: sign-in outcomes and "not found". None of them interpolates
 // user data; later pages use the same `html` helper for anything that does.
+import { AUTH_FLOW_LIFETIME_MS } from "./auth/auth-flows.ts";
 import { html } from "./html.ts";
 import { htmlResponse } from "./page.ts";
 
@@ -9,7 +10,10 @@ export function signInLinkExpiredPage(): Response {
   return htmlResponse(
     "Sign-in link expired",
     html`<h1>This sign-in link has expired</h1>
-      <p>It was already used, or it is more than 10 minutes old.</p>
+      <p>
+        A sign-in link works once, for ${AUTH_FLOW_LIFETIME_MS / 60_000} minutes, and only in the
+        browser where you started signing in.
+      </p>
       ${signInAgain}`,
     400,
   );
@@ -30,7 +34,7 @@ export function accountNotAllowedPage(): Response {
     "Account not allowed",
     html`<h1>This Google account is not allowed to use Haystack</h1>
       <p>Haystack is invite-only. Sign in with an account that has access.</p>
-      ${signInAgain}`,
+      <p><a href="/auth/sign-in?select_account">Sign in with a different account</a></p>`,
     403,
   );
 }

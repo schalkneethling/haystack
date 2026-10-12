@@ -6,7 +6,7 @@ import { html, type SafeHtml } from "./html.ts";
 const CONTENT_SECURITY_POLICY =
   "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
 
-export const HTML_HEADERS: Readonly<Record<string, string>> = {
+const HTML_HEADERS: Readonly<Record<string, string>> = {
   "content-type": "text/html; charset=utf-8",
   "content-security-policy": CONTENT_SECURITY_POLICY,
   "x-content-type-options": "nosniff",
@@ -15,7 +15,7 @@ export const HTML_HEADERS: Readonly<Record<string, string>> = {
   "referrer-policy": "strict-origin-when-cross-origin",
 };
 
-export function page(title: string, content: SafeHtml): SafeHtml {
+function page(title: string, content: SafeHtml): SafeHtml {
   return html`<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -30,14 +30,6 @@ export function page(title: string, content: SafeHtml): SafeHtml {
 `;
 }
 
-export function htmlResponse(
-  title: string,
-  content: SafeHtml,
-  status: number,
-  headers: Record<string, string> = {},
-): Response {
-  return new Response(page(title, content).toString(), {
-    status,
-    headers: { ...HTML_HEADERS, ...headers },
-  });
+export function htmlResponse(title: string, content: SafeHtml, status: number): Response {
+  return new Response(page(title, content).toString(), { status, headers: HTML_HEADERS });
 }

@@ -1,24 +1,28 @@
 import { describe, expect, it } from "vite-plus/test";
-import { escapeHtml, html, SafeHtml } from "../src/html.ts";
+import { html, type SafeHtml } from "../src/html.ts";
 
-describe("escapeHtml", () => {
-  it.each([
-    ["&", "&amp;"],
-    ["<", "&lt;"],
-    [">", "&gt;"],
-    ['"', "&quot;"],
-    ["'", "&#39;"],
-  ])("escapes %s", (char, expected) => {
-    expect(escapeHtml(`a${char}b`)).toBe(`a${expected}b`);
+const characters = [
+  ["&", "&amp;"],
+  ["<", "&lt;"],
+  [">", "&gt;"],
+  ['"', "&quot;"],
+  ["'", "&#39;"],
+] as const;
+
+describe("html", () => {
+  it.each(characters)("escapes %s in element content", (char, expected) => {
+    expect(html`<p>${`a${char}b`}</p>`.toString()).toBe(`<p>a${expected}b</p>`);
+  });
+
+  it.each(characters)("escapes %s in a quoted attribute value", (char, expected) => {
+    expect(html`<a title="${`a${char}b`}">x</a>`.toString()).toBe(`<a title="a${expected}b">x</a>`);
   });
 
   it("escapes & first, so an entity in the input stays visible as text", () => {
-    expect(escapeHtml("&lt;")).toBe("&amp;lt;");
+    expect(html`${"&lt;"}`.toString()).toBe("&amp;lt;");
   });
-});
 
-describe("html", () => {
-  it("escapes interpolated text", () => {
+  it("keeps script in text inert", () => {
     expect(html`<p>${"<script>alert(1)</script>"}</p>`.toString()).toBe(
       "<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>",
     );
@@ -49,16 +53,21 @@ describe("html", () => {
     expect(html`<p>${value}</p>`.toString()).toBe("<p></p>");
   });
 
-  it("renders numbers", () => {
+  it("renders finite numbers", () => {
     expect(html`<p>${42}</p>`.toString()).toBe("<p>42</p>");
   });
 
-  it("returns SafeHtml", () => {
-    expect(html`<p></p>`).toBeInstanceOf(SafeHtml);
+  it.each([Number.NaN, Number.POSITIVE_INFINITY])("refuses %s", (value) => {
+    expect(() => html`<p>${value}</p>`).toThrow(TypeError);
   });
 
-  it("treats a SafeHtml-looking object as text", () => {
-    const fake = { toString: () => "<b>not safe</b>" } as unknown as string;
+  it("escapes an object that only looks like html", () => {
+    const fake = { toString: () => "<b>not safe</b>" } as unknown as SafeHtml;
     expect(html`${fake}`.toString()).toBe("&lt;b&gt;not safe&lt;/b&gt;");
+  });
+
+  it("escapes a fragment built with the constructor instead of html", () => {
+    const Fragment = Object.getPrototypeOf(html``).constructor as new (markup: string) => SafeHtml;
+    expect(html`${new Fragment("<b>raw</b>")}`.toString()).toBe("&lt;b&gt;raw&lt;/b&gt;");
   });
 });

@@ -70,6 +70,7 @@ export function authorizationUrl(
   redirectUri: string,
   state: string,
   codeChallenge: string,
+  selectAccount = false,
 ): string {
   const url = new URL(config.GOOGLE_AUTHORIZATION_ENDPOINT);
   // The browser sends state and the PKCE challenge here, so it must use TLS outside tests.
@@ -83,6 +84,10 @@ export function authorizationUrl(
   url.searchParams.set("state", state);
   url.searchParams.set("code_challenge", codeChallenge);
   url.searchParams.set("code_challenge_method", "S256");
+  // Without this, Google may sign the user straight back in with the account it remembers.
+  if (selectAccount) {
+    url.searchParams.set("prompt", "select_account");
+  }
   return url.href;
 }
 

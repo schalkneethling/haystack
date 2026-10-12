@@ -242,6 +242,15 @@ describe("authorization request", () => {
     expect(authorization.get("redirect_uri")).toBe(`${workerOrigin}/auth/callback`);
   });
 
+  it("asks Google to show the account chooser only when requested", async () => {
+    const plain = await server.fetch("/auth/sign-in", { redirect: "manual" });
+    expect(new URL(plain.headers.get("location") ?? "").searchParams.has("prompt")).toBe(false);
+    const chooser = await server.fetch("/auth/sign-in?select_account", { redirect: "manual" });
+    expect(new URL(chooser.headers.get("location") ?? "").searchParams.get("prompt")).toBe(
+      "select_account",
+    );
+  });
+
   it("binds the flow to the browser with a short-lived cookie", async () => {
     const response = await server.fetch("/auth/sign-in", { redirect: "manual" });
     const state = new URL(response.headers.get("location") ?? "").searchParams.get("state");
