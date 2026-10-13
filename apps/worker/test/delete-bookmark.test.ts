@@ -99,7 +99,7 @@ describe("POST /bookmarks/:id/delete", () => {
     const response = await postDelete(bookmarkId, confirmed);
     expect(response.status).toBe(200);
     const markup = await response.text();
-    expect(markup).toContain('<p role="status">Deleted “A guide”.</p>');
+    expect(markup).toContain('<div id="list-status" role="status"><p>Deleted “A guide”.</p></div>');
     expect(markup).toContain("<title>Deleted “A guide” - Saved links - Haystack</title>");
     expect(markup).not.toContain(`bookmark-${bookmarkId}`);
     expect(markup).toContain(`bookmark-${other}`);

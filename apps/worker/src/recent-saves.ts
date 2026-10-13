@@ -58,20 +58,25 @@ function item(save: RecentSave): SafeHtml {
       </li>`;
 }
 
+// The dialog script deletes items in place, so it reveals the empty state after the last one.
+const DELETE_DIALOG_SCRIPT = "/assets/delete-dialog.js";
+
 function list(saves: readonly RecentSave[], more: boolean): SafeHtml {
-  if (saves.length === 0) {
-    return html`<p>
+  const emptyState = html`<p id="empty-state"${saves.length === 0 ? null : html` hidden`}>
         You haven't saved any links yet. Links you save appear here, newest first.
       </p>`;
+  if (saves.length === 0) {
+    return emptyState;
   }
   // Before the list, so it is read first. It ends with the line break the list needs.
   const limitNote = more
     ? html`<p>Showing your ${RECENT_SAVES_LIMIT} most recent links.</p>
       `
     : null;
-  return html`${limitNote}<ol>
+  return html`${limitNote}<ol id="recent-saves">
         ${saves.map(item)}
-      </ol>`;
+      </ol>
+      ${emptyState}`;
 }
 
 /** Where a bookmark sits in the list's order. */
@@ -106,7 +111,8 @@ export async function isInRecentSaves(
 export interface Outcome {
   // Comes first in the page title.
   title: string;
-  // Shown below the heading. It starts with its own line break.
+  // Shown in the list's live region, which is on the page on every load, so the dialog
+  // script can announce a deletion in it.
   message: SafeHtml;
 }
 
@@ -131,9 +137,11 @@ export async function showRecentSaves(
   const saves = rows.slice(0, RECENT_SAVES_LIMIT);
   return htmlResponse(
     outcome === null ? "Saved links" : `${outcome.title} - Saved links`,
-    html`<h1>Saved links</h1>${outcome?.message}
+    html`<h1 id="list-heading">Saved links</h1>
+      <div id="list-status" role="status">${outcome?.message}</div>
       ${SENSITIVE_NOTICE}
       ${list(saves, rows.length > RECENT_SAVES_LIMIT)}`,
     200,
+    [DELETE_DIALOG_SCRIPT],
   );
 }
