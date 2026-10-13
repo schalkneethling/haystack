@@ -103,7 +103,7 @@ describe("without a session", () => {
   it("reaches /auth/* routes", async () => {
     const response = await get("/auth/signed-out", page);
     expect(response.status).toBe(200);
-    expect(await response.text()).toBe("You are signed out of Haystack.");
+    expect(await response.text()).toContain("<h1>You are signed out of Haystack</h1>");
   });
 
   it("answers HEAD on an /auth/* page", async () => {
@@ -123,7 +123,7 @@ describe("with a session", () => {
     const { sessionId } = await seedSession("owner@example.com", SESSION_LIFETIME_MS - DAY);
     const response = await get("/", { ...page, ...cookieFor(sessionId) });
     expect(response.status).toBe(404);
-    expect(await response.text()).toBe("Not found");
+    expect(await response.text()).toContain("<h1>Page not found</h1>");
   });
 
   it("matches the allowlist case-insensitively", async () => {
