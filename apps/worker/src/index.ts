@@ -163,7 +163,7 @@ async function handleAppRoute(
   session: AuthenticatedSession,
 ): Promise<Response> {
   const path = new URL(request.url).pathname;
-  if (path === "/" && request.method === "GET") {
+  if (path === "/" && isReadRequest(request)) {
     return showRecentSaves(db, session.user.id);
   }
   if (path === "/save" && request.method === "GET") {

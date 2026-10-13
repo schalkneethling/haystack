@@ -824,7 +824,8 @@ Acceptance: a bookmark saved through `/save` appears at the top of the list and 
 The list was implemented in #41:
 
 - `GET /` shows the newest 50 bookmarks, newest first (`created_at`, then ID). Above 50, the page says it shows the 50 most recent. Search replaces the limit in Milestone 3.
-- Each item is `<li id="bookmark-<id>">`, which the "already saved" and "saved" pages link to. It has the title as an `<h2>` link, the address as text, the description if there is one, and the date saved (`<time>`, formatted in UTC, because the server does not know the reader's time zone).
+- The "already saved" page links to the bookmark's anchor only when the list shows it. For an older bookmark, it says the bookmark is older than the 50 the list shows.
+- Each item is `<li id="bookmark-<id>">`, which the "already saved" and "saved" pages link to. It has the title as an `<h2>` link, the address as text, the description if there is one (with its line breaks as `<br>`), and the date saved (`<time>`, formatted in UTC, because the server does not know the reader's time zone).
 - `savedLink` renders an `href` only when the address passes `isHttpsUrl` (`@haystack/schemas`), and adds `rel="noreferrer"`. Any other stored address is shown as text.
 - axe runs in the page, so the scans run with JavaScript enabled. The acceptance test runs with JavaScript disabled.
 

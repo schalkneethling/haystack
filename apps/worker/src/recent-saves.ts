@@ -1,11 +1,11 @@
 // The recent saves list at `/` (plan, Phase 4). Milestone 3 replaces it with the search page.
 import { isHttpsUrl } from "@haystack/schemas";
-import { desc, eq } from "drizzle-orm";
+import { and, count, desc, eq, gt, or } from "drizzle-orm";
 import type { Db } from "./db/client.ts";
 import { bookmarks } from "./db/schema.ts";
 import { html, type SafeHtml } from "./html.ts";
+import { SENSITIVE_NOTICE } from "./notices.ts";
 import { htmlResponse } from "./page.ts";
-import { SENSITIVE_NOTICE } from "./save.ts";
 
 // Until search arrives, the list shows the newest links only.
 export const RECENT_SAVES_LIMIT = 50;
@@ -34,13 +34,18 @@ interface RecentSave {
 
 // An optional part starts with its own line break and sits at the end of the line before it,
 // so leaving it out leaves no blank line in the page.
+// Line breaks typed into the description are kept as <br>.
+function withLineBreaks(text: string): SafeHtml {
+  return html`${text.split("\n").map((line, index) => (index === 0 ? line : html`<br>${line}`))}`;
+}
+
 function item(save: RecentSave): SafeHtml {
   const saved = new Date(save.createdAt);
   const description =
     save.description === null
       ? null
       : html`
-        <p>${save.description}</p>`;
+        <p>${withLineBreaks(save.description)}</p>`;
   return html`<li id="bookmark-${save.id}">
         <h2>${savedLink(save.url, save.title)}</h2>
         <p>${save.url}</p>${description}
@@ -51,8 +56,7 @@ function item(save: RecentSave): SafeHtml {
 function list(saves: readonly RecentSave[], more: boolean): SafeHtml {
   if (saves.length === 0) {
     return html`<p>
-        You haven't saved any links yet. Links you save with the Haystack browser extension appear
-        here, newest first.
+        You haven't saved any links yet. Links you save appear here, newest first.
       </p>`;
   }
   // Before the list, so it is read first. It ends with the line break the list needs.
@@ -63,6 +67,34 @@ function list(saves: readonly RecentSave[], more: boolean): SafeHtml {
   return html`${limitNote}<ol>
         ${saves.map(item)}
       </ol>`;
+}
+
+/** Where a bookmark sits in the list's order. */
+export interface ListPosition {
+  id: string;
+  createdAt: number;
+}
+
+/** Whether the bookmark is among the ones the list shows, in the list's order. */
+export async function isInRecentSaves(
+  db: Db,
+  userId: string,
+  { id, createdAt }: ListPosition,
+): Promise<boolean> {
+  const newer = await db
+    .select({ n: count() })
+    .from(bookmarks)
+    .where(
+      and(
+        eq(bookmarks.userId, userId),
+        or(
+          gt(bookmarks.createdAt, createdAt),
+          and(eq(bookmarks.createdAt, createdAt), gt(bookmarks.id, id)),
+        ),
+      ),
+    )
+    .get();
+  return (newer?.n ?? 0) < RECENT_SAVES_LIMIT;
 }
 
 export async function showRecentSaves(db: Db, userId: string): Promise<Response> {

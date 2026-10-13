@@ -136,6 +136,7 @@ describe("GET /", () => {
     const markup = await listMarkup();
     expect(markup).toContain("<h2>Saved before https only</h2>");
     expect(markup).not.toContain('href="http://example.com/old"');
+    expect(markup).toContain("<p>http://example.com/old</p>");
   });
 
   it("shows the sensitive URL notice", async () => {
@@ -153,11 +154,68 @@ describe("GET /", () => {
     await expectValidHtml(markup);
   });
 
-  it(`does not mention the limit with exactly ${RECENT_SAVES_LIMIT} bookmarks`, async () => {
+  it(`shows all ${RECENT_SAVES_LIMIT} without mentioning the limit at exactly that many`, async () => {
     for (let index = 0; index < RECENT_SAVES_LIMIT; index += 1) {
       await save(`https://example.com/${index}`);
     }
-    expect(await listMarkup()).not.toContain("most recent links");
+    const markup = await listMarkup();
+    expect(itemIds(markup)).toHaveLength(RECENT_SAVES_LIMIT);
+    expect(markup).not.toContain("most recent links");
+  });
+
+  it("keeps line breaks in the description", async () => {
+    await save("https://example.com/", { description: "First line\n<b>Second</b> line" });
+    expect(await listMarkup()).toContain("<p>First line<br>&lt;b&gt;Second&lt;/b&gt; line</p>");
+  });
+
+  it("answers HEAD like GET", async () => {
+    const response = await server.fetch("/", {
+      method: "HEAD",
+      headers: { accept: "text/html", cookie: owner.cookie },
+    });
+    expect(response.status).toBe(200);
+  });
+});
+
+describe("the already-saved page", () => {
+  async function alreadySaved(url: string): Promise<string> {
+    const response = await server.fetch(`/save?${new URLSearchParams({ url }).toString()}`, {
+      headers: { accept: "text/html", cookie: owner.cookie },
+    });
+    const markup = await response.text();
+    expect(markup).toContain("<h1>You already saved this link</h1>");
+    return markup;
+  }
+
+  it("links to the bookmark when the list shows it", async () => {
+    const id = await save("https://example.com/listed", { createdAt: 1 });
+    for (let index = 1; index < RECENT_SAVES_LIMIT; index += 1) {
+      await save(`https://example.com/${index}`, { createdAt: 1 + index });
+    }
+    expect(await alreadySaved("https://example.com/listed")).toContain(`href="/#bookmark-${id}"`);
+  });
+
+  it(`explains when the bookmark is older than the newest ${RECENT_SAVES_LIMIT}`, async () => {
+    const id = await save("https://example.com/older", { createdAt: 1 });
+    for (let index = 1; index <= RECENT_SAVES_LIMIT; index += 1) {
+      await save(`https://example.com/${index}`, { createdAt: 1 + index });
+    }
+    const markup = await alreadySaved("https://example.com/older");
+    expect(markup).not.toContain(`bookmark-${id}`);
+    expect(markup).toContain(`older than the ${RECENT_SAVES_LIMIT} most recent links`);
+    await expectValidHtml(markup);
+  });
+
+  it("orders bookmarks saved at the same moment as the list does", async () => {
+    const ids: string[] = [];
+    for (let index = 0; index <= RECENT_SAVES_LIMIT; index += 1) {
+      ids.push(await save(`https://example.com/${index}`, { createdAt: 5 }));
+    }
+    const listed = new Set(itemIds(await listMarkup()));
+    for (const [index, id] of ids.entries()) {
+      const markup = await alreadySaved(`https://example.com/${index}`);
+      expect(markup.includes(`bookmark-${id}`)).toBe(listed.has(id));
+    }
   });
 });
 
