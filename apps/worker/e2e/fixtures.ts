@@ -10,10 +10,12 @@ interface HaystackWorker {
   origin: string;
   /** Seeds a signed-in user and gives the browser context their session. */
   signIn(context: BrowserContext): Promise<void>;
+  /** Runs a read query against the Worker's D1, for checking what a flow stored. */
+  query(sql: string, ...values: unknown[]): Promise<Record<string, unknown>[]>;
 }
 
 export const test = base.extend<
-  { signIn: () => Promise<void> },
+  { signIn: () => Promise<void>; query: HaystackWorker["query"] },
   { haystackWorker: HaystackWorker }
 >({
   haystackWorker: [
@@ -42,6 +44,13 @@ export const test = base.extend<
             // handling is covered by the sign-in flow, not by these page tests.
             await context.setExtraHTTPHeaders({ cookie });
           },
+          query: async (sql, ...values) =>
+            (
+              await db
+                .prepare(sql)
+                .bind(...values)
+                .all()
+            ).results,
         });
       } finally {
         await server.close();
@@ -54,6 +63,9 @@ export const test = base.extend<
   },
   signIn: async ({ context, haystackWorker }, use) => {
     await use(() => haystackWorker.signIn(context));
+  },
+  query: async ({ haystackWorker }, use) => {
+    await use((sql, ...values) => haystackWorker.query(sql, ...values));
   },
 });
 
