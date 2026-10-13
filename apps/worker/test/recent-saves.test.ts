@@ -103,7 +103,7 @@ describe("GET /", () => {
     const markup = await listMarkup();
     expect(markup).toContain(`<li id="bookmark-${id}">`);
     expect(markup).toContain(
-      '<h2><a href="https://example.com/guide?page=2" rel="noreferrer">A guide</a></h2>',
+      `<h2 id="title-${id}"><a href="https://example.com/guide?page=2" rel="noreferrer">A guide</a></h2>`,
     );
     expect(markup).toContain("<p>https://example.com/guide?page=2</p>");
     expect(markup).toContain("<p>How to do the thing.</p>");
@@ -134,7 +134,7 @@ describe("GET /", () => {
   it("does not link a stored address that is not https", async () => {
     await save("http://example.com/old", { title: "Saved before https only" });
     const markup = await listMarkup();
-    expect(markup).toContain("<h2>Saved before https only</h2>");
+    expect(markup).toMatch(/<h2 id="title-[^"]+">Saved before https only<\/h2>/);
     expect(markup).not.toContain('href="http://example.com/old"');
     expect(markup).toContain("<p>http://example.com/old</p>");
   });
