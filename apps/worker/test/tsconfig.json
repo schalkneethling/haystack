@@ -1,8 +1,8 @@
-// Node-side code in this package: the tests and the tool configs.
+// Node-side code in this package: the tests, the browser tests, and the tool configs.
 {
   "extends": "../../../tsconfig.base.json",
   "compilerOptions": {
     "types": ["node"]
   },
-  "include": [".", "../vite.config.ts", "../drizzle.config.ts"]
+  "include": [".", "../e2e", "../vite.config.ts", "../drizzle.config.ts", "../playwright.config.ts"]
 }
