@@ -34,7 +34,12 @@ function parsesAsWritten(value: string, prefix: RegExp): boolean {
 // Haystack saves only https pages, so every saved address can be a link (decided 2026-10-13,
 // #40). The canonical URL is only enrichment evidence and is never linked, so an http one
 // does not stop a page from being saved.
-function isHttpsUrl(value: string): boolean {
+/**
+ * Whether a value is an https URL exactly as the URL parser reads it: an explicit `https://`
+ * prefix, and no spaces or control characters. Saved addresses pass this, and pages link only
+ * to addresses that do.
+ */
+export function isHttpsUrl(value: string): boolean {
   return parsesAsWritten(value, HTTPS_PREFIX);
 }
 

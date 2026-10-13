@@ -49,7 +49,7 @@ const SENSITIVE_REASONS: Record<SensitiveUrlReason, string> = {
     "This link contains an access token, key, or password, so it could let anyone who has it act as you.",
 };
 
-const SENSITIVE_NOTICE = html`<p id="sensitive-notice">
+export const SENSITIVE_NOTICE = html`<p id="sensitive-notice">
   Do not save links that contain access tokens, private shares, or sign-in and password reset
   links. Saved links are sent to the services that describe them, so a private link would no
   longer be private.

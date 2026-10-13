@@ -821,6 +821,13 @@ Build a server-rendered page at `/` listing the signed-in user's bookmarks, newe
 Tests: the sensitive URL notice is present, only the signed-in user's bookmarks appear, the order is newest first, an empty collection shows a helpful empty state, and the page passes an axe scan. Deletion: the owner can delete a bookmark, deleting another user's bookmark returns 404 and changes nothing, a cross-origin delete is rejected, the URL can be saved again after deletion, the delete button's accessible name includes the title, the no-JavaScript confirmation page works, and with JavaScript the dialog confirms, focus moves to the next item, and the deletion is announced.
 Acceptance: a bookmark saved through `/save` appears at the top of the list and can be deleted from it.
 
+The list was implemented in #41:
+
+- `GET /` shows the newest 50 bookmarks, newest first (`created_at`, then ID). Above 50, the page says it shows the 50 most recent. Search replaces the limit in Milestone 3.
+- Each item is `<li id="bookmark-<id>">`, which the "already saved" and "saved" pages link to. It has the title as an `<h2>` link, the address as text, the description if there is one, and the date saved (`<time>`, formatted in UTC, because the server does not know the reader's time zone).
+- `savedLink` renders an `href` only when the address passes `isHttpsUrl` (`@haystack/schemas`), and adds `rel="noreferrer"`. Any other stored address is shown as text.
+- axe runs in the page, so the scans run with JavaScript enabled. The acceptance test runs with JavaScript disabled.
+
 #### Phase 5: Extension
 
 Build the popup capture, validation and truncation, and the `/save` URL builder. Q4 must be resolved first.

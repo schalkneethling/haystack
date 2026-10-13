@@ -1,0 +1,180 @@
+import { normalizeUrl } from "@haystack/schemas";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
+import { createTestHarness } from "wrangler";
+import { RECENT_SAVES_LIMIT, savedLink } from "../src/recent-saves.ts";
+import {
+  seedBookmark,
+  type SeededBookmarkFields,
+  seedSignedInUser,
+  type SeededUser,
+} from "./seed.ts";
+import { expectValidHtml } from "./validate-html.ts";
+
+const server = createTestHarness({
+  workers: [
+    {
+      configPath: new URL("../wrangler.jsonc", import.meta.url),
+      vars: { ALLOWED_EMAILS: "owner@example.com, second@example.com" },
+    },
+  ],
+});
+
+beforeAll(async () => {
+  await server.listen();
+  await server.getWorker().applyD1Migrations("DB");
+});
+
+afterAll(async () => {
+  await server.close();
+});
+
+async function db() {
+  return (await server.getWorker().getEnv()).DB;
+}
+
+let owner: SeededUser;
+
+beforeEach(async () => {
+  const DB = await db();
+  await DB.batch([
+    DB.prepare("DELETE FROM bookmarks"),
+    DB.prepare("DELETE FROM sessions"),
+    DB.prepare("DELETE FROM users"),
+  ]);
+  owner = await seedSignedInUser(DB, "owner@example.com");
+});
+
+async function save(url: string, fields: SeededBookmarkFields = {}, user = owner) {
+  return seedBookmark(await db(), user.userId, url, normalizeUrl(url), fields);
+}
+
+async function getList(cookie: string | null = owner.cookie) {
+  return server.fetch("/", {
+    headers: { accept: "text/html", ...(cookie === null ? {} : { cookie }) },
+    redirect: "manual",
+  });
+}
+
+async function listMarkup(): Promise<string> {
+  const response = await getList();
+  expect(response.status).toBe(200);
+  return response.text();
+}
+
+function itemIds(markup: string): string[] {
+  return [...markup.matchAll(/<li id="bookmark-([^"]+)"/g)].map((match) => match[1] ?? "");
+}
+
+describe("GET /", () => {
+  it("redirects to sign-in without a session", async () => {
+    const response = await getList(null);
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("/auth/sign-in?return_to=%2F");
+  });
+
+  it("shows the empty state when nothing is saved", async () => {
+    const markup = await listMarkup();
+    expect(markup).toContain("<h1>Saved links</h1>");
+    expect(markup).toContain("You haven't saved any links yet.");
+    expect(markup).not.toContain("<ol>");
+    await expectValidHtml(markup);
+  });
+
+  it("shows only the signed-in user's bookmarks", async () => {
+    const second = await seedSignedInUser(await db(), "second@example.com");
+    const mine = await save("https://example.com/mine");
+    await save("https://example.com/theirs", {}, second);
+    expect(itemIds(await listMarkup())).toEqual([mine]);
+  });
+
+  it("lists bookmarks newest first", async () => {
+    const oldest = await save("https://example.com/a", { createdAt: 1_000 });
+    const newest = await save("https://example.com/b", { createdAt: 3_000 });
+    const middle = await save("https://example.com/c", { createdAt: 2_000 });
+    expect(itemIds(await listMarkup())).toEqual([newest, middle, oldest]);
+  });
+
+  it("shows the title as a link, the address, the description, and the date saved", async () => {
+    const id = await save("https://example.com/guide?page=2", {
+      title: "A guide",
+      description: "How to do the thing.",
+      createdAt: Date.UTC(2026, 9, 13, 23, 30),
+    });
+    const markup = await listMarkup();
+    expect(markup).toContain(`<li id="bookmark-${id}">`);
+    expect(markup).toContain(
+      '<h2><a href="https://example.com/guide?page=2" rel="noreferrer">A guide</a></h2>',
+    );
+    expect(markup).toContain("<p>https://example.com/guide?page=2</p>");
+    expect(markup).toContain("<p>How to do the thing.</p>");
+    expect(markup).toContain('<time datetime="2026-10-13T23:30:00.000Z">October 13, 2026</time>');
+    await expectValidHtml(markup);
+  });
+
+  it("leaves out the description when there is none", async () => {
+    await save("https://example.com/", { title: "Home" });
+    const item = /<li id="bookmark-[^"]+">([\s\S]*?)<\/li>/.exec(await listMarkup())?.[1] ?? "";
+    expect(item.match(/<p>/g)).toHaveLength(2);
+  });
+
+  it("renders a title and description containing markup as text, with the CSP header", async () => {
+    await save("https://example.com/", {
+      title: '<img src=x onerror="alert(1)">',
+      description: "<script>alert(2)</script>",
+    });
+    const response = await getList();
+    expect(response.headers.get("content-security-policy")).toContain("default-src 'none'");
+    const markup = await response.text();
+    expect(markup).not.toContain("<img");
+    expect(markup).not.toContain("<script");
+    expect(markup).toContain("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
+    expect(markup).toContain("&lt;script&gt;alert(2)&lt;/script&gt;");
+  });
+
+  it("does not link a stored address that is not https", async () => {
+    await save("http://example.com/old", { title: "Saved before https only" });
+    const markup = await listMarkup();
+    expect(markup).toContain("<h2>Saved before https only</h2>");
+    expect(markup).not.toContain('href="http://example.com/old"');
+  });
+
+  it("shows the sensitive URL notice", async () => {
+    expect(await listMarkup()).toContain('<p id="sensitive-notice">');
+  });
+
+  it(`shows the newest ${RECENT_SAVES_LIMIT} and says so when there are more`, async () => {
+    const ids: string[] = [];
+    for (let index = 0; index <= RECENT_SAVES_LIMIT; index += 1) {
+      ids.push(await save(`https://example.com/${index}`, { createdAt: index }));
+    }
+    const markup = await listMarkup();
+    expect(itemIds(markup)).toEqual(ids.slice(1).reverse());
+    expect(markup).toContain(`Showing your ${RECENT_SAVES_LIMIT} most recent links.`);
+    await expectValidHtml(markup);
+  });
+
+  it(`does not mention the limit with exactly ${RECENT_SAVES_LIMIT} bookmarks`, async () => {
+    for (let index = 0; index < RECENT_SAVES_LIMIT; index += 1) {
+      await save(`https://example.com/${index}`);
+    }
+    expect(await listMarkup()).not.toContain("most recent links");
+  });
+});
+
+describe("savedLink", () => {
+  it("links an https address without sending a referrer", () => {
+    expect(savedLink("https://example.com/a?b=1&c=2", "Title").toString()).toBe(
+      '<a href="https://example.com/a?b=1&amp;c=2" rel="noreferrer">Title</a>',
+    );
+  });
+
+  it.each([
+    "http://example.com/",
+    "javascript:alert(1)",
+    "data:text/html,<p>hi</p>",
+    "https:example.com",
+    "/relative",
+  ])("does not link %s", (url) => {
+    expect(savedLink(url, "<b>Title</b>").toString()).toBe("&lt;b&gt;Title&lt;/b&gt;");
+  });
+});

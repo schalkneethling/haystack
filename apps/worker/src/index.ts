@@ -18,6 +18,7 @@ import {
 } from "./auth/sessions.ts";
 import { upsertUser } from "./auth/users.ts";
 import { createDb, type Db } from "./db/client.ts";
+import { showRecentSaves } from "./recent-saves.ts";
 import { saveBookmark, showSaveForm } from "./save.ts";
 import {
   accountNotAllowedPage,
@@ -162,6 +163,9 @@ async function handleAppRoute(
   session: AuthenticatedSession,
 ): Promise<Response> {
   const path = new URL(request.url).pathname;
+  if (path === "/" && request.method === "GET") {
+    return showRecentSaves(db, session.user.id);
+  }
   if (path === "/save" && request.method === "GET") {
     return showSaveForm(request, db, session.user.id);
   }
