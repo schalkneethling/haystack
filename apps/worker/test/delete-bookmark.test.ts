@@ -58,6 +58,11 @@ function postDelete(
 
 const confirmed = { confirm: "yes" };
 
+// The 404 for a bookmark the user cannot delete, from an ID that never existed.
+async function notSavedMarkup(): Promise<string> {
+  return (await postDelete(crypto.randomUUID(), confirmed)).text();
+}
+
 async function bookmarkIds(): Promise<unknown[]> {
   const { results } = await (await db()).prepare("SELECT id FROM bookmarks").all();
   return results.map((row: { id: unknown }) => row.id);
@@ -95,6 +100,7 @@ describe("POST /bookmarks/:id/delete", () => {
     expect(response.status).toBe(200);
     const markup = await response.text();
     expect(markup).toContain('<p role="status">Deleted “A guide”.</p>');
+    expect(markup).toContain("<title>Deleted “A guide” - Saved links - Haystack</title>");
     expect(markup).not.toContain(`bookmark-${bookmarkId}`);
     expect(markup).toContain(`bookmark-${other}`);
     await expectValidHtml(markup);
@@ -119,7 +125,7 @@ describe("POST /bookmarks/:id/delete", () => {
       const response = await postDelete(bookmarkId, fields, { cookie: second.cookie });
       expect(response.status).toBe(404);
       const markup = await response.text();
-      expect(markup).toContain("<h1>Page not found</h1>");
+      expect(markup).toBe(await notSavedMarkup());
       expect(markup).not.toContain("A guide");
       expect(await bookmarkIds()).toEqual([bookmarkId]);
     });
@@ -134,9 +140,27 @@ describe("POST /bookmarks/:id/delete", () => {
     expect(await bookmarkIds()).toEqual([bookmarkId]);
   });
 
-  it("returns 404 when the bookmark was already deleted", async () => {
+  it("explains a 404 when the bookmark was already deleted, as a reload does", async () => {
     await postDelete(bookmarkId, confirmed);
-    expect((await postDelete(bookmarkId, confirmed)).status).toBe(404);
+    const response = await postDelete(bookmarkId, confirmed);
+    expect(response.status).toBe(404);
+    const markup = await response.text();
+    expect(markup).toContain("<h1>This link isn't in your saved links</h1>");
+    expect(markup).toContain('<a href="/">Go to your saved links</a>');
+    await expectValidHtml(markup);
+  });
+
+  it.each([
+    ["malformed percent-encoding", "/bookmarks/%E0%A4%A/delete"],
+    ["an encoded slash", "/bookmarks/a%2Fb/delete"],
+  ])("returns 404 for a path with %s", async (_, path) => {
+    const response = await server.fetch(path, {
+      method: "POST",
+      headers: { origin, cookie: owner.cookie },
+      body: new URLSearchParams(confirmed),
+    });
+    expect(response.status).toBe(404);
+    expect(await bookmarkIds()).toEqual([bookmarkId]);
   });
 
   it("rejects a cross-origin delete", async () => {

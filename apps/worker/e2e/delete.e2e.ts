@@ -1,19 +1,12 @@
 // The plan's Phase 4 acceptance, second half: a bookmark on the list can be deleted from it.
 // The dialog that JavaScript adds is tested with the dialog (#43).
 import AxeBuilder from "@axe-core/playwright";
-import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
+import { saveThroughForm } from "./save-through-form.ts";
 
 test.beforeEach(async ({ signIn }) => {
   await signIn();
 });
-
-async function saveThroughForm(page: Page, url: string, title: string): Promise<void> {
-  await page.goto(`/save?${new URLSearchParams({ url }).toString()}`);
-  await page.getByLabel("Title").fill(title);
-  await page.getByRole("button", { name: "Save" }).click();
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Saved");
-}
 
 test("the confirmation page has no axe violations", async ({ page }) => {
   await saveThroughForm(page, "https://example.com/guide", "A guide");
@@ -50,12 +43,13 @@ test.describe("without JavaScript", () => {
     expect(rows).toEqual([{ title: "Second guide" }]);
   });
 
-  test("keeping the bookmark goes back to it on the list", async ({ page }) => {
+  test("keeping the bookmark goes back to it on the list", async ({ page, query }) => {
     await saveThroughForm(page, "https://example.com/kept", "Kept guide");
+    const [row] = await query("SELECT id FROM bookmarks WHERE url = ?", "https://example.com/kept");
     await page.goto("/");
     await page.getByRole("button", { name: "Delete Kept guide" }).click();
     await page.getByRole("link", { name: "Keep it and go back to your saved links" }).click();
-    await expect(page).toHaveURL(/\/#bookmark-/);
+    expect(new URL(page.url()).hash).toBe(`#bookmark-${String(row?.id)}`);
     await expect(page.getByRole("button", { name: "Delete Kept guide" })).toBeVisible();
   });
 });

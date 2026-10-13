@@ -102,14 +102,18 @@ export async function isInRecentSaves(
   return (newer?.n ?? 0) < RECENT_SAVES_LIMIT;
 }
 
-/**
- * The list page. `status` is a message shown above the list, such as the result of deleting a
- * bookmark.
- */
+/** The result of an action, such as deleting a bookmark, shown on the list page. */
+export interface Outcome {
+  // Comes first in the page title.
+  title: string;
+  // Shown below the heading. It starts with its own line break.
+  message: SafeHtml;
+}
+
 export async function showRecentSaves(
   db: Db,
   userId: string,
-  status: SafeHtml | null = null,
+  outcome: Outcome | null = null,
 ): Promise<Response> {
   // One extra row says whether there are more than the page shows.
   const rows = await db
@@ -126,8 +130,8 @@ export async function showRecentSaves(
     .limit(RECENT_SAVES_LIMIT + 1);
   const saves = rows.slice(0, RECENT_SAVES_LIMIT);
   return htmlResponse(
-    "Saved links",
-    html`<h1>Saved links</h1>${status}
+    outcome === null ? "Saved links" : `${outcome.title} - Saved links`,
+    html`<h1>Saved links</h1>${outcome?.message}
       ${SENSITIVE_NOTICE}
       ${list(saves, rows.length > RECENT_SAVES_LIMIT)}`,
     200,

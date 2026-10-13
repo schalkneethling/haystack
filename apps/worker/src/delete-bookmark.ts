@@ -7,7 +7,6 @@ import { bookmarks } from "./db/schema.ts";
 import { html } from "./html.ts";
 import { htmlResponse } from "./page.ts";
 import { deleteAction } from "./bookmark-paths.ts";
-import { notFoundPage } from "./pages.ts";
 import { showRecentSaves } from "./recent-saves.ts";
 
 function confirmationPage(bookmarkId: string, title: string, url: string): Response {
@@ -23,6 +22,18 @@ function confirmationPage(bookmarkId: string, title: string, url: string): Respo
       </form>
       <p><a href="/#bookmark-${bookmarkId}">Keep it and go back to your saved links</a></p>`,
     200,
+  );
+}
+
+// The same page for a bookmark that does not exist, was already deleted (a reload after
+// deleting posts again), or belongs to someone else, so it reveals nothing.
+function notSavedPage(): Response {
+  return htmlResponse(
+    "Link not found",
+    html`<h1>This link isn't in your saved links</h1>
+      <p>It may have been deleted already.</p>
+      <p><a href="/">Go to your saved links</a></p>`,
+    404,
   );
 }
 
@@ -54,7 +65,7 @@ export async function deleteBookmark(
       .where(owned)
       .get();
     return bookmark === undefined
-      ? notFoundPage()
+      ? notSavedPage()
       : confirmationPage(bookmarkId, bookmark.title, bookmark.url);
   }
   const deleted = await db
@@ -63,12 +74,13 @@ export async function deleteBookmark(
     .returning({ title: bookmarks.title })
     .get();
   if (deleted === undefined) {
-    return notFoundPage();
+    return notSavedPage();
   }
-  return showRecentSaves(
-    db,
-    userId,
-    html`
+  // In the title too: a screen reader announces the title when the page loads, but not a
+  // status message that arrives with it.
+  return showRecentSaves(db, userId, {
+    title: `Deleted “${deleted.title}”`,
+    message: html`
       <p role="status">Deleted “${deleted.title}”.</p>`,
-  );
+  });
 }

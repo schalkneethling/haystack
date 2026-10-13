@@ -1,19 +1,12 @@
 // The plan's Phase 4 acceptance, first half: a bookmark saved through /save appears at the top
 // of the recent saves list. Deletion is covered with the delete tests.
 import AxeBuilder from "@axe-core/playwright";
-import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
+import { saveThroughForm } from "./save-through-form.ts";
 
 test.beforeEach(async ({ signIn }) => {
   await signIn();
 });
-
-async function saveThroughForm(page: Page, url: string, title: string): Promise<void> {
-  await page.goto(`/save?${new URLSearchParams({ url }).toString()}`);
-  await page.getByLabel("Title").fill(title);
-  await page.getByRole("button", { name: "Save" }).click();
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Saved");
-}
 
 // axe runs in the page, so these scans need JavaScript.
 test("the empty list has no axe violations", async ({ page }) => {

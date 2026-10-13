@@ -672,7 +672,9 @@ Deleting without JavaScript was implemented in #42:
 
 - Each list item's form posts to `POST /bookmarks/:id/delete`. Without `confirm=yes` in the body, the endpoint only shows the confirmation page, which posts again with it. A body that is not a form is treated as unconfirmed. The JavaScript dialog (#43) will post `confirm=yes` directly.
 - The button is `aria-labelledby` itself and the item's `<h2>`, so its name is "Delete" followed by the title, and the visible text stays "Delete".
-- Confirming shows the list (200, no redirect) with `<p role="status">Deleted “title”.</p>`. Reloading that page posts again and gets the 404, because the bookmark is gone.
+- Confirming shows the list (200, no redirect) with `<p role="status">Deleted “title”.</p>`, and the page title starts with the same words, because a screen reader announces the title on load but not a status message that arrives with the page. Reloading posts again and gets the 404, because the bookmark is gone.
+- Every miss (no such bookmark, already deleted, or another user's) gets the same 404 page, "This link isn't in your saved links", which links to the list.
+- Without JavaScript, focus starts at the top of the page after deleting. Moving focus to the next item is the dialog's job (#43).
 - The confirmation page links back to `/#bookmark-<id>` with "Keep it and go back to your saved links".
 - No table references `bookmarks` yet. The tables that Milestone 2 adds for enrichments, failure records, and search answers need `ON DELETE CASCADE` on their bookmark reference.
 
