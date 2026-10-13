@@ -19,23 +19,27 @@ export const CAPTURE_CAPS = {
 // The URL parser silently strips leading control characters, removes tab, CR, and LF
 // anywhere, trims trailing spaces, and percent-encodes inner ones. The stored URL is the
 // submitted string, so it must already be what the parser reads: no C0 control characters,
-// spaces, or DEL, and an explicit `http://` or `https://` prefix (`https:example.com` parses,
-// but as a link it resolves against the page's own origin). Browsers serialize URLs with
+// spaces, or DEL, and an explicit scheme prefix (`https:example.com` parses, but as a link it
+// resolves against the page's own origin). Browsers serialize URLs with
 // spaces encoded, so only hand-built links are affected.
 // oxlint-disable-next-line no-control-regex -- matching control characters is the point.
 const CHARACTERS_THE_PARSER_CHANGES = /[\u0000-\u0020\u007f]/;
 const HTTP_PREFIX = /^https?:\/\//i;
+const HTTPS_PREFIX = /^https:\/\//i;
 
-function isHttpUrl(value: string): boolean {
-  if (CHARACTERS_THE_PARSER_CHANGES.test(value) || !HTTP_PREFIX.test(value)) {
-    return false;
-  }
-  try {
-    const { protocol } = new URL(value);
-    return protocol === "http:" || protocol === "https:";
-  } catch {
-    return false;
-  }
+function parsesAsWritten(value: string, prefix: RegExp): boolean {
+  return !CHARACTERS_THE_PARSER_CHANGES.test(value) && prefix.test(value) && URL.canParse(value);
+}
+
+// Haystack saves only https pages, so every saved address can be a link (decided 2026-10-13,
+// #40). The canonical URL is only enrichment evidence and is never linked, so an http one
+// does not stop a page from being saved.
+function isHttpsUrl(value: string): boolean {
+  return parsesAsWritten(value, HTTPS_PREFIX);
+}
+
+function isHttpOrHttpsUrl(value: string): boolean {
+  return parsesAsWritten(value, HTTP_PREFIX);
 }
 
 // A lone surrogate makes encodeURIComponent throw, so the save URL could not be built.
@@ -45,6 +49,7 @@ function isWellFormed(value: string): boolean {
   return !LONE_SURROGATE.test(value);
 }
 
+const NOT_HTTPS_URL = "Must be an https URL";
 const NOT_HTTP_URL = "Must be an http or https URL";
 const NOT_WELL_FORMED = "Must not contain a lone surrogate";
 
@@ -74,11 +79,11 @@ export const CapturePayload = v.pipe(
       v.trim(),
       v.check(isWellFormed, NOT_WELL_FORMED),
       v.maxLength(CAPTURE_CAPS.url),
-      v.check(isHttpUrl, NOT_HTTP_URL),
+      v.check(isHttpsUrl, NOT_HTTPS_URL),
     ),
     canonical_url: v.pipe(
       optionalText(CAPTURE_CAPS.canonical_url),
-      v.check((value) => value === undefined || isHttpUrl(value), NOT_HTTP_URL),
+      v.check((value) => value === undefined || isHttpOrHttpsUrl(value), NOT_HTTP_URL),
     ),
     title: optionalText(CAPTURE_CAPS.title),
     description: optionalText(CAPTURE_CAPS.description),

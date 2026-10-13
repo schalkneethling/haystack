@@ -191,14 +191,34 @@ describe("GET /save", () => {
   it.each([
     ["a javascript: URL", { url: "javascript:alert(1)" }],
     ["a data: URL", { url: "data:text/html,hi" }],
+    ["an http: URL", { url: "http://example.com/" }],
     ["no URL", { title: "x" }],
     ["a title over its cap", { url: "https://example.com/", title: "a".repeat(201) }],
   ])("shows a validation page for %s", async (_, fields) => {
     const response = await getSave(fields);
     expect(response.status).toBe(400);
     const markup = await response.text();
+    // The title is the first thing a screen reader announces when the page opens.
+    expect(markup).toContain("<title>This link can&#39;t be saved - Haystack</title>");
     expect(markup).toContain("<h1>This link can't be saved</h1>");
     await expectValidHtml(markup);
+  });
+
+  it("explains that only https pages are saved, and writes nothing", async () => {
+    const before = await rowCounts();
+    const markup = await (await getSave({ url: "http://example.com/" })).text();
+    expect(markup).toContain(
+      "<li>The address of the page: Haystack saves only secure pages, so it must be a complete https:// link, without spaces and at most 2,048 characters long</li>",
+    );
+    expect(await rowCounts()).toEqual(before);
+  });
+
+  it("explains only the rules for the fields that are invalid", async () => {
+    const markup = await (
+      await getSave({ url: "https://example.com/", title: "a".repeat(201) })
+    ).text();
+    expect(markup).toContain("<li>The page title: it is too long</li>");
+    expect(markup).not.toContain("https://");
   });
 
   it.each([
@@ -213,6 +233,7 @@ describe("GET /save", () => {
     const response = await getSave({ url });
     expect(response.status).toBe(400);
     const markup = await response.text();
+    expect(markup).toContain("<title>This link can&#39;t be saved - Haystack</title>");
     expect(markup).toContain(explanation);
     expect(markup).not.toContain("secret-value");
     await expectValidHtml(markup);
