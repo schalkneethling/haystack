@@ -584,6 +584,14 @@ The form is plain HTML and works without JavaScript. It is a `<form method="post
 
 The sensitive URL check always runs on the URL as submitted, before tracking parameters are removed, on both `GET` and `POST`. The extension checks the raw URL too, so the server must not see a cleaner URL than the extension did.
 
+`GET /save` was implemented in #31:
+
+- The editable fields are named `confirmed_title` and `confirmed_description`. The hidden inputs keep the `CapturePayload` keys and carry the values as validated: trimmed, with empty fields omitted, and `url` stripped.
+- A GET writes nothing, except that a session in the second half of its life is extended (see "Site sign-in").
+- `validateCapturePayload` (`@haystack/schemas`) names the invalid fields, never their values. The validation page lists them in plain language (400).
+- A sensitive URL gets a refusal page with one explanation per reason code (400), and the URL is not shown.
+- An already-saved URL links to `/#bookmark-<id>` (Phase 4).
+
 On submission, the edited values are stored as the bookmark's `title` and `description`, and the raw captured values are stored alongside them as evidence for enrichment. The recent saves list and the search result cards show the confirmed `title` and `description`. There is no editing after saving.
 
 ## Sensitive URLs
@@ -755,7 +763,7 @@ One configuration module reads every flag once per request, or once per sweep ru
 Set up in #11:
 
 - The browser tests live in `apps/worker/e2e` (`*.e2e.ts`, so Vitest does not pick them up), because they test the pages the Worker renders. The extension tests (Phase 5) live with the extension.
-- Each Playwright worker process starts the Worker with `createTestHarness` and applies the migrations (`e2e/fixtures.ts`), and `baseURL` is that Worker's origin. So the browser tests need no dev server and no secrets. The fixture can be extended to seed D1, for example a signed-in user, as the integration tests do.
+- Each Playwright worker process starts the Worker with `createTestHarness` and applies the migrations (`e2e/fixtures.ts`), and `baseURL` is that Worker's origin. So the browser tests need no dev server and no secrets. Its `signIn` fixture (#31) seeds a signed-in user in D1 and sends the session cookie with every request. Chromium refuses to add a `Secure` `__Host-` cookie for an `http:` origin through `addCookies`.
 - Only Chromium is used.
 - They run as part of `vp run quality` (`vp run -r test:e2e`). Before the first run, install the browser once with `vp -C apps/worker run e2e:install` (Chromium's headless shell). Do it again after a Playwright upgrade. CI installs the same browser before `quality`.
 - axe runs every rule, including the best-practice rules, with no `withTags` filter. The best-practice rules (landmarks, heading order) matter for server-rendered pages.

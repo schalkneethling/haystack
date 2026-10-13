@@ -1,6 +1,6 @@
 import * as v from "valibot";
 import { describe, expect, it } from "vite-plus/test";
-import { CAPTURE_CAPS, CapturePayload } from "../src/index.ts";
+import { CAPTURE_CAPS, CapturePayload, validateCapturePayload } from "../src/index.ts";
 
 const full = {
   url: "https://example.com/article",
@@ -140,5 +140,27 @@ describe("CapturePayload", () => {
   it("keeps the URL as submitted, apart from trimming", () => {
     const url = "HTTPS://Example.com:443/Path/?b=2&a=1#section";
     expect(v.parse(CapturePayload, { url: ` ${url} ` }).url).toBe(url);
+  });
+});
+
+describe("validateCapturePayload", () => {
+  it("returns the payload when valid", () => {
+    expect(validateCapturePayload({ url: "https://example.com/" })).toEqual({
+      ok: true,
+      payload: { url: "https://example.com/" },
+    });
+  });
+
+  it("names each invalid field without its value", () => {
+    const result = validateCapturePayload({
+      url: "javascript:alert(1)",
+      title: "a".repeat(CAPTURE_CAPS.title + 1),
+      description: "fine",
+    });
+    expect(result).toEqual({ ok: false, invalidFields: ["url", "title"] });
+  });
+
+  it("names a missing URL", () => {
+    expect(validateCapturePayload({})).toEqual({ ok: false, invalidFields: ["url"] });
   });
 });

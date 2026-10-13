@@ -98,3 +98,28 @@ type SameKeys<A, B> = [keyof A] extends [keyof B]
     : false
   : false;
 true satisfies SameKeys<typeof CAPTURE_CAPS, v.InferInput<typeof CapturePayload>>;
+
+export type CaptureField = keyof typeof CAPTURE_CAPS;
+
+export type CaptureValidation =
+  | { ok: true; payload: CapturePayload }
+  | { ok: false; invalidFields: CaptureField[] };
+
+/**
+ * Validates a payload and names the invalid fields, never their values, so a page can explain
+ * the problem without echoing captured data.
+ */
+export function validateCapturePayload(input: unknown): CaptureValidation {
+  const result = v.safeParse(CapturePayload, input);
+  if (result.success) {
+    return { ok: true, payload: result.output };
+  }
+  const fields = new Set<CaptureField>();
+  for (const issue of result.issues) {
+    const key = issue.path?.[0]?.key;
+    if (typeof key === "string" && key in CAPTURE_CAPS) {
+      fields.add(key as CaptureField);
+    }
+  }
+  return { ok: false, invalidFields: [...fields] };
+}
