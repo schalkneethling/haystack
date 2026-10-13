@@ -113,7 +113,8 @@ describe("GET /", () => {
 
   it("leaves out the description when there is none", async () => {
     await save("https://example.com/", { title: "Home" });
-    const item = /<li id="bookmark-[^"]+">([\s\S]*?)<\/li>/.exec(await listMarkup())?.[1] ?? "";
+    const item =
+      /<li id="bookmark-[^"]+"[^>]*>([\s\S]*?)<\/li>/.exec(await listMarkup())?.[1] ?? "";
     expect(item.match(/<p>/g)).toHaveLength(2);
   });
 
@@ -126,7 +127,9 @@ describe("GET /", () => {
     expect(response.headers.get("content-security-policy")).toContain("default-src 'none'");
     const markup = await response.text();
     expect(markup).not.toContain("<img");
-    expect(markup).not.toContain("<script>alert");
+    // The only script is the dialog's module.
+    expect(markup.match(/<script/g)).toHaveLength(1);
+    expect(markup).toContain('<script type="module" src="/assets/delete-dialog.js"></script>');
     expect(markup).toContain("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
     expect(markup).toContain("&lt;script&gt;alert(2)&lt;/script&gt;");
   });
@@ -150,7 +153,9 @@ describe("GET /", () => {
     }
     const markup = await listMarkup();
     expect(itemIds(markup)).toEqual(ids.slice(1).reverse());
-    expect(markup).toContain(`Showing your ${RECENT_SAVES_LIMIT} most recent links.`);
+    expect(markup).toContain(`This list shows only your ${RECENT_SAVES_LIMIT} most recent links.`);
+    // The dialog script reveals this after deleting every shown link; older ones remain.
+    expect(markup).toMatch(/<p id="empty-state" hidden>\s*You deleted every link shown here\./);
     await expectValidHtml(markup);
   });
 

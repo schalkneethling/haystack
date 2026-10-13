@@ -22,11 +22,15 @@ function element(tag, text) {
 
 function createDialog() {
   const dialog = /** @type {HTMLDialogElement} */ (element("dialog"));
-  dialog.setAttribute("aria-labelledby", "delete-dialog-heading");
   const title = element("h2", "Delete this link?");
   title.id = "delete-dialog-heading";
   const name = element("p");
+  name.id = "delete-dialog-name";
   const notice = element("p", "Deleting is permanent. You can save the link again later.");
+  notice.id = "delete-dialog-notice";
+  // Focus starts on Cancel, so the description is what tells a screen reader which link.
+  dialog.setAttribute("aria-labelledby", title.id);
+  dialog.setAttribute("aria-describedby", `${name.id} ${notice.id}`);
   const confirm = /** @type {HTMLButtonElement} */ (element("button", "Delete"));
   confirm.type = "button";
   const cancel = /** @type {HTMLButtonElement} */ (element("button", "Cancel"));
@@ -34,8 +38,7 @@ function createDialog() {
   // Cancel is focused when the dialog opens, so Enter does not delete by accident.
   cancel.autofocus = true;
   dialog.append(title, name, notice, confirm, cancel);
-  cancel.addEventListener("click", () => dialog.close());
-  return { dialog, name, confirm };
+  return { dialog, name, confirm, cancel };
 }
 
 /** @param {string} message */
@@ -46,11 +49,13 @@ function announce(message) {
 }
 
 /**
- * Focus moves to the next item, then the previous one, then the list heading.
+ * Focus moves to the next item's title heading, then the previous item's, then the list
+ * heading. A heading is named by its text, so a screen reader reads the title on focus.
  * @param {Element} item
  */
 function removeItem(item) {
-  const target = item.nextElementSibling ?? item.previousElementSibling ?? heading;
+  const neighbour = item.nextElementSibling ?? item.previousElementSibling;
+  const target = neighbour?.querySelector("h2") ?? heading;
   item.remove();
   if (list !== null && list.children.length === 0) {
     list.remove();
@@ -63,11 +68,35 @@ function removeItem(item) {
 }
 
 if (list !== null && typeof HTMLDialogElement === "function") {
-  const { dialog, name, confirm } = createDialog();
+  const { dialog, name, confirm, cancel } = createDialog();
   list.after(dialog);
 
   /** @type {HTMLFormElement | null} */
   let pending = null;
+  // While a delete request runs, the dialog cannot be closed or reopened, so Cancel can never
+  // look as if it stopped a delete that the server goes on to make. The buttons stay focusable
+  // (aria-disabled, not disabled), so focus does not fall back to the page.
+  let busy = false;
+
+  /** @param {boolean} value */
+  function setBusy(value) {
+    busy = value;
+    for (const button of [confirm, cancel]) {
+      button.setAttribute("aria-disabled", String(value));
+    }
+  }
+
+  cancel.addEventListener("click", () => {
+    if (!busy) {
+      dialog.close();
+    }
+  });
+  // Escape fires `cancel` first.
+  dialog.addEventListener("cancel", (event) => {
+    if (busy) {
+      event.preventDefault();
+    }
+  });
 
   list.addEventListener("submit", (event) => {
     const form = event.target;
@@ -75,6 +104,9 @@ if (list !== null && typeof HTMLDialogElement === "function") {
       return;
     }
     event.preventDefault();
+    if (busy) {
+      return;
+    }
     pending = form;
     const title = form.closest("li")?.querySelector("h2")?.textContent ?? "";
     name.textContent = title;
@@ -84,32 +116,40 @@ if (list !== null && typeof HTMLDialogElement === "function") {
   confirm.addEventListener("click", async () => {
     const form = pending;
     const item = form?.closest("li");
-    if (form === null || item === null || item === undefined) {
+    if (busy || form === null || item === null || item === undefined) {
       return;
     }
     const title = name.textContent ?? "";
-    confirm.disabled = true;
+    setBusy(true);
+    /** @type {string} */
+    let message;
+    let removed = false;
     try {
       const response = await fetch(form.action, {
         method: "POST",
         body: new URLSearchParams({ confirm: "yes" }),
       });
-      dialog.close();
       if (response.ok) {
-        removeItem(item);
-        announce(`Deleted “${title}”.`);
+        message = `Deleted “${title}”.`;
+        removed = true;
       } else if (response.status === 404) {
         // Deleted already, for example in another tab.
-        removeItem(item);
-        announce(`“${title}” was already deleted.`);
+        message = `“${title}” was already deleted.`;
+        removed = true;
+      } else if (response.status === 401) {
+        message = `Could not delete “${title}”, because you are signed out. Reload the page to sign in again.`;
       } else {
-        announce(`Could not delete “${title}”. Reload the page and try again.`);
+        message = `Could not delete “${title}”. Reload the page and try again.`;
       }
     } catch {
-      dialog.close();
-      announce(`Could not delete “${title}”. Check your connection and try again.`);
-    } finally {
-      confirm.disabled = false;
+      message = `Could not delete “${title}”. Check your connection and try again.`;
+    }
+    setBusy(false);
+    // Announce before focus moves, so the message is not cut off by what focus reads.
+    announce(message);
+    dialog.close();
+    if (removed) {
+      removeItem(item);
     }
   });
 

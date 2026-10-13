@@ -35,7 +35,7 @@ test("the dialog confirms, deletes, moves focus to the next item, and announces 
   const items = page.getByRole("listitem");
   await expect(items).toHaveCount(2);
   // The next item down the list, which is the older one.
-  await expect(items.nth(1)).toBeFocused();
+  await expect(items.nth(1).getByRole("heading", { level: 2 })).toBeFocused();
   await expect(items.nth(1)).toContainText("Oldest confirm");
   // No page load: the list stayed on /.
   expect(new URL(page.url()).pathname).toBe("/");
@@ -50,7 +50,7 @@ test("deleting the last item in the list moves focus to the item before it", asy
   await saveThree(page, "last");
   await page.getByRole("button", { name: "Delete Oldest last" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
-  await expect(page.getByRole("listitem").last()).toBeFocused();
+  await expect(page.getByRole("listitem").last().getByRole("heading")).toBeFocused();
   await expect(page.getByRole("listitem").last()).toContainText("Middle last");
 });
 
@@ -108,4 +108,51 @@ test("a bookmark already deleted elsewhere is removed and announced", async ({ p
   await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
   await expect(page.getByRole("status")).toHaveText("“Elsewhere guide” was already deleted.");
   await expect(page.getByRole("button", { name: "Delete Elsewhere guide" })).toHaveCount(0);
+});
+
+test("the dialog cannot be closed while the delete request runs", async ({ page, query }) => {
+  await saveThroughForm(page, "https://example.com/in-flight", "In-flight guide");
+  await page.goto("/");
+  // Hold the delete request until the test lets it go. Routing is local; nothing leaves the
+  // machine.
+  let release = (): void => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/bookmarks/*/delete", async (route) => {
+    await held;
+    await route.continue();
+  });
+
+  await page.getByRole("button", { name: "Delete In-flight guide" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "Delete" }).click();
+  await page.keyboard.press("Escape");
+  // Playwright waits for an aria-disabled button to be enabled, so send the click directly.
+  await dialog.getByRole("button", { name: "Cancel" }).dispatchEvent("click");
+  await expect(dialog).toBeVisible();
+
+  release();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole("status")).toHaveText("Deleted “In-flight guide”.");
+  const rows = await query(
+    "SELECT id FROM bookmarks WHERE url = ?",
+    "https://example.com/in-flight",
+  );
+  expect(rows).toHaveLength(0);
+});
+
+test("a delete after the session ended keeps the item and says why", async ({ page, context }) => {
+  await saveThroughForm(page, "https://example.com/signed-out", "Signed-out guide");
+  await page.goto("/");
+  const button = page.getByRole("button", { name: "Delete Signed-out guide" });
+  await button.click();
+  // The fixture signs in by sending the session cookie with every request; stop sending it.
+  await context.setExtraHTTPHeaders({});
+  await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByRole("status")).toHaveText(
+    "Could not delete “Signed-out guide”, because you are signed out. Reload the page to sign in again.",
+  );
+  await expect(button).toBeVisible();
+  await expect(button).toBeFocused();
 });

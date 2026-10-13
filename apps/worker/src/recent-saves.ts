@@ -62,15 +62,19 @@ function item(save: RecentSave): SafeHtml {
 const DELETE_DIALOG_SCRIPT = "/assets/delete-dialog.js";
 
 function list(saves: readonly RecentSave[], more: boolean): SafeHtml {
+  // With older links beyond the limit, an emptied list does not mean nothing is saved.
+  const emptyText = more
+    ? html`You deleted every link shown here. Reload the page to see your older links.`
+    : html`You haven't saved any links yet. Links you save appear here, newest first.`;
   const emptyState = html`<p id="empty-state"${saves.length === 0 ? null : html` hidden`}>
-        You haven't saved any links yet. Links you save appear here, newest first.
+        ${emptyText}
       </p>`;
   if (saves.length === 0) {
     return emptyState;
   }
   // Before the list, so it is read first. It ends with the line break the list needs.
   const limitNote = more
-    ? html`<p>Showing your ${RECENT_SAVES_LIMIT} most recent links.</p>
+    ? html`<p>This list shows only your ${RECENT_SAVES_LIMIT} most recent links.</p>
       `
     : null;
   return html`${limitNote}<ol id="recent-saves">

@@ -24,7 +24,8 @@ describe("static assets", () => {
   });
 
   it("does not serve the headers file itself", async () => {
+    // It falls through to the Worker, which refuses a request without a session.
     const response = await server.fetch("/_headers");
-    expect(await response.text()).not.toContain("X-Content-Type-Options");
+    expect(response.status).toBe(401);
   });
 });
