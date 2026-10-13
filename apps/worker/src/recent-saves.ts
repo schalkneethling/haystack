@@ -32,13 +32,13 @@ interface RecentSave {
   createdAt: number;
 }
 
-// An optional part starts with its own line break and sits at the end of the line before it,
-// so leaving it out leaves no blank line in the page.
 // Line breaks typed into the description are kept as <br>.
 function withLineBreaks(text: string): SafeHtml {
   return html`${text.split("\n").map((line, index) => (index === 0 ? line : html`<br>${line}`))}`;
 }
 
+// An optional part starts with its own line break and sits at the end of the line before it,
+// so leaving it out leaves no blank line in the page.
 function item(save: RecentSave): SafeHtml {
   const saved = new Date(save.createdAt);
   const description =
