@@ -212,6 +212,7 @@ describe("POST /save", () => {
   it.each([
     ["a javascript: URL", { url: "javascript:alert(1)" }],
     ["a data: URL", { url: "data:text/html,hi" }],
+    ["an http: URL", { url: "http://example.com/" }],
   ])("rejects %s", async (_, fields) => {
     const response = await post({ ...submission, ...fields });
     expect(response.status).toBe(400);

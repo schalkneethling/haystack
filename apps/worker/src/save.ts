@@ -64,8 +64,8 @@ function invalidPage(invalidFields: readonly CaptureField[]): Response {
         ${invalidFields.map((field) => html`<li>${FIELD_LABELS[field]}</li>`)}
       </ul>
       <p>
-        Addresses must be complete http:// or https:// links without spaces, and text fields have
-        length limits.
+        Haystack saves only secure pages, so the address must be a complete https:// link without
+        spaces. A canonical address can also be an http:// link. Text fields have length limits.
       </p>`,
     400,
   );

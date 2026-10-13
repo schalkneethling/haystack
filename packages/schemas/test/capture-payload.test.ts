@@ -30,8 +30,8 @@ describe("CapturePayload", () => {
   });
 
   it("accepts a payload with only a URL", () => {
-    expect(v.parse(CapturePayload, { url: "http://example.com/" })).toEqual({
-      url: "http://example.com/",
+    expect(v.parse(CapturePayload, { url: "https://example.com/" })).toEqual({
+      url: "https://example.com/",
     });
   });
 
@@ -82,9 +82,21 @@ describe("CapturePayload", () => {
       expect(v.safeParse(CapturePayload, { ...full, [field]: value }).success).toBe(false);
     });
 
-    it.each(["http://example.com/", "HTTPS://EXAMPLE.COM/"])("accepts %s", (value) => {
-      expect(v.safeParse(CapturePayload, { ...full, [field]: value }).success).toBe(true);
+    it("accepts HTTPS://EXAMPLE.COM/", () => {
+      expect(
+        v.safeParse(CapturePayload, { ...full, [field]: "HTTPS://EXAMPLE.COM/" }).success,
+      ).toBe(true);
     });
+  });
+
+  // Only https pages are saved (#40), so every saved address can be a link.
+  it.each(["http://example.com/", "HTTP://EXAMPLE.COM/"])("rejects %s as the URL", (url) => {
+    expect(validateCapturePayload({ ...full, url })).toEqual({ ok: false, invalidFields: ["url"] });
+  });
+
+  it("accepts an http canonical URL, which is never linked", () => {
+    const canonical_url = "http://example.com/article";
+    expect(v.parse(CapturePayload, { ...full, canonical_url }).canonical_url).toBe(canonical_url);
   });
 
   it.each(["", "   "])("rejects the URL %j", (url) => {
@@ -108,7 +120,7 @@ describe("CapturePayload", () => {
       ["a space in the query", "https://example.com/search?q=hello world"],
       ["a space before another parameter", "https://example.com/search?q=hello &b=1"],
       ["no slashes after the scheme", "https:example.com"],
-      ["one slash after the scheme", "http:/example.com"],
+      ["one slash after the scheme", "https:/example.com"],
     ])("rejects %s", (_, value) => {
       expect(v.safeParse(CapturePayload, { ...full, [field]: value }).success).toBe(false);
     });

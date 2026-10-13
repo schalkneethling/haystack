@@ -191,6 +191,7 @@ describe("GET /save", () => {
   it.each([
     ["a javascript: URL", { url: "javascript:alert(1)" }],
     ["a data: URL", { url: "data:text/html,hi" }],
+    ["an http: URL", { url: "http://example.com/" }],
     ["no URL", { title: "x" }],
     ["a title over its cap", { url: "https://example.com/", title: "a".repeat(201) }],
   ])("shows a validation page for %s", async (_, fields) => {
@@ -199,6 +200,12 @@ describe("GET /save", () => {
     const markup = await response.text();
     expect(markup).toContain("<h1>This link can't be saved</h1>");
     await expectValidHtml(markup);
+  });
+
+  it("explains that only https pages are saved", async () => {
+    const markup = await (await getSave({ url: "http://example.com/" })).text();
+    expect(markup).toContain("<li>The address of the page</li>");
+    expect(markup).toContain("must be a complete https:// link");
   });
 
   it.each([
