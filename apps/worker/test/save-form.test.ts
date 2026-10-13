@@ -198,6 +198,8 @@ describe("GET /save", () => {
     const response = await getSave(fields);
     expect(response.status).toBe(400);
     const markup = await response.text();
+    // The title is the first thing a screen reader announces when the page opens.
+    expect(markup).toContain("<title>This link can&#39;t be saved - Haystack</title>");
     expect(markup).toContain("<h1>This link can't be saved</h1>");
     await expectValidHtml(markup);
   });
@@ -231,6 +233,7 @@ describe("GET /save", () => {
     const response = await getSave({ url });
     expect(response.status).toBe(400);
     const markup = await response.text();
+    expect(markup).toContain("<title>This link can&#39;t be saved - Haystack</title>");
     expect(markup).toContain(explanation);
     expect(markup).not.toContain("secret-value");
     await expectValidHtml(markup);
