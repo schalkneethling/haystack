@@ -1,5 +1,5 @@
 // The plan's Phase 4 acceptance, second half: a bookmark on the list can be deleted from it.
-// The dialog that JavaScript adds is tested with the dialog (#43).
+// The dialog that JavaScript adds is tested in delete-dialog.e2e.ts.
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "./fixtures.ts";
 import { saveThroughForm } from "./save-through-form.ts";
@@ -11,7 +11,11 @@ test.beforeEach(async ({ signIn }) => {
 test("the confirmation page has no axe violations", async ({ page }) => {
   await saveThroughForm(page, "https://example.com/guide", "A guide");
   await page.goto("/");
-  await page.getByRole("button", { name: "Delete A guide" }).click();
+  // The dialog script handles the button's submit event; form.submit() skips it, which is
+  // what a browser without JavaScript does.
+  await page
+    .getByRole("button", { name: "Delete A guide" })
+    .evaluate((button) => button.closest("form")?.submit());
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Delete this link?");
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });

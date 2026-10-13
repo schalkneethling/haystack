@@ -12,7 +12,7 @@ import { expectValidHtml } from "./validate-html.ts";
 const EXPECTED_HEADERS = {
   "content-type": "text/html; charset=utf-8",
   "content-security-policy":
-    "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+    "default-src 'none'; script-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
   "x-content-type-options": "nosniff",
   "referrer-policy": "strict-origin-when-cross-origin",
 };

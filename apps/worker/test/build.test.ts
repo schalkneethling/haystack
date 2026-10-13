@@ -43,4 +43,18 @@ describe("build output", () => {
 
     expect(files.filter((file) => file.endsWith(".html"))).toEqual([]);
   });
+
+  // The build takes static assets from Vite's publicDir and ignores wrangler.jsonc's
+  // assets.directory, so this catches the two pointing at different directories.
+  it("contains the static assets that pages load", async () => {
+    await using outDir = await mkdtempDisposable(join(tmpdir(), "haystack-build-"));
+    const files = await buildFiles(outDir.path);
+
+    expect(files).toEqual(
+      expect.arrayContaining([
+        join("client", "assets", "delete-dialog.js"),
+        join("client", "_headers"),
+      ]),
+    );
+  });
 });

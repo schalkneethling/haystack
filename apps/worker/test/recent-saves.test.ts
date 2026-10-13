@@ -74,7 +74,7 @@ describe("GET /", () => {
 
   it("shows the empty state when nothing is saved", async () => {
     const markup = await listMarkup();
-    expect(markup).toContain("<h1>Saved links</h1>");
+    expect(markup).toContain('<h1 id="list-heading">Saved links</h1>');
     expect(markup).toContain("You haven't saved any links yet.");
     expect(markup).not.toContain("<ol>");
     await expectValidHtml(markup);
@@ -126,7 +126,7 @@ describe("GET /", () => {
     expect(response.headers.get("content-security-policy")).toContain("default-src 'none'");
     const markup = await response.text();
     expect(markup).not.toContain("<img");
-    expect(markup).not.toContain("<script");
+    expect(markup).not.toContain("<script>alert");
     expect(markup).toContain("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
     expect(markup).toContain("&lt;script&gt;alert(2)&lt;/script&gt;");
   });
