@@ -202,10 +202,21 @@ describe("GET /save", () => {
     await expectValidHtml(markup);
   });
 
-  it("explains that only https pages are saved", async () => {
+  it("explains that only https pages are saved, and writes nothing", async () => {
+    const before = await rowCounts();
     const markup = await (await getSave({ url: "http://example.com/" })).text();
-    expect(markup).toContain("<li>The address of the page</li>");
-    expect(markup).toContain("must be a complete https:// link");
+    expect(markup).toContain(
+      "<li>The address of the page: Haystack saves only secure pages, so it must be a complete https:// link, without spaces and at most 2,048 characters long</li>",
+    );
+    expect(await rowCounts()).toEqual(before);
+  });
+
+  it("explains only the rules for the fields that are invalid", async () => {
+    const markup = await (
+      await getSave({ url: "https://example.com/", title: "a".repeat(201) })
+    ).text();
+    expect(markup).toContain("<li>The page title: it is too long</li>");
+    expect(markup).not.toContain("https://");
   });
 
   it.each([

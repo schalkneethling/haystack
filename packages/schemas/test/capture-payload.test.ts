@@ -94,10 +94,12 @@ describe("CapturePayload", () => {
     expect(validateCapturePayload({ ...full, url })).toEqual({ ok: false, invalidFields: ["url"] });
   });
 
-  it("accepts an http canonical URL, which is never linked", () => {
-    const canonical_url = "http://example.com/article";
-    expect(v.parse(CapturePayload, { ...full, canonical_url }).canonical_url).toBe(canonical_url);
-  });
+  it.each(["http://example.com/article", "HTTP://EXAMPLE.COM/"])(
+    "accepts %s as the canonical URL, which is never linked",
+    (canonical_url) => {
+      expect(v.parse(CapturePayload, { ...full, canonical_url }).canonical_url).toBe(canonical_url);
+    },
+  );
 
   it.each(["", "   "])("rejects the URL %j", (url) => {
     expect(v.safeParse(CapturePayload, { url }).success).toBe(false);

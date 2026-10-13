@@ -63,7 +63,7 @@ function render(value: HtmlValue): string {
  * Supported positions: element content and quoted attribute values (`title="${value}"`).
  * Not supported: unquoted attributes, and content inside `<script>` or `<style>`.
  * Escaping does not make a URL safe: a `javascript:` URL survives it. A URL in an attribute
- * such as `href` must already be validated as http or https.
+ * such as `href` must already be validated as https.
  */
 export function html(strings: TemplateStringsArray, ...values: readonly HtmlValue[]): SafeHtml {
   let out = strings[0] ?? "";

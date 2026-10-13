@@ -27,6 +27,18 @@ const FIELD_LABELS: Record<CaptureField, string> = {
   og_site_name: "The site name",
 };
 
+// What a valid value looks like, shown next to each invalid field.
+const TEXT_RULE = "it is too long";
+const FIELD_RULES: Record<CaptureField, string> = {
+  url: `Haystack saves only secure pages, so it must be a complete https:// link, without spaces and at most ${CAPTURE_CAPS.url.toLocaleString("en")} characters long`,
+  canonical_url: `it must be a complete http:// or https:// link, without spaces and at most ${CAPTURE_CAPS.canonical_url.toLocaleString("en")} characters long`,
+  title: TEXT_RULE,
+  description: TEXT_RULE,
+  og_title: TEXT_RULE,
+  og_description: TEXT_RULE,
+  og_site_name: TEXT_RULE,
+};
+
 // One explanation per reason. The URL itself is never shown, because it may be the secret.
 const SENSITIVE_REASONS: Record<SensitiveUrlReason, string> = {
   "embedded-credentials":
@@ -61,12 +73,8 @@ function invalidPage(invalidFields: readonly CaptureField[]): Response {
     html`<h1>This link can't be saved</h1>
       <p>The save link has values Haystack can't use:</p>
       <ul>
-        ${invalidFields.map((field) => html`<li>${FIELD_LABELS[field]}</li>`)}
-      </ul>
-      <p>
-        Haystack saves only secure pages, so the address must be a complete https:// link without
-        spaces. A canonical address can also be an http:// link. Text fields have length limits.
-      </p>`,
+        ${invalidFields.map((field) => html`<li>${FIELD_LABELS[field]}: ${FIELD_RULES[field]}</li>`)}
+      </ul>`,
     400,
   );
 }

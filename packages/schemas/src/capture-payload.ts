@@ -38,7 +38,7 @@ function isHttpsUrl(value: string): boolean {
   return parsesAsWritten(value, HTTPS_PREFIX);
 }
 
-function isHttpUrl(value: string): boolean {
+function isHttpOrHttpsUrl(value: string): boolean {
   return parsesAsWritten(value, HTTP_PREFIX);
 }
 
@@ -83,7 +83,7 @@ export const CapturePayload = v.pipe(
     ),
     canonical_url: v.pipe(
       optionalText(CAPTURE_CAPS.canonical_url),
-      v.check((value) => value === undefined || isHttpUrl(value), NOT_HTTP_URL),
+      v.check((value) => value === undefined || isHttpOrHttpsUrl(value), NOT_HTTP_URL),
     ),
     title: optionalText(CAPTURE_CAPS.title),
     description: optionalText(CAPTURE_CAPS.description),
