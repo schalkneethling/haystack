@@ -779,7 +779,7 @@ One configuration module reads every flag once per request, or once per sweep ru
 
 ## Dependency updates
 
-Dependabot proposes npm and GitHub Actions updates weekly, and waits 7 days after a release before proposing it (`.github/dependabot.yml`). Some packages only work at matching versions, but Dependabot updates each package in its own pull request unless a group says otherwise (#60).
+Dependabot proposes npm and GitHub Actions version updates weekly, and waits 7 days after a release before proposing it (`.github/dependabot.yml`). The schedule and the wait apply to version updates only: a security update can arrive at any time. Some packages only work at matching versions, but Dependabot updates each package in its own pull request unless a group says otherwise (#60).
 
 - **Groups.** Each group below exists twice, once for version updates and once for security updates, because a group covers only version updates unless it says otherwise.
   - `wrangler` and `@cloudflare/vite-plugin`: the plugin checks that the installed Wrangler matches the version it requires, and fails the build otherwise.
