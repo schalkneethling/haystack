@@ -13,6 +13,11 @@
       "migrations_dir": "migrations",
     },
   ],
+  // Static assets (CSS, JS, images; never HTML). `wrangler dev` and the test harness read this
+  // directory; `vp build` copies Vite's `publicDir` instead and ignores this field, so the two
+  // must name the same directory (vite.config.ts). A request for an existing file is served
+  // without running the Worker; every other request goes to the Worker (#43).
+  "assets": { "directory": "../web/public" },
   // The Google OAuth client's local redirect URI is http://localhost:5173/auth/callback.
   "dev": { "port": 5173 },
   // Static configuration (plan, "Secrets and configuration"). Tests override these.

@@ -1,0 +1,4 @@
+# Headers for static assets. The Worker never runs for these responses, so its own headers
+# (src/page.ts) do not apply. A CSP on a script or stylesheet has no effect; nosniff does.
+/assets/*
+  X-Content-Type-Options: nosniff

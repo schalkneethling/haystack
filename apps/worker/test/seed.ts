@@ -31,18 +31,25 @@ export async function seedSignedInUser(db: D1Like, email: string): Promise<Seede
   return { userId, cookie: `__Host-session=${sessionId}` };
 }
 
+export interface SeededBookmarkFields {
+  title?: string;
+  description?: string;
+  createdAt?: number;
+}
+
 export async function seedBookmark(
   db: D1Like,
   userId: string,
   url: string,
   normalizedUrl: string,
+  { title = "Seeded", description, createdAt = Date.now() }: SeededBookmarkFields = {},
 ): Promise<string> {
   const id = crypto.randomUUID();
   await db
     .prepare(
-      "INSERT INTO bookmarks (id, user_id, url, normalized_url, title, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      "INSERT INTO bookmarks (id, user_id, url, normalized_url, title, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
-    .bind(id, userId, url, normalizedUrl, "Seeded", Date.now())
+    .bind(id, userId, url, normalizedUrl, title, description ?? null, createdAt)
     .run();
   return id;
 }

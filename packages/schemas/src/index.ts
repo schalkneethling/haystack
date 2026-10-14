@@ -3,6 +3,7 @@ export {
   type CaptureField,
   CapturePayload,
   type CaptureValidation,
+  isHttpsUrl,
   validateCapturePayload,
 } from "./capture-payload.ts";
 export {
