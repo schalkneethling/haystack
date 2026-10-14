@@ -50,7 +50,7 @@ jobs:
 
       - run: vp -C apps/worker run voiceover:install
 
-      - run: vp -C apps/worker run test:voiceover
+      - run: vp -C apps/worker run test:voiceover --forbid-only --reporter=list,github
 
       # Also after a pass, because a test that passed on retry keeps the failed attempt's trace
       # and video, and after a timeout, which cancels the job.
