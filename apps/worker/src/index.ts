@@ -18,6 +18,8 @@ import {
 } from "./auth/sessions.ts";
 import { upsertUser } from "./auth/users.ts";
 import { createDb, type Db } from "./db/client.ts";
+import { deletePathId } from "./bookmark-paths.ts";
+import { deleteBookmark } from "./delete-bookmark.ts";
 import { showRecentSaves } from "./recent-saves.ts";
 import { saveBookmark, showSaveForm } from "./save.ts";
 import {
@@ -171,6 +173,10 @@ async function handleAppRoute(
   }
   if (path === "/save" && request.method === "POST") {
     return saveBookmark(request, db, session.user.id);
+  }
+  const deleteId = request.method === "POST" ? deletePathId(path) : undefined;
+  if (deleteId !== undefined) {
+    return deleteBookmark(request, db, session.user.id, deleteId);
   }
   return notFoundPage();
 }

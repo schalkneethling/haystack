@@ -668,6 +668,16 @@ Deletion is permanent and removes the bookmark with its enrichments, failure rec
 
 **Interaction.** Each result card and list item has a real `<button>` inside a small `<form method="post">`, with an accessible name that includes the title (for example, "Delete Vitest browser mode guide"), so a screen reader user hearing a list of delete buttons knows which is which. Without JavaScript, the button leads to a confirmation page with a single confirm button. With JavaScript, confirmation happens in a native `<dialog>` opened with `showModal()`, which provides focus trapping and Escape handling. After deletion, the item is removed, focus moves to the next item (or to the list heading if it was the last one), and the live region announces the deletion.
 
+Deleting without JavaScript was implemented in #42:
+
+- Each list item's form posts to `POST /bookmarks/:id/delete`. Without `confirm=yes` in the body, the endpoint only shows the confirmation page, which posts again with it. A body that is not a form is treated as unconfirmed. The JavaScript dialog (#43) will post `confirm=yes` directly.
+- The button is `aria-labelledby` itself and the item's `<h2>`, so its name is "Delete" followed by the title, and the visible text stays "Delete".
+- Confirming shows the list (200, no redirect) with `<p role="status">Deleted “title”.</p>`, and the page title starts with the same words, because a screen reader announces the title on load but not a status message that arrives with the page. Reloading posts again and gets the 404, because the bookmark is gone.
+- Every miss (no such bookmark, already deleted, or another user's) gets the same 404 page, "This link isn't in your saved links", which links to the list.
+- Without JavaScript, focus starts at the top of the page after deleting. Moving focus to the next item is the dialog's job (#43).
+- The confirmation page links back to `/#bookmark-<id>` with "Keep it and go back to your saved links".
+- No table references `bookmarks` yet. The tables that Milestone 2 adds for enrichments, failure records, and search answers need `ON DELETE CASCADE` on their bookmark reference.
+
 Deletion is not exposed to agents in Milestone 4. The MCP and WebMCP tools are search-only.
 
 ## Agent access (Milestone 4)

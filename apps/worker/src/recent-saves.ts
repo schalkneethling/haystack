@@ -4,6 +4,7 @@ import { and, count, desc, eq, gt, or } from "drizzle-orm";
 import type { Db } from "./db/client.ts";
 import { bookmarks } from "./db/schema.ts";
 import { html, type SafeHtml } from "./html.ts";
+import { deleteAction } from "./bookmark-paths.ts";
 import { SENSITIVE_NOTICE } from "./notices.ts";
 import { htmlResponse } from "./page.ts";
 
@@ -46,10 +47,14 @@ function item(save: RecentSave): SafeHtml {
       ? null
       : html`
         <p>${withLineBreaks(save.description)}</p>`;
+  // The button's name is "Delete" followed by the title, so a list of them is told apart.
   return html`<li id="bookmark-${save.id}">
-        <h2>${savedLink(save.url, save.title)}</h2>
+        <h2 id="title-${save.id}">${savedLink(save.url, save.title)}</h2>
         <p>${save.url}</p>${description}
         <p>Saved <time datetime="${saved.toISOString()}">${SAVED_DATE.format(saved)}</time></p>
+        <form method="post" action="${deleteAction(save.id)}">
+          <button type="submit" id="delete-${save.id}" aria-labelledby="delete-${save.id} title-${save.id}">Delete</button>
+        </form>
       </li>`;
 }
 
@@ -97,7 +102,19 @@ export async function isInRecentSaves(
   return (newer?.n ?? 0) < RECENT_SAVES_LIMIT;
 }
 
-export async function showRecentSaves(db: Db, userId: string): Promise<Response> {
+/** The result of an action, such as deleting a bookmark, shown on the list page. */
+export interface Outcome {
+  // Comes first in the page title.
+  title: string;
+  // Shown below the heading. It starts with its own line break.
+  message: SafeHtml;
+}
+
+export async function showRecentSaves(
+  db: Db,
+  userId: string,
+  outcome: Outcome | null = null,
+): Promise<Response> {
   // One extra row says whether there are more than the page shows.
   const rows = await db
     .select({
@@ -113,8 +130,8 @@ export async function showRecentSaves(db: Db, userId: string): Promise<Response>
     .limit(RECENT_SAVES_LIMIT + 1);
   const saves = rows.slice(0, RECENT_SAVES_LIMIT);
   return htmlResponse(
-    "Saved links",
-    html`<h1>Saved links</h1>
+    outcome === null ? "Saved links" : `${outcome.title} - Saved links`,
+    html`<h1>Saved links</h1>${outcome?.message}
       ${SENSITIVE_NOTICE}
       ${list(saves, rows.length > RECENT_SAVES_LIMIT)}`,
     200,
