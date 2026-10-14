@@ -26,7 +26,11 @@ test("the dialog confirms, deletes, moves focus to the next item, and announces 
   const dialog = page.getByRole("dialog", { name: "Delete this link?" });
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText("Middle confirm");
-  await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await expect(dialog).toBeFocused();
+  // What a screen reader announces with the dialog's name when the dialog takes focus.
+  await expect(dialog).toHaveAccessibleDescription(
+    "Middle confirm Deleting is permanent. You can save the link again later.",
+  );
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 
   await dialog.getByRole("button", { name: "Delete" }).click();
@@ -64,6 +68,35 @@ test("deleting the only item moves focus to the heading and shows the empty stat
   await expect(page.getByRole("heading", { level: 1, name: "Saved links" })).toBeFocused();
   await expect(page.getByText("You haven't saved any links yet.")).toBeVisible();
   await expect(page.getByRole("list")).toHaveCount(0);
+});
+
+test("a second Enter after opening the dialog deletes nothing, and Tab reaches Cancel first", async ({
+  page,
+  query,
+}) => {
+  await saveThroughForm(page, "https://example.com/keyboard", "Keyboard guide");
+  await page.goto("/");
+  await page.getByRole("button", { name: "Delete Keyboard guide" }).focus();
+  await page.keyboard.press("Enter");
+  const dialog = page.getByRole("dialog", { name: "Delete this link?" });
+  await expect(dialog).toBeFocused();
+
+  await page.keyboard.press("Enter");
+  await expect(dialog).toBeVisible();
+  // No delete started: one would mark the buttons busy and announce a result.
+  await expect(dialog.getByRole("button", { name: "Delete" })).not.toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  await expect(page.getByRole("status")).toBeEmpty();
+  expect(
+    await query("SELECT id FROM bookmarks WHERE url = ?", "https://example.com/keyboard"),
+  ).toHaveLength(1);
+
+  await page.keyboard.press("Tab");
+  await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(dialog.getByRole("button", { name: "Delete" })).toBeFocused();
 });
 
 for (const [how, close] of [

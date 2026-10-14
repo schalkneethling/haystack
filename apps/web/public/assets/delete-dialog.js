@@ -28,16 +28,19 @@ function createDialog() {
   name.id = "delete-dialog-name";
   const notice = element("p", "Deleting is permanent. You can save the link again later.");
   notice.id = "delete-dialog-notice";
-  // Focus starts on Cancel, so the description is what tells a screen reader which link.
+  // The dialog itself takes focus when it opens (see the submit listener), so a screen reader
+  // announces the heading and this description before any button, and a stray Enter neither
+  // deletes nor cancels. tabindex -1 makes it focusable without adding it to the Tab order.
+  dialog.tabIndex = -1;
   dialog.setAttribute("aria-labelledby", title.id);
   dialog.setAttribute("aria-describedby", `${name.id} ${notice.id}`);
   const confirm = /** @type {HTMLButtonElement} */ (element("button", "Delete"));
   confirm.type = "button";
   const cancel = /** @type {HTMLButtonElement} */ (element("button", "Cancel"));
   cancel.type = "button";
-  // Cancel is focused when the dialog opens, so Enter does not delete by accident.
-  cancel.autofocus = true;
-  dialog.append(title, name, notice, confirm, cancel);
+  // Cancel comes first, so it is the first button Tab and a screen reader reach, and the one
+  // showModal focuses if focusing the dialog fails.
+  dialog.append(title, name, notice, cancel, confirm);
   return { dialog, name, confirm, cancel };
 }
 
@@ -111,6 +114,9 @@ if (list !== null && typeof HTMLDialogElement === "function") {
     const title = form.closest("li")?.querySelector("h2")?.textContent ?? "";
     name.textContent = title;
     dialog.showModal();
+    // The spec lets autofocus on the dialog do this, but Chromium (156) ignores it and focuses
+    // the first button instead.
+    dialog.focus();
   });
 
   confirm.addEventListener("click", async () => {
