@@ -28,6 +28,6 @@
     "html-validate": "^11.16.2",
     "varlock": "^1.22.0",
     "vite": "catalog:",
-    "wrangler": "4.147.0"
+    "wrangler": "4.148.0"
   }
 }
