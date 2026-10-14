@@ -80,7 +80,6 @@ export async function deleteBookmark(
   // status message that arrives with it.
   return showRecentSaves(db, userId, {
     title: `Deleted “${deleted.title}”`,
-    message: html`
-      <p role="status">Deleted “${deleted.title}”.</p>`,
+    message: html`<p>Deleted “${deleted.title}”.</p>`,
   });
 }
