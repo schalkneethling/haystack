@@ -27,9 +27,11 @@ test("the dialog confirms, deletes, moves focus to the next item, and announces 
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText("Middle confirm");
   await expect(dialog).toBeFocused();
-  // What a screen reader announces with the dialog's name when the dialog takes focus.
+  // What a screen reader announces when the dialog takes focus. VoiceOver reads the name and
+  // the heading but not the description, so the name says which link is being deleted.
+  await expect(dialog).toHaveAccessibleName("Delete this link? Middle confirm");
   await expect(dialog).toHaveAccessibleDescription(
-    "Middle confirm Deleting is permanent. You can save the link again later.",
+    "Deleting is permanent. You can save the link again later.",
   );
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 
@@ -97,6 +99,16 @@ test("a second Enter after opening the dialog deletes nothing, and Tab reaches C
   await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(dialog.getByRole("button", { name: "Delete" })).toBeFocused();
+});
+
+test("reopening the dialog for another item names that item", async ({ page }) => {
+  await saveThree(page, "reopen");
+  const dialog = page.getByRole("dialog");
+  await page.getByRole("button", { name: "Delete Newest reopen" }).click();
+  await expect(dialog).toHaveAccessibleName("Delete this link? Newest reopen");
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("button", { name: "Delete Oldest reopen" }).click();
+  await expect(dialog).toHaveAccessibleName("Delete this link? Oldest reopen");
 });
 
 for (const [how, close] of [

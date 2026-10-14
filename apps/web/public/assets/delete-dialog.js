@@ -29,11 +29,14 @@ function createDialog() {
   const notice = element("p", "Deleting is permanent. You can save the link again later.");
   notice.id = "delete-dialog-notice";
   // The dialog itself takes focus when it opens (see the submit listener), so a screen reader
-  // announces the heading and this description before any button, and a stray Enter neither
-  // deletes nor cancels. tabindex -1 makes it focusable without adding it to the Tab order.
+  // announces it before any button, and a stray Enter neither deletes nor cancels. tabindex -1
+  // makes it focusable without adding it to the Tab order.
   dialog.tabIndex = -1;
-  dialog.setAttribute("aria-labelledby", title.id);
-  dialog.setAttribute("aria-describedby", `${name.id} ${notice.id}`);
+  // The link's title is part of the name, not the description: when the dialog takes focus,
+  // VoiceOver reads its name and the heading, but not the description (plan, "Deleting
+  // bookmarks"). The heading stays short.
+  dialog.setAttribute("aria-labelledby", `${title.id} ${name.id}`);
+  dialog.setAttribute("aria-describedby", notice.id);
   const confirm = /** @type {HTMLButtonElement} */ (element("button", "Delete"));
   confirm.type = "button";
   const cancel = /** @type {HTMLButtonElement} */ (element("button", "Cancel"));
