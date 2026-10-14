@@ -4,5 +4,12 @@
   "compilerOptions": {
     "types": ["node"]
   },
-  "include": [".", "../e2e", "../vite.config.ts", "../drizzle.config.ts", "../playwright.config.ts"]
+  "include": [
+    ".",
+    "../e2e",
+    "../vite.config.ts",
+    "../drizzle.config.ts",
+    "../playwright.config.ts",
+    "../playwright.voiceover.config.ts"
+  ]
 }
