@@ -273,7 +273,7 @@ describe("a successful sign-in", () => {
 
     const cookie = (response.headers.get("set-cookie") ?? "").split(";")[0];
     const app = await server.fetch("/", { headers: { cookie }, redirect: "manual" });
-    expect(app.status).toBe(404);
+    expect(app.status).toBe(200);
   });
 
   it("keeps a return target longer than 4 KB", async () => {
