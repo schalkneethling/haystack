@@ -121,14 +121,14 @@ describe("without a session", () => {
 describe("with a session", () => {
   it("reaches the router", async () => {
     const { sessionId } = await seedSession("owner@example.com", SESSION_LIFETIME_MS - DAY);
-    const response = await get("/", { ...page, ...cookieFor(sessionId) });
+    const response = await get("/no-such-page", { ...page, ...cookieFor(sessionId) });
     expect(response.status).toBe(404);
     expect(await response.text()).toContain("<h1>Page not found</h1>");
   });
 
   it("matches the allowlist case-insensitively", async () => {
     const { sessionId } = await seedSession("OWNER@example.COM", SESSION_LIFETIME_MS - DAY);
-    expect((await get("/", cookieFor(sessionId))).status).toBe(404);
+    expect((await get("/", cookieFor(sessionId))).status).toBe(200);
   });
 
   it("does not write in the first half of the session's life", async () => {

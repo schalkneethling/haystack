@@ -15,7 +15,9 @@ import { and, eq } from "drizzle-orm";
 import type { Db } from "./db/client.ts";
 import { bookmarks } from "./db/schema.ts";
 import { html } from "./html.ts";
+import { SENSITIVE_NOTICE } from "./notices.ts";
 import { htmlResponse } from "./page.ts";
+import { isInRecentSaves, RECENT_SAVES_LIMIT, type ListPosition } from "./recent-saves.ts";
 
 const FIELD_LABELS: Record<CaptureField, string> = {
   url: "The address of the page",
@@ -48,12 +50,6 @@ const SENSITIVE_REASONS: Record<SensitiveUrlReason, string> = {
   "credential-parameter":
     "This link contains an access token, key, or password, so it could let anyone who has it act as you.",
 };
-
-const SENSITIVE_NOTICE = html`<p id="sensitive-notice">
-  Do not save links that contain access tokens, private shares, or sign-in and password reset
-  links. Saved links are sent to the services that describe them, so a private link would no
-  longer be private.
-</p>`;
 
 /** The captured fields from the query string. A repeated key uses its first value. */
 function capturedFields(parameters: URLSearchParams): Record<string, string> {
@@ -89,11 +85,18 @@ function sensitivePage(reason: SensitiveUrlReason): Response {
   );
 }
 
-function alreadySavedPage(bookmarkId: string): Response {
+async function alreadySavedPage(db: Db, userId: string, existing: ListPosition): Promise<Response> {
+  // The list shows only the newest links, so an older bookmark has no anchor to link to.
+  const where = (await isInRecentSaves(db, userId, existing))
+    ? html`<p><a href="/#bookmark-${existing.id}">See it in your saved links</a></p>`
+    : html`<p>
+        It is older than the ${RECENT_SAVES_LIMIT} most recent links that
+        <a href="/">your saved links</a> show.
+      </p>`;
   return htmlResponse(
     "Already saved",
     html`<h1>You already saved this link</h1>
-      <p><a href="/#bookmark-${bookmarkId}">See it in your saved links</a></p>`,
+      ${where}`,
     200,
   );
 }
@@ -188,17 +191,16 @@ function formPage(payload: CapturePayload, url: string, state: FormState): Respo
   );
 }
 
-async function existingBookmarkId(
+async function existingBookmark(
   db: Db,
   userId: string,
   normalizedUrl: string,
-): Promise<string | undefined> {
-  const row = await db
-    .select({ id: bookmarks.id })
+): Promise<ListPosition | undefined> {
+  return db
+    .select({ id: bookmarks.id, createdAt: bookmarks.createdAt })
     .from(bookmarks)
     .where(and(eq(bookmarks.userId, userId), eq(bookmarks.normalizedUrl, normalizedUrl)))
     .get();
-  return row?.id;
 }
 
 /** GET /save: validate, refuse sensitive URLs, find duplicates, then show the form. */
@@ -214,9 +216,9 @@ export async function showSaveForm(request: Request, db: Db, userId: string): Pr
     return sensitivePage(reason);
   }
   const url = stripTrackingParameters(payload.url);
-  const existingId = await existingBookmarkId(db, userId, normalizeUrl(url));
-  if (existingId !== undefined) {
-    return alreadySavedPage(existingId);
+  const existing = await existingBookmark(db, userId, normalizeUrl(url));
+  if (existing !== undefined) {
+    return alreadySavedPage(db, userId, existing);
   }
   return formPage(payload, url, prefill(payload, url));
 }
@@ -327,9 +329,9 @@ export async function saveBookmark(request: Request, db: Db, userId: string): Pr
   if (inserted !== undefined) {
     return savedPage(inserted.id);
   }
-  const existingId = await existingBookmarkId(db, userId, normalizedUrl);
-  if (existingId === undefined) {
+  const existing = await existingBookmark(db, userId, normalizedUrl);
+  if (existing === undefined) {
     throw new Error("Insert conflicted, but no existing bookmark was found");
   }
-  return alreadySavedPage(existingId);
+  return alreadySavedPage(db, userId, existing);
 }
