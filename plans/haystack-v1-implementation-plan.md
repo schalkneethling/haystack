@@ -869,7 +869,7 @@ The list was implemented in #41:
 Automate VoiceOver, so the tests check what a screen reader actually announces instead of what the markup suggests it should (see "Screen reader tests" under "Testing strategy"). It comes before Phase 5, because every later page adds announcements worth checking. It is numbered 4.5 so that existing issues keep their phase numbers.
 
 Tests: the list page, where moving by heading reads "Saved links" and then each saved link's title (#55); the delete dialog, where opening it announces which link it deletes before any button, the first Tab reaches Cancel, a deletion is announced, and Escape returns to the Delete button (#56); and the save pages, where the error page announces its title and a rejected title on the form announces the error (#57).
-Acceptance: the VoiceOver tests pass in CI on the pinned macOS runner, and a failed run uploads a trace, a video and the setup recording.
+Acceptance: the VoiceOver tests pass in CI on the pinned macOS runner, and a failed run uploads a trace and a video of the failed test. The setup is not recorded (see "Screen reader tests" under "Testing strategy").
 
 #### Phase 5: Extension
 
