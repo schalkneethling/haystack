@@ -806,6 +806,23 @@ Set up in #11:
 - axe runs every rule, including the best-practice rules, with no `withTags` filter. The best-practice rules (landmarks, heading order) matter for server-rendered pages.
 - The Phase 6 run against production needs a different fixture.
 
+**Screen reader tests** use Guidepup (`@guidepup/guidepup` and `@guidepup/playwright`), which drives VoiceOver on macOS and records every phrase it speaks. The browser tests check the DOM and the accessibility tree, but not what a screen reader says. The first trial runs showed the difference: VoiceOver read a focused dialog's name and heading, but not its description (#56). Set up in #55:
+
+- The tests live in `apps/worker/e2e` as `*.voiceover.ts`, with their own config (`playwright.voiceover.config.ts`), and run with `vp -C apps/worker run test:voiceover`. `e2e/voiceover-fixtures.ts` combines the browser test fixtures with Guidepup's `voiceOver` fixture through Playwright's `mergeTests`, so each test gets the local Worker, `signIn`, and a running VoiceOver.
+- They run one at a time in headed WebKit, Playwright's closest browser to Safari, because there is only one VoiceOver and it cannot read a headless browser. They have one retry, because VoiceOver sometimes fails to start ("Unable to activate application"). That happened to the first test in two of six trial runs, and each time the next test in the same job started VoiceOver normally.
+- They are not part of `vp run quality`, because they need macOS with VoiceOver set up for automation, and VoiceOver takes over the machine while they run.
+- Checks match the parts of a phrase that matter (for example "heading level 1" and "Saved links"), not whole phrases or a snapshot of the log, because VoiceOver's wording changes between macOS releases.
+- The `@guidepup/setup` tool is a dev dependency too, run by the `voiceover:setup` and `voiceover:install` scripts, so the lockfile, the release-age rules and Dependabot cover it. (The Guidepup GitHub Action is archived.) Its optional screen recording depends on `ffmpeg-static`, whose install script downloads an ffmpeg binary without checking it, so `pnpm-workspace.yaml` denies that script, and the setup is never recorded. `voiceover:install` picks the VoiceOver assets that the installed `@guidepup/guidepup` version lists for each macOS version, so the two packages are updated together.
+- CI: the VoiceOver workflow runs on GitHub's `macos-26` runner (free, because the repository is public) for pull requests and pushes to `main` that change anything under `apps/` or `packages/`, or the dependencies, and on manual dispatch. The label fixes the macOS major version, but the image still gets 26.x point releases, which can change what VoiceOver says. The job runs `voiceover:setup --ci`, `voiceover:install`, then the tests, and always uploads the Playwright traces and videos, which Playwright keeps only for failed attempts. It is advisory, not a required check.
+- Locally the tests are optional. Set up the Mac once:
+  1. Run `vp -C apps/worker run voiceover:setup --macos-ignore-tcc-db`. The flag skips the update to the macOS permissions database, which needs System Integrity Protection disabled. Do not disable it: the setup asks for the same permissions by hand instead, as Guidepup's "Manual VoiceOver setup" guide describes. It opens VoiceOver Utility and waits up to five minutes until "Allow VoiceOver to be controlled with AppleScript" is ticked on the General tab.
+  2. In System Settings, Privacy & Security, Accessibility, add the terminal or editor that runs the tests to "Allow the applications below to control your computer".
+  3. Run `vp -C apps/worker run voiceover:install`, and again after each Guidepup update.
+
+  While the tests run, VoiceOver speaks and takes the keyboard focus, so the Mac cannot be used for anything else.
+
+- When VoiceOver behaves differently from what the markup and the specifications say, record it in the issue and report it to Apple. Do not work around it in silence.
+
 **Evaluations** live in `evals/` and are separate from the test suite. They run only when explicitly invoked with a live key. The labeled dataset is a set of queries, each with the bookmark IDs that should and should not match. It starts with roughly 30 queries written by Schalk against his own bookmarks.
 
 ## Milestones and phases
@@ -858,6 +875,13 @@ The list was implemented in #41:
 - Each item is `<li id="bookmark-<id>">`, which the "already saved" and "saved" pages link to. It has the title as an `<h2>` link, the address as text, the description if there is one (with its line breaks as `<br>`), and the date saved (`<time>`, formatted in UTC, because the server does not know the reader's time zone).
 - `savedLink` renders an `href` only when the address passes `isHttpsUrl` (`@haystack/schemas`), and adds `rel="noreferrer"`. Any other stored address is shown as text.
 - axe runs in the page, so the scans run with JavaScript enabled. The acceptance test runs with JavaScript disabled.
+
+#### Phase 4.5: Screen reader tests with VoiceOver
+
+Automate VoiceOver, so the tests check what a screen reader actually announces instead of what the markup suggests it should (see "Screen reader tests" under "Testing strategy"). It comes before Phase 5, because every later page adds announcements worth checking. It is numbered 4.5 so that existing issues keep their phase numbers.
+
+Tests: the list page, where moving by heading reads "Saved links" and then each saved link's title (#55); the delete dialog, where opening it announces which link it deletes before any button, the first Tab reaches Cancel, a deletion is announced, and Escape returns to the Delete button (#56); and the save pages, where the error page announces its title and a rejected title on the form announces the error (#57).
+Acceptance: the VoiceOver tests pass in CI on the pinned macOS runner, and a failed run uploads a trace and a video of the failed test. The setup is not recorded (see "Screen reader tests" under "Testing strategy").
 
 #### Phase 5: Extension
 

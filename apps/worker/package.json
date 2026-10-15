@@ -10,7 +10,10 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "test:e2e": "playwright test",
-    "e2e:install": "playwright install --only-shell chromium"
+    "e2e:install": "playwright install --only-shell chromium",
+    "test:voiceover": "playwright test --config playwright.voiceover.config.ts",
+    "voiceover:setup": "guidepup setup",
+    "voiceover:install": "guidepup install voiceover && playwright install webkit"
   },
   "dependencies": {
     "@haystack/schemas": "workspace:*",
@@ -19,7 +22,10 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
-    "@cloudflare/vite-plugin": "^1.62.5",
+    "@cloudflare/vite-plugin": "^1.63.0",
+    "@guidepup/guidepup": "^0.35.0",
+    "@guidepup/playwright": "^0.19.1",
+    "@guidepup/setup": "^0.29.1",
     "@playwright/test": "^1.64.0",
     "@types/node": "^24.19.1",
     "@varlock/1password-plugin": "^2.0.5",
@@ -28,6 +34,6 @@
     "html-validate": "^11.16.2",
     "varlock": "^1.22.0",
     "vite": "catalog:",
-    "wrangler": "4.147.0"
+    "wrangler": "4.148.0"
   }
 }

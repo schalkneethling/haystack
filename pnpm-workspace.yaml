@@ -3,6 +3,9 @@ packages:
   - packages/*
 allowBuilds:
   esbuild: true
+  # Needed only for the Guidepup setup tool's screen recording, which Haystack doesn't use. Its
+  # install script downloads an ffmpeg binary.
+  ffmpeg-static: false
   workerd: true
 catalog:
   vite: npm:@voidzero-dev/vite-plus-core@1.1.0
