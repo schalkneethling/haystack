@@ -8,6 +8,31 @@ updates:
       default-days: 7
       include:
         - "*"
+    # Packages that only work at matching versions update together, for version and security
+    # updates alike. vite-plus can't be grouped with its vite alias. See "Dependency updates"
+    # in plans/haystack-v1-implementation-plan.md.
+    groups:
+      # @cloudflare/vite-plugin requires a matching wrangler version.
+      cloudflare-workers:
+        patterns:
+          - "wrangler"
+          - "@cloudflare/vite-plugin"
+      cloudflare-workers-security:
+        applies-to: security-updates
+        patterns:
+          - "wrangler"
+          - "@cloudflare/vite-plugin"
+      # The @varlock plugins require the varlock release they shipped with, and import its
+      # internals.
+      varlock:
+        patterns:
+          - "varlock"
+          - "@varlock/*"
+      varlock-security:
+        applies-to: security-updates
+        patterns:
+          - "varlock"
+          - "@varlock/*"
   - package-ecosystem: github-actions
     directory: /
     schedule:
