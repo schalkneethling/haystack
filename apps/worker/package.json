@@ -27,7 +27,7 @@
     "@guidepup/playwright": "^0.19.1",
     "@guidepup/setup": "^0.29.1",
     "@playwright/test": "^1.64.0",
-    "@types/node": "^24.19.1",
+    "@types/node": "^25.9.9",
     "@varlock/1password-plugin": "^2.0.5",
     "@varlock/cloudflare-integration": "^1.6.1",
     "drizzle-kit": "^0.31.11",
