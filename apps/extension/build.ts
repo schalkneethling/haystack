@@ -1,12 +1,12 @@
 // Builds the extension for one browser with Vite, through Vite+. See "## Extension" in
 // plans/haystack-v1-implementation-plan.md. The Haystack origin is a build-time constant, so
 // local development and production get separate builds. Run as a script, it builds Chrome into
-// dist/chrome from HAYSTACK_ORIGIN.
+// dist/chrome and Firefox into dist/firefox, both from HAYSTACK_ORIGIN.
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { isHttpsOrLoopbackUrl, LOOPBACK_HOSTS } from "@haystack/schemas";
 import { build, type Plugin } from "vite-plus";
-import { type Browser, type Manifest, manifestFor } from "./manifest.ts";
+import { BROWSERS, type Browser, type Manifest, manifestFor } from "./manifest.ts";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 
@@ -104,11 +104,13 @@ export async function buildExtension({ origin, browser, outDir }: BuildOptions):
 
 if (import.meta.main) {
   try {
-    await buildExtension({
-      origin: process.env.HAYSTACK_ORIGIN,
-      browser: "chrome",
-      outDir: fileURLToPath(new URL("./dist/chrome", import.meta.url)),
-    });
+    for (const browser of BROWSERS) {
+      await buildExtension({
+        origin: process.env.HAYSTACK_ORIGIN,
+        browser,
+        outDir: fileURLToPath(new URL(`./dist/${browser}`, import.meta.url)),
+      });
+    }
   } catch (error) {
     console.error(error instanceof Error ? error.message : error);
     process.exitCode = 1;
