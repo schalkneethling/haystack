@@ -22,6 +22,18 @@ test("the save form has no axe violations", async ({ page }) => {
   expect(results.violations).toEqual([]);
 });
 
+test("the form after a rejected title has no axe violations", async ({ page }) => {
+  await page.goto(saveUrl(fields));
+  // Only spaces pass the browser's `required` check and fail on the server, after trimming.
+  await page.getByLabel("Title").fill("   ");
+  await page.getByRole("button", { name: "Save" }).click();
+  // Both the form and the page after it have the heading "Save a link", so wait for the title.
+  await expect(page).toHaveTitle("Check the form - Haystack");
+  await expect(page.getByRole("alert")).toHaveText("Enter a title of up to 200 characters.");
+  const results = await new AxeBuilder({ page }).analyze();
+  expect(results.violations).toEqual([]);
+});
+
 test.describe("other /save pages have no axe violations", () => {
   for (const [name, values] of [
     ["the validation page", { url: "javascript:alert(1)" }],

@@ -152,10 +152,13 @@ function errorAttributes(state: FormState, field: ConfirmedField) {
 }
 
 function formPage(payload: CapturePayload, url: string, state: FormState): Response {
+  // The alert is on a wrapper, and the field's aria-describedby points at the plain paragraph
+  // inside it. VoiceOver in WebKit does not read a description from an element that has a
+  // live-region role itself. See "Save flow" in plans/haystack-v1-implementation-plan.md.
   const error =
     state.invalid === undefined
       ? ""
-      : html`<p id="save-error" role="alert">${CONFIRMED_ERRORS[state.invalid]}</p>`;
+      : html`<div role="alert"><p id="save-error">${CONFIRMED_ERRORS[state.invalid]}</p></div>`;
   return htmlResponse(
     state.invalid === undefined ? "Save a link" : "Check the form",
     html`<h1>Save a link</h1>${error}
