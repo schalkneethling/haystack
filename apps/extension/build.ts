@@ -88,7 +88,12 @@ export async function buildExtension({ origin, browser, outDir }: BuildOptions):
     logLevel: "warn",
     // Only the popup entry reads it. The modules it calls take the origin as a parameter.
     define: { __HAYSTACK_ORIGIN__: JSON.stringify(haystackOrigin) },
-    build: { outDir, emptyOutDir: true },
+    build: {
+      outDir,
+      emptyOutDir: true,
+      // The popup is one entry with no dynamic imports, so the polyfill would be dead code.
+      modulePreload: { polyfill: false },
+    },
     plugins: [manifestPlugin(manifest)],
   });
 }

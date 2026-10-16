@@ -51,7 +51,11 @@ test.describe("a sensitive URL", () => {
     await expect(popup.getByRole("status")).toHaveText(
       SENSITIVE_URL_EXPLANATIONS["credential-parameter"],
     );
-    // The popup decides before it opens anything, so once it shows the reason no tab will open.
+    // A regression that opened the form and still showed the reason would not be caught by
+    // listing the pages alone: Playwright might not have attached to the new tab yet. The tab's
+    // first request is invisible to Playwright too, so a short wait for a new page is the check.
+    const opened = await context.waitForEvent("page", { timeout: 500 }).catch(() => null);
+    expect(opened?.url() ?? null).toBeNull();
     expect(context.pages().map((open) => open.url())).toEqual([SENSITIVE, popup.url()]);
   });
 

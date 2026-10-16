@@ -14,15 +14,26 @@ interface FakeOptions {
   /** What the page's document.title is, or an error when the page can't be scripted. */
   documentTitle?: string | Error;
   createFails?: boolean;
+  queryFails?: boolean;
 }
 
 // The popup's view of the browser, recording the tabs it opens and the scripts it runs.
-function fakeBrowser({ tab, documentTitle = "Document title", createFails = false }: FakeOptions) {
+function fakeBrowser({
+  tab,
+  documentTitle = "Document title",
+  createFails = false,
+  queryFails = false,
+}: FakeOptions) {
   const created: string[] = [];
   const scripted: number[] = [];
   const api: PopupBrowser = {
     tabs: {
-      query: async () => (tab === undefined ? [] : [tab]),
+      query: async () => {
+        if (queryFails) {
+          throw new Error("No current window");
+        }
+        return tab === undefined ? [] : [tab];
+      },
       create: async ({ url }) => {
         if (createFails) {
           throw new Error("No window");
@@ -97,7 +108,12 @@ describe("openSaveForm", () => {
     expect(fake.created).toEqual([]);
   });
 
-  for (const url of ["http://example.com/article", "chrome://newtab/", "file:///Users/me/a.html"]) {
+  for (const url of [
+    "http://example.com/article",
+    "chrome://newtab/",
+    "file:///Users/me/a.html",
+    "about:blank",
+  ]) {
     it(`refuses a page that isn't https (${url})`, async () => {
       const fake = fakeBrowser({ tab: tabAt(url) });
 
@@ -147,7 +163,7 @@ describe("openSaveForm", () => {
   });
 
   it("says it can't read the tab when there is no address", async () => {
-    for (const tab of [undefined, { id: 1, title: "No URL" }]) {
+    for (const tab of [undefined, { id: 1, title: "No URL" }, { id: 1, url: "", title: "" }]) {
       const fake = fakeBrowser(tab === undefined ? {} : { tab });
 
       const outcome = await openSaveForm(fake.api, ORIGIN);
@@ -157,15 +173,22 @@ describe("openSaveForm", () => {
     }
   });
 
-  it("says so when the save form's tab can't be opened", async () => {
-    const fake = fakeBrowser({ tab: tabAt("https://example.com/"), createFails: true });
+  // Without this the popup would stay on its loading message, and announce nothing.
+  for (const [name, options] of [
+    ["the save form's tab can't be opened", { createFails: true }],
+    ["the active tab can't be read", { queryFails: true }],
+  ] as const) {
+    it(`says the form didn't open when ${name}`, async () => {
+      const fake = fakeBrowser({ tab: tabAt("https://example.com/"), ...options });
 
-    const outcome = await openSaveForm(fake.api, ORIGIN);
+      const outcome = await openSaveForm(fake.api, ORIGIN);
 
-    expect(outcome).toEqual({
-      opened: false,
-      heading: "The save form didn't open",
-      message: POPUP_MESSAGES.notOpened,
+      expect(outcome).toEqual({
+        opened: false,
+        heading: "The save form didn't open",
+        message: POPUP_MESSAGES.notOpened,
+      });
+      expect(fake.created).toEqual([]);
     });
-  });
+  }
 });

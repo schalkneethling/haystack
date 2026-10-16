@@ -80,12 +80,15 @@ function saveUrl(origin: string, payload: CapturePayload): string {
   return `${origin}/save?${parameters.toString()}`;
 }
 
-/**
- * Opens the save form for the active tab, or says why not. The sensitive URL check runs on the
- * tab's URL as the browser reports it, before anything else, so a flagged URL never leaves the
- * browser and the Worker never sees a cleaner URL than the extension did.
- */
-export async function openSaveForm(api: PopupBrowser, origin: string): Promise<PopupOutcome> {
+const NOT_OPENED: PopupOutcome = {
+  opened: false,
+  heading: "The save form didn't open",
+  message: POPUP_MESSAGES.notOpened,
+};
+
+// The steps of openSaveForm. Any of the browser calls can reject, and openSaveForm turns that
+// into a message.
+async function decideAndOpen(api: PopupBrowser, origin: string): Promise<PopupOutcome> {
   const [tab] = await api.tabs.query({ active: true, currentWindow: true });
   const rawUrl = tab?.url === undefined ? null : URL.parse(tab.url);
   if (tab === undefined || rawUrl === null) {
@@ -109,14 +112,20 @@ export async function openSaveForm(api: PopupBrowser, origin: string): Promise<P
   const withTitle = title === undefined ? urlOnly : validateCapturePayload({ url, title });
   const payload = withTitle.ok ? withTitle.payload : urlOnly.payload;
   const target = saveUrl(origin, payload);
-  try {
-    await api.tabs.create({ url: target });
-  } catch {
-    return {
-      opened: false,
-      heading: "The save form didn't open",
-      message: POPUP_MESSAGES.notOpened,
-    };
-  }
+  await api.tabs.create({ url: target });
   return { opened: true, saveUrl: target };
+}
+
+/**
+ * Opens the save form for the active tab, or says why not. It never rejects, so the popup
+ * always leaves its loading state. The sensitive URL check runs on the tab's URL as the browser
+ * reports it, before anything else, so a flagged URL never leaves the browser and the Worker
+ * never sees a cleaner URL than the extension did.
+ */
+export async function openSaveForm(api: PopupBrowser, origin: string): Promise<PopupOutcome> {
+  try {
+    return await decideAndOpen(api, origin);
+  } catch {
+    return NOT_OPENED;
+  }
 }
