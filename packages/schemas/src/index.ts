@@ -10,6 +10,7 @@ export {
   AZURE_SAS_PARAMETERS,
   CREDENTIAL_PARAMETERS,
   detectSensitiveUrl,
+  SENSITIVE_URL_EXPLANATIONS,
   SIGNED_STORAGE_PARAMETERS,
   type SensitiveUrlReason,
 } from "./detect-sensitive-url.ts";

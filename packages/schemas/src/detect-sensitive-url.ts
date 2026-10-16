@@ -8,6 +8,18 @@ export type SensitiveUrlReason =
   | "signed-storage-url"
   | "credential-parameter";
 
+// One explanation per reason, shared by the extension's popup and the Worker's refusal page so
+// both say the same thing. None of them quotes the URL, because the URL may be the secret.
+export const SENSITIVE_URL_EXPLANATIONS: Readonly<Record<SensitiveUrlReason, string>> =
+  Object.freeze({
+    "embedded-credentials":
+      "This link contains a user name or password, so anyone who has it could sign in with them.",
+    "signed-storage-url":
+      "This link contains a signed access key, so it could let anyone who has it download the file.",
+    "credential-parameter":
+      "This link contains an access token, key, or password, so it could let anyone who has it act as you.",
+  });
+
 // Pre-signed storage URLs (S3 and Google Cloud Storage), in the query string only. Names are
 // compared in lowercase. An addition needs a test case and a similar-legitimate-URL test.
 export const SIGNED_STORAGE_PARAMETERS: readonly string[] = Object.freeze([
