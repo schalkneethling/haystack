@@ -134,25 +134,31 @@ describe("POST /save", () => {
   });
 
   it.each([
-    ["an empty title", { confirmed_title: "   " }, "confirmed-title", "Enter a title"],
+    [
+      "an empty title",
+      { confirmed_title: "   " },
+      "confirmed-title",
+      "Enter a title of up to 200 characters.",
+    ],
     [
       "a title over its cap",
       { confirmed_title: "a".repeat(201) },
       "confirmed-title",
-      "Enter a title",
+      "Enter a title of up to 200 characters.",
     ],
     [
       "a description over its cap",
       { confirmed_description: "a".repeat(301) },
       "confirmed-description",
-      "Shorten the description",
+      "Shorten the description to 300 characters or fewer.",
     ],
   ])("shows the form again for %s, keeping the values", async (_, fields, id, message) => {
     const response = await post({ ...submission, ...fields });
     expect(response.status).toBe(400);
     const markup = await response.text();
-    expect(markup).toContain('<p id="save-error" role="alert">');
-    expect(markup).toContain(message);
+    // The alert wraps the error. The paragraph the field points at has no live-region role of its
+    // own, because VoiceOver does not read the description of such an element.
+    expect(markup).toContain(`<div role="alert"><p id="save-error">${message}</p></div>`);
     expect(markup).toMatch(
       new RegExp(`id="${id}"[^>]*aria-invalid="true" aria-describedby="save-error"`),
     );
