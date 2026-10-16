@@ -4,15 +4,13 @@
 // dist/chrome from HAYSTACK_ORIGIN.
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { isHttpsOrLoopbackUrl, LOOPBACK_HOSTS } from "@haystack/schemas";
 import { build, type Plugin } from "vite-plus";
 import { type Browser, type Manifest, manifestFor } from "./manifest.ts";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 
 const ORIGIN_EXAMPLES = "for example https://haystack.example.com or http://localhost:5173";
-
-// The same loopback hosts the Worker accepts for http: endpoints in tests.
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /**
  * The Worker's origin from HAYSTACK_ORIGIN, or an error that says what is wrong with it. It must
@@ -30,12 +28,9 @@ export function parseHaystackOrigin(value: string | undefined): string {
       `HAYSTACK_ORIGIN "${value}" is not a URL. Use the Worker's origin, ${ORIGIN_EXAMPLES}.`,
     );
   }
-  if (
-    url.protocol !== "https:" &&
-    !(url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname))
-  ) {
+  if (!isHttpsOrLoopbackUrl(url)) {
     throw new Error(
-      `HAYSTACK_ORIGIN "${value}" must use https:. Only localhost, 127.0.0.1 and [::1] may use http:.`,
+      `HAYSTACK_ORIGIN "${value}" must use https:. Only ${[...LOOPBACK_HOSTS].join(", ")} may use http:.`,
     );
   }
   if (url.href !== `${url.origin}/`) {

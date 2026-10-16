@@ -1,6 +1,7 @@
 // Google OpenID Connect with oauth4webapi. See "Site sign-in" and Q5 in
 // plans/haystack-v1-implementation-plan.md. Every endpoint comes from configuration, so tests
 // point them at a fixture server and no discovery request is made.
+import { isHttpsOrLoopbackUrl } from "@haystack/schemas";
 import * as oauth from "oauth4webapi";
 
 export interface GoogleConfig {
@@ -16,8 +17,6 @@ export interface GoogleIdentity {
   sub: string;
   email: string;
 }
-
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 // oauth4webapi caches Google's keys per AuthorizationServer object, so one object is kept for
 // each configuration rather than built per request.
@@ -43,12 +42,6 @@ function authorizationServer(config: GoogleConfig): oauth.AuthorizationServer {
   return as;
 }
 
-function isHttpsOrLoopback(url: URL): boolean {
-  return (
-    url.protocol === "https:" || (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname))
-  );
-}
-
 // oauth4webapi refuses http: endpoints. The tests' fixture server is http: on a loopback host,
 // so only that case is allowed. Any other http: endpoint still fails in oauth4webapi. The option
 // is marked deprecated "to make it stand out"; its documented use is testing against non-TLS servers.
@@ -57,7 +50,7 @@ export function allowsInsecureRequests(config: GoogleConfig): boolean {
   const endpoints = [config.GOOGLE_TOKEN_ENDPOINT, config.GOOGLE_JWKS_URI].map(
     (value) => new URL(value),
   );
-  return endpoints.some((url) => url.protocol === "http:") && endpoints.every(isHttpsOrLoopback);
+  return endpoints.some((url) => url.protocol === "http:") && endpoints.every(isHttpsOrLoopbackUrl);
 }
 
 function requestOptions(config: GoogleConfig): { [oauth.allowInsecureRequests]?: boolean } {
@@ -74,7 +67,7 @@ export function authorizationUrl(
 ): string {
   const url = new URL(config.GOOGLE_AUTHORIZATION_ENDPOINT);
   // The browser sends state and the PKCE challenge here, so it must use TLS outside tests.
-  if (!isHttpsOrLoopback(url)) {
+  if (!isHttpsOrLoopbackUrl(url)) {
     throw new TypeError("The authorization endpoint must use https");
   }
   url.searchParams.set("client_id", config.GOOGLE_CLIENT_ID);
