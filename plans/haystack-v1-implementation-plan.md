@@ -69,6 +69,10 @@ _Chrome half confirmed in #70, in Playwright's Chromium (Chrome for Testing 156)
 - The extension has no service worker, so its ID comes from `Extensions.getExtensions`, which needs no flag either.
 - The `browser` namespace exists with promises from Chrome 148, so the manifest sets `minimum_chrome_version` to 148 and the popup uses no polyfill.
 
+_Firefox half: built and linted in #71, and confirmed by a manual check._ Playwright cannot load an extension in Firefox, and driving Firefox with Selenium and geckodriver still could not click the toolbar button, so Schalk runs the manual check in "Firefox manual check" under "Testing strategy", with `web-ext run`. The Firefox build is the same popup-only Manifest V3 extension as Chrome's, with no `background` key, so the question for Firefox is only whether the popup does what it did in Chrome.
+
+- **Result of the manual check:** not yet run. Schalk fills in this line, or the pull request for #71 records it, with the Firefox version and one line per check (A to D in the steps), and then removes "not yet run". Q4 is resolved when all four checks pass. If one fails, record what Firefox did instead, and fix it or change the design before Phase 5 continues.
+
 **Q5. OAuth implementation.** Choose one of three approaches, with sessions stored in D1 in each case. The first is implementing the Google authorization code flow with PKCE directly, using Web Crypto to verify ID tokens against Google's published keys. The second is a small, maintained OAuth client library, with hand-written session handling. The third is Better Auth, which runs on Workers with D1 and handles sessions as well. With the extension no longer holding credentials, a single sign-in flow is all that is needed, so the second option is the recommendation: the session code is small and worth understanding fully. _Resolved again 2026-10-07: `oauth4webapi` for the authorization code flow with PKCE, `jose` for verifying signatures against Google's published keys if `oauth4webapi` does not do it, and hand-written sessions stored in D1. Both libraries are maintained by panva and list Cloudflare Workers as a supported runtime. The first resolution, on 2026-10-06, chose Arctic. Arctic was deprecated on 2026-07-29 (its README and npm say so; last release 3.7.0, May 2025), which CodeRabbit pointed out on #12._
 
 Confirmed in #26 against `oauth4webapi` 3.8.8:
@@ -584,6 +588,17 @@ Built in #70:
 - The popup checks the tab's URL with `detectSensitiveUrl` first, as the browser reports it, then validates `new URL(…).href` with `validateCapturePayload`. A sensitive URL, a page that is not https, and a serialized address over the cap each show a message, and no tab opens. The sensitive URL explanations are `SENSITIVE_URL_EXPLANATIONS` in `packages/schemas`, which the Worker's refusal page uses too.
 - In this slice the save URL carries only `url` and `title`. A title that fails validation is left out, so the form falls back to the address, until #72 truncates titles to the cap.
 
+Built in #71:
+
+- `vp -C apps/extension run build` now writes `dist/chrome` and `dist/firefox`, from the same `manifestFor(browser, version)` in `apps/extension/manifest.ts`. The two manifests differ only in the keys one browser reads: Chrome's has `minimum_chrome_version`, and Firefox's has `browser_specific_settings`. A unit test compares them.
+- Firefox's `browser_specific_settings` (keys checked against MDN's `browser_specific_settings` page and the schema in addons-linter, which `web-ext lint` runs):
+  - `gecko.id` is `bookmarks@schalkneethling.com`. It does not carry the product's name, so a rename (Q6) does not change it, and it is permanent once the add-on is signed. Firefox requires an ID to sign a Manifest V3 add-on.
+  - `gecko.strict_min_version` is `140.0`, the first desktop release with built-in data collection consent. Manifest V3 (109) and `scripting.executeScript` (101 in Manifest V3) are older, and the `browser` namespace with promises has always been there, so the consent is the limit. addons.mozilla.org requires the declaration of new extensions.
+  - `gecko_android.strict_min_version` is `142.0`, the first Android release with the consent. Without it, the Android minimum falls back to 140, and `web-ext lint` warns about that. Haystack does not target Android.
+  - `gecko.data_collection_permissions.required` is `["browsingActivity", "websiteContent"]`: the page's address, and its title and description, go to Haystack's own server.
+- `web-ext` is a dev dependency of the extension. `vp -C apps/extension run run:firefox` builds with `build:local`, then starts Firefox with `dist/firefox` loaded temporarily, in a profile that is kept at `apps/extension/dist/firefox-profile`, so a sign-in survives between runs.
+- A test builds the Firefox target and lints it with web-ext's Node API (`webExt.cmd.lint`, in `apps/extension/test/firefox-lint.test.ts`). It fails on warnings as well as errors, and runs in `vp test`, so it is part of `vp run quality`. addons-linter only reads the built files, so the test needs no network.
+
 ## Save flow
 
 `GET /save` requires a session. Without one, it redirects to Google sign-in and carries the full `/save` path and query as the return target (see "Authentication"). With a session, it validates the query parameters, runs `detectSensitiveUrl` on the submitted URL, removes tracking parameters, renders the form with the values prefilled and editable, and never writes anything. If the URL is already saved for this user, the page says so and links to the existing bookmark instead of offering a duplicate.
@@ -843,6 +858,21 @@ The extension's browser tests (#70):
   - If a Playwright upgrade removes it, the popup tests fail at once, waiting for the popup, rather than pass without checking anything.
   - Schalk decided to keep it (#70), and to ask Playwright to support it upstream. The request is a comment on [microsoft/playwright#40554](https://github.com/microsoft/playwright/issues/40554#issuecomment-6226217824), which asks for the variable to be documented or replaced by a supported option.
 - axe runs in the popup in legacy mode (`setLegacyMode`), because by default it opens a new page to gather its results, and Chromium closes a popup when another page takes focus. The popup has no frames, which are the only thing legacy mode skips.
+
+**Firefox manual check** (#71). Firefox is covered by a manual check and by `web-ext lint`, not by Playwright. Playwright cannot load extensions in Firefox, and Selenium with geckodriver still could not click the toolbar button. The lint runs in `vp run quality` (see "Built in #71" under "Extension"), so a manifest that addons.mozilla.org would reject fails CI. The manual check covers what the lint cannot: the popup running in Firefox. Run it before Phase 5 is called done, and after any change to the popup, the manifest or the Firefox build. It needs Firefox 140 or later, the version the manifest requires.
+
+1. Install dependencies with `vp install`. The first time, create the local database with `vp -C apps/worker run db:migrate:local`.
+2. In a terminal, start the Worker with `vp -C apps/worker run dev`, and wait until it listens on `http://localhost:5173`. 1Password may ask you to approve access to the secrets.
+3. In a second terminal, run `vp -C apps/extension run run:firefox`. It builds both targets against `http://localhost:5173`, then opens Firefox with the extension loaded and the Worker's home page as the first tab. If `web-ext` cannot find Firefox, or you want another edition, pass `--firefox` after the script name, with a path to the binary or one of the aliases `beta`, `nightly` and `deved` (Developer Edition).
+4. Sign in. `web-ext run` normally uses a fresh profile with no cookies, so the script keeps a profile of its own at `apps/extension/dist/firefox-profile` instead. In that first tab, Haystack redirects to Google sign-in. Sign in with an address that is in `ALLOWED_EMAILS`. The session lasts 30 days and stays in the kept profile, so later runs need no sign-in. To start clean, delete that directory.
+5. Find the "Save to Haystack" button in the toolbar, or in the Extensions menu (the puzzle piece). Pin it to the toolbar if you like. Note any prompt Firefox shows about the add-on or about data collection, and what it says.
+6. **Check A, an https page.** Open `https://example.com/` in a new tab and click the button. Expect a new tab with Haystack's save form, where the address field holds `https://example.com/` and the title field holds "Example Domain". The popup closes by itself.
+7. **Check B, a sensitive URL.** Open `https://example.com/?access_token=manual-check` and click the button. Expect the popup to stay open with the heading "This page can't be saved" and an explanation about access tokens, and no new tab.
+8. **Check C, a page that cannot be scripted.** Open `https://addons.mozilla.org/en-US/firefox/` and click the button. Firefox does not let extensions run scripts on that site, so the popup falls back to the tab's own title. Expect a new tab with the save form, holding that page's address and its title. The popup closes by itself.
+9. **Check D, the popup closes.** In checks A and C, the popup is gone once the save form has opened. In check B it stays, because it is showing the reason.
+10. Record the Firefox version (Firefox menu, About Firefox) and one line per check, A to D, saying passed or what happened instead. Put them in the pull request, and in the Q4 result line.
+
+Stop the Worker and `web-ext` with Ctrl+C.
 
 **Screen reader tests** use Guidepup (`@guidepup/guidepup` and `@guidepup/playwright`), which drives VoiceOver on macOS and records every phrase it speaks. The browser tests check the DOM and the accessibility tree, but not what a screen reader says. The first trial runs showed the difference: VoiceOver read a focused dialog's name and heading, but not its description (#56). Set up in #55:
 
