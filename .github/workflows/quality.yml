@@ -30,4 +30,7 @@ jobs:
       # The same browser as `vp run e2e:install` locally (headless shell only), plus its Linux
       # system libraries. --fail-if-no-match makes a renamed package fail here, not later.
       - run: vp exec --filter @haystack/worker --fail-if-no-match playwright install --with-deps --only-shell chromium
+      # Extensions need the full Chromium, which runs them headless; the headless shell can't
+      # load them. Same as `vp -C apps/extension run e2e:install` locally.
+      - run: vp exec --filter @haystack/extension --fail-if-no-match playwright install --with-deps --no-shell chromium
       - run: vp run quality

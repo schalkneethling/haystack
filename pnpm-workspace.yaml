@@ -8,6 +8,9 @@ allowBuilds:
   ffmpeg-static: false
   workerd: true
 catalog:
+  # The extension's browser tests import the Worker's test harness, which imports Playwright too.
+  # Playwright throws when one test run loads two copies of it, so both packages use this version.
+  "@playwright/test": ^1.64.0
   vite: npm:@voidzero-dev/vite-plus-core@1.1.0
   vite-plus: 1.1.0
 overrides:

@@ -1,0 +1,9 @@
+// Node-side code in this package: the build, the tests, the browser tests, and the tool configs.
+// It keeps the popup's DOM library, because the tests import the popup's modules.
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node", "chrome"]
+  },
+  "include": [".", "../src", "../e2e", "../build.ts", "../manifest.ts", "../playwright.config.ts"]
+}

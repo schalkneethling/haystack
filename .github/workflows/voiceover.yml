@@ -7,9 +7,11 @@ on:
   pull_request:
     branches: [main]
     # Any change to the apps, the shared packages or the dependencies can change what the
-    # pages render, so only changes outside them (the plan, other workflows) skip this job.
+    # pages render, so only changes outside them (the plan, other workflows) skip this job. The
+    # extension is the exception: the VoiceOver tests don't load it, and it changes no page.
     paths: &voiceover-paths
       - "apps/**"
+      - "!apps/extension/**"
       - "packages/**"
       - "package.json"
       - "pnpm-lock.yaml"
