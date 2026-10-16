@@ -118,7 +118,11 @@ test("Escape closes the dialog, and VoiceOver reads the Delete button that opene
   await voiceOver.press("Escape", { capture: true });
   await expect(page.getByRole("dialog")).toBeHidden();
 
-  expectInOrder((await voiceOver.spokenPhraseLog()).join(" "), ["Delete", TITLE, "button"]);
+  // As with the first Tab, the spoken log can keep only the hint that follows "Delete … button"
+  // (it did in run 38955230463), but the item under the VoiceOver cursor is reliable.
+  expectInOrder(await voiceOver.itemText(), ["Delete", TITLE, "button"]);
+  expect((await voiceOver.spokenPhraseLog()).join(" ")).toMatch(/\bbutton\b/i);
+  await expect(page.getByRole("button", { name: `Delete ${TITLE}` })).toBeFocused();
 });
 
 test("confirming reads the status message with the deleted link's title", async ({
