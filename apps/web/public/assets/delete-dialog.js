@@ -7,6 +7,9 @@ const list = document.getElementById("recent-saves");
 const heading = document.getElementById("list-heading");
 const status = document.getElementById("list-status");
 const emptyState = document.getElementById("empty-state");
+// How long after closing the dialog the result is written to the live region (see the confirm
+// listener).
+const ANNOUNCE_DELAY_MS = 100;
 
 /**
  * @param {string} tag
@@ -154,12 +157,17 @@ if (list !== null && typeof HTMLDialogElement === "function") {
       message = `Could not delete “${title}”. Check your connection and try again.`;
     }
     setBusy(false);
-    // Announce before focus moves, so the message is not cut off by what focus reads.
-    announce(message);
+    // Close the dialog and move focus first. VoiceOver does not speak a status message that is
+    // written in the same task as the dialog closing, even after focus has moved (#56; plan,
+    // "Deleting bookmarks"). So the message is written 100 ms later, which VoiceOver does
+    // speak. 100 ms is the delay that was tested, not a measured minimum. If the dialog is
+    // opened again within those 100 ms, the page is inert again before the message is written,
+    // so the message is lost. That is accepted because it is very unlikely.
     dialog.close();
     if (removed) {
       removeItem(item);
     }
+    setTimeout(() => announce(message), ANNOUNCE_DELAY_MS);
   });
 
   // Closing returns focus to the Delete button that opened the dialog (a native <dialog>

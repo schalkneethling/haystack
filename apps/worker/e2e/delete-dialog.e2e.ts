@@ -137,6 +137,109 @@ for (const [how, close] of [
   });
 }
 
+interface Announcement {
+  text: string;
+  dialogOpen: boolean;
+  focusedTag: string;
+  focusedItem: string;
+  /** Milliseconds from the call to `dialog.close()` to the write, or NaN if it was not called. */
+  msSinceClose: number;
+}
+
+/**
+ * Records the page state at the moment the status message is written: whether the dialog is
+ * still open, what has focus, and how long ago the dialog was closed. The write is
+ * caught synchronously, because a MutationObserver reports after the whole task, when the
+ * dialog has closed and focus has moved whatever the order was. This relies on the script
+ * writing the message with `replaceChildren`.
+ */
+async function recordAnnouncements(page: Page): Promise<Announcement[]> {
+  const announcements: Announcement[] = [];
+  await page.exposeFunction("recordAnnouncement", (announcement: Announcement) => {
+    announcements.push(announcement);
+  });
+  await page.evaluate(() => {
+    const status = document.getElementById("list-status");
+    const dialog = document.querySelector("dialog");
+    if (status === null || dialog === null) {
+      throw new Error("The page has no status region or dialog.");
+    }
+    let closedAt = Number.NaN;
+    // Not the `close` event: it is dispatched in a later task, which can come tens of
+    // milliseconds after the script has started its timer.
+    const close = dialog.close.bind(dialog);
+    dialog.close = (...args) => {
+      closedAt = performance.now();
+      close(...args);
+    };
+    const write = status.replaceChildren.bind(status);
+    status.replaceChildren = (...nodes) => {
+      const msSinceClose = performance.now() - closedAt;
+      const focused = document.activeElement;
+      (
+        window as unknown as { recordAnnouncement(announcement: Announcement): void }
+      ).recordAnnouncement({
+        text: nodes.map((node) => (typeof node === "string" ? node : node.textContent)).join(""),
+        dialogOpen: dialog.open,
+        focusedTag: focused?.localName ?? "",
+        focusedItem: focused?.closest("li")?.querySelector("h2")?.textContent?.trim() ?? "",
+        msSinceClose,
+      });
+      write(...nodes);
+    };
+  });
+  return announcements;
+}
+
+/**
+ * The script waits 100 ms before it writes the message, because VoiceOver does not speak one
+ * that is written in the same task as the dialog closing (plan, "Deleting bookmarks"). A timer
+ * never fires early, so 90 ms only leaves room for the clock being coarse.
+ */
+function expectDelayed(announcement: Announcement | undefined): void {
+  expect(announcement?.msSinceClose).toBeGreaterThanOrEqual(90);
+}
+
+// The message has to come after the dialog is closed and focus has moved, and after that delay.
+test("the status message is written after the dialog closes and focus moves to the next item", async ({
+  page,
+}) => {
+  await saveThree(page, "order");
+  const announcements = await recordAnnouncements(page);
+  await page.getByRole("button", { name: "Delete Middle order" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByRole("status")).toHaveText("Deleted “Middle order”.");
+
+  expect(announcements).toHaveLength(1);
+  expect(announcements[0]).toMatchObject({
+    dialogOpen: false,
+    focusedTag: "h2",
+    focusedItem: "Oldest order",
+  });
+  expectDelayed(announcements[0]);
+});
+
+test("after a failed delete, the status message is written once focus is back on the Delete button", async ({
+  page,
+}) => {
+  await saveThree(page, "failed");
+  await page.route("**/bookmarks/*/delete", (route) => route.fulfill({ status: 500 }));
+  const announcements = await recordAnnouncements(page);
+  await page.getByRole("button", { name: "Delete Middle failed" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByRole("status")).toHaveText(
+    "Could not delete “Middle failed”. Reload the page and try again.",
+  );
+
+  expect(announcements).toHaveLength(1);
+  expect(announcements[0]).toMatchObject({
+    dialogOpen: false,
+    focusedTag: "button",
+    focusedItem: "Middle failed",
+  });
+  expectDelayed(announcements[0]);
+});
+
 test("a bookmark already deleted elsewhere is removed and announced", async ({ page, query }) => {
   await saveThroughForm(page, "https://example.com/elsewhere", "Elsewhere guide");
   await page.goto("/");
