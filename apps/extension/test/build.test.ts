@@ -105,8 +105,13 @@ describe("buildExtension", () => {
       expect(manifest.version).toBe(packageJson.version);
     });
 
+    // `define` inlines the origin as a string literal, so the check looks for the whole origin
+    // between quotes. A bare substring would also match a longer host such as
+    // `haystack.example.evil`. The minifier picks the quote character, so any is accepted.
     it("has the Worker's origin compiled in", () => {
-      expect(scripts.some((script) => script.includes(ORIGIN))).toBe(true);
+      const escaped = ORIGIN.replaceAll(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+      const literal = new RegExp(`["'\`]${escaped}["'\`]`);
+      expect(scripts.some((script) => literal.test(script))).toBe(true);
     });
   });
 });

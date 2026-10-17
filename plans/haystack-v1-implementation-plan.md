@@ -841,7 +841,7 @@ The extension's browser tests (#70):
   - What it does: Playwright's Chromium code (`crBrowser`) attaches to targets of the type `other` and treats them as pages. Without it, Playwright detaches from them.
   - Why the tests need it: the popup's target starts with the type `other`, so without the variable the tests can click the toolbar button but never see the popup. They could not check the refusal message or run axe on it.
   - If a Playwright upgrade removes it, the popup tests fail at once, waiting for the popup, rather than pass without checking anything.
-  - Schalk decided to keep it (#70), and to ask Playwright to support it upstream. The request is to follow.
+  - Schalk decided to keep it (#70), and to ask Playwright to support it upstream. The request is a comment on [microsoft/playwright#40554](https://github.com/microsoft/playwright/issues/40554#issuecomment-6226217824), which asks for the variable to be documented or replaced by a supported option.
 - axe runs in the popup in legacy mode (`setLegacyMode`), because by default it opens a new page to gather its results, and Chromium closes a popup when another page takes focus. The popup has no frames, which are the only thing legacy mode skips.
 
 **Screen reader tests** use Guidepup (`@guidepup/guidepup` and `@guidepup/playwright`), which drives VoiceOver on macOS and records every phrase it speaks. The browser tests check the DOM and the accessibility tree, but not what a screen reader says. The first trial runs showed the difference: VoiceOver read a focused dialog's name and heading, but not its description (#56). Set up in #55:
