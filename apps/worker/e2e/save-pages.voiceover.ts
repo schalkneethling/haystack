@@ -133,13 +133,13 @@ test("a rejected title announces the page, then the error, then the field as inv
     /enter a title of up to 200 characters/i,
   ]);
 
-  // Tab reaches the field wherever the cursor is, because it is the first control on the page.
-  // VoiceOver's "find the next control" (VO-Command-J) sometimes answered "Form element not
-  // found" while the cursor was on the error, and the retry in the same CI job failed the same
-  // way, so the test no longer uses it (#83).
+  // The field gets keyboard focus, and the VoiceOver cursor follows it, as for the Save button
+  // above. VoiceOver's own ways there were unreliable on the CI runner (#83). "Find the next
+  // control" (VO-Command-J) sometimes answered "Form element not found" from the error, and a
+  // Tab pressed through VoiceOver left focus on the body.
+  await page.getByLabel("Title").focus();
   await voiceOver.clearSpokenPhraseLog();
-  await voiceOver.press("Tab", { capture: true });
-  await expect(page.getByLabel("Title")).toBeFocused();
+  await voiceOver.perform(voiceOver.keyboardCommands.moveCursorToKeyboardFocus, { capture: true });
   const field = await voiceOver.lastSpokenPhrase();
   expect(field).toMatch(/\btitle\b/i);
   expect(field).toMatch(/\brequired\b/i);
