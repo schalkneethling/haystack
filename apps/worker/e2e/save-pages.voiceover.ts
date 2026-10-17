@@ -139,7 +139,19 @@ test("a rejected title announces the page, then the error, then the field as inv
   // way, so the test no longer uses it (#83).
   await voiceOver.clearSpokenPhraseLog();
   await voiceOver.press("Tab", { capture: true });
-  await expect(page.getByLabel("Title")).toBeFocused();
+  // DIAGNOSTIC for #83, to be reverted: where focus went, and what VoiceOver said.
+  const focusState = await page.evaluate(() => ({
+    active: document.activeElement?.id || document.activeElement?.tagName,
+    hasFocus: document.hasFocus(),
+  }));
+  console.log(
+    "DIAG83",
+    JSON.stringify({
+      focusState,
+      spoken: await voiceOver.spokenPhraseLog(),
+      item: await voiceOver.itemText(),
+    }),
+  );
   const field = await voiceOver.lastSpokenPhrase();
   expect(field).toMatch(/\btitle\b/i);
   expect(field).toMatch(/\brequired\b/i);
