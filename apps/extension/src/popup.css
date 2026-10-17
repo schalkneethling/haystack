@@ -1,0 +1,23 @@
+/* A popup is as wide as its content, so the width keeps a refusal message readable. */
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  inline-size: 20rem;
+  padding: 1rem;
+}
+
+h1 {
+  font-size: 1.125rem;
+  margin-block: 0 0.5rem;
+}
+
+p {
+  margin: 0;
+}

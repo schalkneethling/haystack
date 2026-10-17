@@ -1,0 +1,10 @@
+// The popup, which runs in the browser. `browser` comes from @types/chrome, which declares the
+// namespace with promises from Chrome 148, the manifest's minimum version.
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["chrome"]
+  },
+  "include": ["src"]
+}

@@ -7,6 +7,7 @@ import {
   type CapturePayload,
   detectSensitiveUrl,
   normalizeUrl,
+  SENSITIVE_URL_EXPLANATIONS,
   type SensitiveUrlReason,
   stripTrackingParameters,
   validateCapturePayload,
@@ -41,16 +42,6 @@ const FIELD_RULES: Record<CaptureField, string> = {
   og_site_name: TEXT_RULE,
 };
 
-// One explanation per reason. The URL itself is never shown, because it may be the secret.
-const SENSITIVE_REASONS: Record<SensitiveUrlReason, string> = {
-  "embedded-credentials":
-    "This link contains a user name or password, so anyone who has it could sign in with them.",
-  "signed-storage-url":
-    "This link contains a signed access key, so it could let anyone who has it download the file.",
-  "credential-parameter":
-    "This link contains an access token, key, or password, so it could let anyone who has it act as you.",
-};
-
 /** The captured fields from the query string. A repeated key uses its first value. */
 function capturedFields(parameters: URLSearchParams): Record<string, string> {
   const fields: Record<string, string> = {};
@@ -79,7 +70,7 @@ function sensitivePage(reason: SensitiveUrlReason): Response {
   return htmlResponse(
     "This link can't be saved",
     html`<h1>This link can't be saved</h1>
-      <p>${SENSITIVE_REASONS[reason]}</p>
+      <p>${SENSITIVE_URL_EXPLANATIONS[reason]}</p>
       ${SENSITIVE_NOTICE}`,
     400,
   );

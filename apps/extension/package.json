@@ -1,0 +1,22 @@
+{
+  "name": "@haystack/extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.ts",
+    "build:local": "HAYSTACK_ORIGIN=http://localhost:5173 node build.ts",
+    "test:e2e": "playwright test",
+    "e2e:install": "playwright install --no-shell chromium"
+  },
+  "dependencies": {
+    "@haystack/schemas": "workspace:*"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@haystack/worker": "workspace:*",
+    "@playwright/test": "catalog:",
+    "@types/chrome": "^0.3.5",
+    "@types/node": "^25.9.9"
+  }
+}
