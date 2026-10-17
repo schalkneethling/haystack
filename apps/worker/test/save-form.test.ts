@@ -1,6 +1,7 @@
 import { normalizeUrl } from "@haystack/schemas";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
 import { createTestHarness } from "wrangler";
+import { generateSessionId } from "../src/auth/session-token.ts";
 import { seedBookmark, seedSignedInUser, type SeededUser } from "./seed.ts";
 import { expectValidHtml } from "./validate-html.ts";
 
@@ -34,6 +35,7 @@ beforeEach(async () => {
     DB.prepare("DELETE FROM bookmarks"),
     DB.prepare("DELETE FROM sessions"),
     DB.prepare("DELETE FROM users"),
+    DB.prepare("DELETE FROM auth_flows"),
   ]);
   owner = await seedSignedInUser(DB, "owner@example.com");
 });
@@ -83,8 +85,18 @@ const article = {
   og_site_name: "Example",
 };
 
-describe("GET /save", () => {
-  it("redirects to sign-in without a session, returning to the same URL", async () => {
+// Sign-in stores the return target in auth_flows, and a URL that carries a secret is never
+// stored, so a link that enters through a signed-out /save is screened before the redirect
+// (plan, "Sensitive URLs").
+describe("GET /save without a session", () => {
+  async function getPath(path: string, cookie: string | null = null) {
+    return server.fetch(path, {
+      headers: { accept: "text/html", ...(cookie === null ? {} : { cookie }) },
+      redirect: "manual",
+    });
+  }
+
+  it("redirects to sign-in, returning to the same URL", async () => {
     const response = await getSave(article, null);
     expect(response.status).toBe(302);
     expect(response.headers.get("location")).toBe(
@@ -92,6 +104,121 @@ describe("GET /save", () => {
     );
   });
 
+  it.each([
+    ["an access token", "https://example.com/cb?access_token=secret-value"],
+    ["a signed storage URL", "https://bucket.example/f?X-Amz-Signature=secret-value"],
+    ["embedded credentials", "https://user:secret-value@example.com/"],
+  ])(
+    "refuses an address with %s as a signed-in user sees it, without a redirect",
+    async (_, url) => {
+      const before = await rowCounts();
+      const signedOut = await getSave({ url }, null);
+      expect(signedOut.status).toBe(400);
+      expect(signedOut.headers.get("location")).toBeNull();
+      const markup = await signedOut.text();
+      expect(markup).not.toContain("secret-value");
+      expect(markup).toBe(await (await getSave({ url })).text());
+      expect(await rowCounts()).toEqual(before);
+      await expectValidHtml(markup);
+    },
+  );
+
+  it("refuses a sensitive address to a HEAD request, without a redirect", async () => {
+    const response = await server.fetch(
+      saveUrl({ url: "https://example.com/cb?access_token=secret-value" }),
+      { method: "HEAD", headers: { accept: "text/html" }, redirect: "manual" },
+    );
+    expect(response.status).toBe(400);
+    expect(response.headers.get("location")).toBeNull();
+    expect((await rowCounts()).auth_flows).toBe(0);
+  });
+
+  it.each([
+    ["is not a stored session", async () => `__Host-session=${generateSessionId()}`],
+    [
+      "belongs to an expired session",
+      async () => {
+        await (
+          await db()
+        )
+          .prepare("UPDATE sessions SET expires_at = ?")
+          .bind(Date.now() - 1)
+          .run();
+        return owner.cookie;
+      },
+    ],
+  ])("refuses a sensitive address and clears a cookie that %s", async (_, cookie) => {
+    const url = "https://example.com/cb?access_token=secret-value";
+    const response = await getSave({ url }, await cookie());
+    expect(response.status).toBe(400);
+    expect(response.headers.get("location")).toBeNull();
+    expect(response.headers.get("set-cookie")).toContain("__Host-session=; Max-Age=0");
+    expect(await response.text()).toContain("access token");
+    expect((await rowCounts()).auth_flows).toBe(0);
+  });
+
+  // Signing in cannot make an invalid link valid. An invalid link is not screened for secrets,
+  // so storing it as a return target could store one.
+  it.each([
+    ["an http: URL", saveUrl({ url: "http://example.com/?access_token=secret-value" })],
+    [
+      "a title over its cap",
+      saveUrl({ url: "https://example.com/?access_token=secret-value", title: "a".repeat(201) }),
+    ],
+    ["no query at all", "/save"],
+  ])("shows the validation page for %s, without a redirect", async (_, path) => {
+    const before = await rowCounts();
+    const signedOut = await getPath(path);
+    expect(signedOut.status).toBe(400);
+    expect(signedOut.headers.get("location")).toBeNull();
+    expect(await signedOut.text()).toBe(await (await getPath(path, owner.cookie)).text());
+    expect(await rowCounts()).toEqual(before);
+  });
+
+  // The return target is built from the validated payload, without a canonical URL the form
+  // leaves out, and encoded by URLSearchParams. The links are written by hand, because the
+  // extension never builds one with an unknown or a repeated key, or with untrimmed values.
+  const page = "url=https%3A%2F%2Fexample.com%2Farticle%3Fid%3D7";
+  const title = "title=Caf%C3%A9+guide";
+  const canonical = "canonical_url=https%3A%2F%2Fexample.com%2Farticle";
+  const flaggedCanonical = "canonical_url=https%3A%2F%2Fexample.com%2F%3Fapi_key%3Dsecret-value";
+  it.each([
+    ["a flagged canonical URL", [page, flaggedCanonical, title], [page, title]],
+    ["an unknown key", [page, "note=secret-value", title], [page, title]],
+    [
+      "a second url",
+      [page, title, "url=https%3A%2F%2Fexample.com%2F%3Faccess_token%3Dsecret-value"],
+      [page, title],
+    ],
+    [
+      "a second canonical_url",
+      [page, canonical, flaggedCanonical, title],
+      [page, canonical, title],
+    ],
+    ["an empty canonical_url", [page, "canonical_url=", title], [page, title]],
+    ["a value with spaces around it", [page, "title=+Caf%C3%A9+guide+"], [page, title]],
+    ["a space written as %20", [page, "title=Caf%C3%A9%20guide"], [page, title]],
+  ])("stores only validated values for a link with %s", async (_, sent, stored) => {
+    const path = `/save?${sent.join("&")}`;
+    const returnTo = `/save?${stored.join("&")}`;
+
+    const response = await getPath(path);
+    expect(response.status).toBe(302);
+    const location = response.headers.get("location") ?? "";
+    expect(location).toBe(`/auth/sign-in?return_to=${encodeURIComponent(returnTo)}`);
+
+    expect((await getPath(location)).status).toBe(302);
+    const { results } = await (await db()).prepare("SELECT return_to FROM auth_flows").all();
+    expect(results).toEqual([{ return_to: returnTo }]);
+
+    // After sign-in, the form is the one a signed-in user sees for the link as sent.
+    const after = await getPath(returnTo, owner.cookie);
+    expect(after.status).toBe(200);
+    expect(await after.text()).toBe(await (await getPath(path, owner.cookie)).text());
+  });
+});
+
+describe("GET /save", () => {
   it("shows the form without writing anything", async () => {
     const before = await rowCounts();
     const response = await getSave(article);
