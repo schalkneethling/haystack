@@ -133,10 +133,11 @@ test("a rejected title announces the page, then the error, then the field as inv
     /enter a title of up to 200 characters/i,
   ]);
 
-  // The field gets keyboard focus, and the VoiceOver cursor follows it, as for the Save button
-  // above. VoiceOver's own ways there were unreliable on the CI runner (#83). "Find the next
-  // control" (VO-Command-J) sometimes answered "Form element not found" from the error, and a
-  // Tab pressed through VoiceOver left focus on the body.
+  // The field gets keyboard focus, and the VoiceOver cursor is moved to it, as for the Save
+  // button above. Two ways of moving there through VoiceOver were unreliable on the CI runner,
+  // for reasons not yet known, and #83 records the runs: "find the next control" (VO-Command-J)
+  // sometimes answered "Form element not found" from the error, and a Tab pressed through
+  // VoiceOver here left focus on the body.
   await page.getByLabel("Title").focus();
   await voiceOver.clearSpokenPhraseLog();
   await voiceOver.perform(voiceOver.keyboardCommands.moveCursorToKeyboardFocus, { capture: true });
