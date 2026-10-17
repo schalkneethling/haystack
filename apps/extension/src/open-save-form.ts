@@ -8,6 +8,7 @@ import {
   type CapturePayload,
   detectSensitiveUrl,
   isHttpsUrl,
+  SAVE_URL_BUDGET,
   SENSITIVE_URL_EXPLANATIONS,
   truncate,
   validateCapturePayload,
@@ -137,6 +138,44 @@ function saveUrl(origin: string, payload: CapturePayload): string {
   return `${origin}/save?${parameters.toString()}`;
 }
 
+// The optional fields dropped, in this order, while the save URL is over the budget (the order
+// is the plan's, in "Captured payload from the extension"). `url` is not here, because the
+// address is never dropped or cut. `title` is not either: it is at most 200 code units, which
+// encode to at most 1,800 characters.
+const DROP_ORDER = [
+  "og_description",
+  "description",
+  "og_title",
+  "og_site_name",
+  "canonical_url",
+] as const satisfies readonly CaptureField[];
+
+function without(payload: CapturePayload, field: CaptureField): CapturePayload {
+  return Object.fromEntries(
+    Object.entries(payload).filter(([name]) => name !== field),
+  ) as CapturePayload;
+}
+
+// The save URL for a payload, with optional fields dropped until the whole URL, origin and
+// `/save?` included, is within SAVE_URL_BUDGET. It measures the URL it returns, so whatever
+// encoding saveUrl uses is what is counted, and it stops at the first URL that fits. A `url`
+// that passed validation encodes to at most 6,144 characters and a title to at most 1,800, so
+// with a short origin the two fit without the rest. A very long origin could leave that pair a
+// few characters over, and then the URL is sent as it is, because it is still far below the
+// 16 KB limit that the budget keeps clear of.
+function saveUrlWithinBudget(origin: string, payload: CapturePayload): string {
+  let kept = payload;
+  let target = saveUrl(origin, kept);
+  for (const field of DROP_ORDER) {
+    if (target.length <= SAVE_URL_BUDGET) {
+      break;
+    }
+    kept = without(kept, field);
+    target = saveUrl(origin, kept);
+  }
+  return target;
+}
+
 // The payload without the fields that failed validation. The address passed on its own, so a
 // second failure is not expected, but if it happens the address alone is sent.
 function withoutInvalidFields(
@@ -185,8 +224,9 @@ async function decideAndOpen(api: PopupBrowser, origin: string): Promise<PopupOu
     ? validated.payload
     : withoutInvalidFields(candidate, validated.invalidFields, urlOnly.payload);
   // A canonical URL that carries a secret is left out the same way, so it never leaves the
-  // browser. The page itself has already passed the check above.
-  const target = saveUrl(origin, withoutSensitiveCanonicalUrl(payload));
+  // browser. The page itself has already passed the check above. The budget then runs on that
+  // final payload, so it never counts a field that is not sent.
+  const target = saveUrlWithinBudget(origin, withoutSensitiveCanonicalUrl(payload));
   await api.tabs.create({ url: target });
   return { opened: true, saveUrl: target };
 }
