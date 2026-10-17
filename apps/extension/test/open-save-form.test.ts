@@ -330,7 +330,7 @@ describe("openSaveForm", () => {
       expect(fake.created[0]).not.toContain("secret-value");
     });
 
-    it("is dropped when it has a secret after another field was dropped for being invalid", async () => {
+    it("is dropped for a secret even after another field was dropped as invalid", async () => {
       const fake = fakeBrowser({
         tab: tabAt("https://example.com/article"),
         injected: metadata({

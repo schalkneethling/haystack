@@ -260,4 +260,18 @@ describe("POST /save", () => {
     });
     expect(JSON.stringify(rows)).not.toContain("secret-value");
   });
+
+  it("shows the form again without the flagged canonical URL when the title is empty", async () => {
+    const response = await post({
+      ...submission,
+      canonical_url: "https://example.com/share?api_key=secret-value",
+      confirmed_title: "",
+    });
+    expect(response.status).toBe(400);
+    const markup = await response.text();
+    expect(markup).toContain('<form method="post" action="/save">');
+    expect(markup).not.toContain('name="canonical_url"');
+    expect(markup).not.toContain("secret-value");
+    expect(await bookmarks()).toHaveLength(0);
+  });
 });

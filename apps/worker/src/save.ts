@@ -263,7 +263,8 @@ function notAFormPage(): Response {
 
 /**
  * POST /save: validate again (hidden inputs can be tampered with), refuse sensitive URLs, drop a
- * sensitive canonical URL, strip tracking parameters, and insert. The user comes from the session, never from the form.
+ * sensitive canonical URL, strip tracking parameters, and insert. The user comes from the
+ * session, never from the form.
  */
 export async function saveBookmark(request: Request, db: Db, userId: string): Promise<Response> {
   let form: FormData;

@@ -44,6 +44,12 @@ describe("withoutSensitiveCanonicalUrl", () => {
     );
   });
 
+  it("drops a canonical URL that does not parse, instead of throwing", () => {
+    const screened = withoutSensitiveCanonicalUrl({ ...payload, canonical_url: "not a url" });
+    expect("canonical_url" in screened).toBe(false);
+    expect(screened.title).toBe(payload.title);
+  });
+
   it("does not change the page's own address, even when that is flagged", () => {
     // The page's address is checked before this runs, and its refusal is not this function's job.
     const flagged = { ...payload, url: "https://example.com/?api_key=secret-value" };
