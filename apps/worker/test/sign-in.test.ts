@@ -317,6 +317,50 @@ describe("a successful sign-in", () => {
   });
 });
 
+// A signed-out /save link is screened before the redirect, so a flagged canonical URL never
+// becomes part of the stored return target (plan, "Sensitive URLs").
+describe("signing in from a signed-out save link", () => {
+  const clean = {
+    url: "https://example.com/article",
+    canonical_url: "https://example.com/article",
+    title: "An article",
+  };
+
+  it.each([
+    ["a clean link", clean, clean],
+    [
+      "a flagged canonical URL",
+      { ...clean, canonical_url: "https://example.com/article?access_token=secret-value" },
+      { url: clean.url, title: clean.title },
+    ],
+  ])("returns to the save form for %s", async (_, fields, expected) => {
+    const toSignIn = await server.fetch(`/save?${new URLSearchParams(fields).toString()}`, {
+      headers: { accept: "text/html" },
+      redirect: "manual",
+    });
+    const location = new URL(toSignIn.headers.get("location") ?? "", workerOrigin);
+    const returnTo = location.searchParams.get("return_to") ?? "";
+    expect(returnTo).toBe(`/save?${new URLSearchParams(expected).toString()}`);
+
+    const start = await startSignIn(returnTo);
+    const { results } = await (await db()).prepare("SELECT return_to FROM auth_flows").all();
+    expect(results).toEqual([{ return_to: returnTo }]);
+    const signedIn = await callBack(start);
+    expect(signedIn.headers.get("location")).toBe(returnTo);
+
+    const cookie = (signedIn.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+    const form = await server.fetch(returnTo, {
+      headers: { accept: "text/html", cookie },
+      redirect: "manual",
+    });
+    expect(form.status).toBe(200);
+    const markup = await form.text();
+    expect(markup).toContain('<form method="post" action="/save">');
+    expect(markup.includes('name="canonical_url"')).toBe("canonical_url" in expected);
+    expect(markup).not.toContain("secret-value");
+  });
+});
+
 describe("a rejected sign-in", () => {
   async function expectRejected(response: Response, status: number) {
     expect(response.status).toBe(status);

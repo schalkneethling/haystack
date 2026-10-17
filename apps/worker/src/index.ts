@@ -21,7 +21,7 @@ import { createDb, type Db } from "./db/client.ts";
 import { deletePathId } from "./bookmark-paths.ts";
 import { deleteBookmark } from "./delete-bookmark.ts";
 import { showRecentSaves } from "./recent-saves.ts";
-import { saveBookmark, showSaveForm } from "./save.ts";
+import { saveBookmark, showSaveForm, signedOutSave } from "./save.ts";
 import {
   accountNotAllowedPage,
   notFoundPage,
@@ -181,18 +181,35 @@ async function handleAppRoute(
   return notFoundPage();
 }
 
-function signInLocation(request: Request): string {
-  const { pathname, search } = new URL(request.url);
-  return `/auth/sign-in?return_to=${encodeURIComponent(pathname + search)}`;
+// Where sign-in returns to, or the page to show instead of signing in. A signed-out GET or HEAD
+// /save is screened first, so a link that carries a secret does not become a stored return
+// target through /save (plan, "Sensitive URLs").
+function beforeSignIn(request: Request): { page: Response } | { returnTo: string } {
+  const url = new URL(request.url);
+  if (url.pathname === "/save" && isReadRequest(request)) {
+    return signedOutSave(url);
+  }
+  return { returnTo: url.pathname + url.search };
 }
 
+function withoutSession(request: Request): Response {
+  if (!isPageRequest(request)) {
+    return text("Unauthorized", 401);
+  }
+  const next = beforeSignIn(request);
+  if ("page" in next) {
+    return next.page;
+  }
+  return redirect(`/auth/sign-in?return_to=${encodeURIComponent(next.returnTo)}`, 302);
+}
+
+// Every answer clears a session cookie that is no longer valid.
 function unauthenticated(request: Request, hadCookie: boolean): Response {
-  const headers: Record<string, string> = hadCookie
-    ? { "set-cookie": serializeClearedSessionCookie() }
-    : {};
-  return isPageRequest(request)
-    ? redirect(signInLocation(request), 302, headers)
-    : text("Unauthorized", 401, headers);
+  const response = withoutSession(request);
+  if (hadCookie) {
+    response.headers.append("set-cookie", serializeClearedSessionCookie());
+  }
+  return response;
 }
 
 export default {

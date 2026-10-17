@@ -2,7 +2,11 @@
 // signed-out /save request stays under Cloudflare's URL limit. See "Captured payload from the
 // extension" in plans/haystack-v1-implementation-plan.md. The redirect puts the whole path and
 // query into `return_to` with encodeURIComponent, so every character that is already encoded
-// grows again: "%" becomes "%25", and the "+" that stands for a space becomes "%2B".
+// grows again: "%" becomes "%25", and the "+" that stands for a space becomes "%2B". The Worker
+// builds the return target from the validated payload with URLSearchParams, as the extension
+// builds its save URL, so a link from the extension comes back unchanged. Only a canonical URL
+// that detectSensitiveUrl flags is left out, which makes the redirect shorter, so the cases here
+// use one that passes.
 import {
   CAPTURE_CAPS,
   type CaptureField,
@@ -94,14 +98,22 @@ const cases = [
 
 describe("a save URL at the budget", () => {
   it.each(cases)("is a valid payload that fills the budget exactly: $name", ({ fields }) => {
-    expect(validateCapturePayload(fields).ok).toBe(true);
+    // Validation keeps every value as it is, so the extension sends exactly these fields.
+    const validation = validateCapturePayload(fields);
+    expect(validation.ok && validation.payload).toEqual(fields);
     expect(saveUrlLength(fields)).toBe(SAVE_URL_BUDGET);
   });
 
   it.each(cases)(
     "still redirects to a sign-in URL under Cloudflare's limit: $name",
     async ({ fields }) => {
-      const path = `/save?${query(fields)}`;
+      const validation = validateCapturePayload(fields);
+      if (!validation.ok) {
+        throw new Error("The payload at the budget must be valid");
+      }
+      // The extension builds its save URL from the validated payload, in the order validation
+      // writes the keys.
+      const path = `/save?${new URLSearchParams(validation.payload).toString()}`;
 
       const response = await server.fetch(path, {
         headers: { accept: "text/html" },

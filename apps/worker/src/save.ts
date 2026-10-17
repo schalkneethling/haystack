@@ -191,27 +191,64 @@ async function existingBookmark(
 }
 
 /**
- * GET /save: validate, refuse sensitive URLs, drop a sensitive canonical URL, find duplicates,
- * then show the form.
+ * Validates the captured fields and refuses a sensitive address. Returns the page that ends the
+ * request, or the validated payload. Neither check depends on who is signed in, so a signed-out
+ * GET /save gets the same page.
  */
-export async function showSaveForm(request: Request, db: Db, userId: string): Promise<Response> {
-  const validation = validateCapturePayload(capturedFields(new URL(request.url).searchParams));
+function screenCapture(
+  captured: Record<string, string>,
+): { page: Response } | { payload: CapturePayload } {
+  const validation = validateCapturePayload(captured);
   if (!validation.ok) {
-    return invalidPage(validation.invalidFields);
+    return { page: invalidPage(validation.invalidFields) };
   }
   // On the URL as submitted, before tracking parameters are removed (plan, "Save flow").
   const reason = detectSensitiveUrl(new URL(validation.payload.url));
   if (reason !== undefined) {
-    return sensitivePage(reason);
+    return { page: sensitivePage(reason) };
+  }
+  return { payload: validation.payload };
+}
+
+/**
+ * GET /save: validate, refuse sensitive URLs, drop a sensitive canonical URL, find duplicates,
+ * then show the form.
+ */
+export async function showSaveForm(request: Request, db: Db, userId: string): Promise<Response> {
+  const screened = screenCapture(capturedFields(new URL(request.url).searchParams));
+  if ("page" in screened) {
+    return screened.page;
   }
   // A flagged canonical URL is left out of the form, so it is neither shown nor submitted.
-  const payload = withoutSensitiveCanonicalUrl(validation.payload);
+  const payload = withoutSensitiveCanonicalUrl(screened.payload);
   const url = stripTrackingParameters(payload.url);
   const existing = await existingBookmark(db, userId, normalizeUrl(url));
   if (existing !== undefined) {
     return alreadySavedPage(db, userId, existing);
   }
   return formPage(payload, url, prefill(payload, url));
+}
+
+/**
+ * GET or HEAD /save without a session: the page to show instead of signing in, or the path and
+ * query to return to after it. Sign-in stores the return target in auth_flows, and a URL that
+ * carries a secret is never stored (plan, decision 18), so a link that enters through /save is
+ * screened before the redirect. /auth/sign-in itself still stores whatever return target it is
+ * given, until #86 closes that. An invalid or sensitive link gets its page now, because signing
+ * in would not change it.
+ *
+ * The return target is built from the validated payload, without a canonical URL the form
+ * leaves out, so it holds only screened values: no unknown key, no second `url`, and no empty
+ * field, which validation omits. The extension builds its save URL the same way, with
+ * URLSearchParams from the validated payload, so a link from the extension comes back unchanged.
+ */
+export function signedOutSave(url: URL): { page: Response } | { returnTo: string } {
+  const screened = screenCapture(capturedFields(url.searchParams));
+  if ("page" in screened) {
+    return screened;
+  }
+  const query = new URLSearchParams(withoutSensitiveCanonicalUrl(screened.payload));
+  return { returnTo: `${url.pathname}?${query.toString()}` };
 }
 
 function savedPage(bookmarkId: string): Response {
@@ -281,16 +318,12 @@ export async function saveBookmark(request: Request, db: Db, userId: string): Pr
       captured[name] = normalizeLineBreaks(value);
     }
   }
-  const validation = validateCapturePayload(captured);
-  if (!validation.ok) {
-    return invalidPage(validation.invalidFields);
-  }
-  const reason = detectSensitiveUrl(new URL(validation.payload.url));
-  if (reason !== undefined) {
-    return sensitivePage(reason);
+  const screened = screenCapture(captured);
+  if ("page" in screened) {
+    return screened.page;
   }
   // Hidden inputs can be tampered with, so this runs again, and the bookmark is stored without it.
-  const payload = withoutSensitiveCanonicalUrl(validation.payload);
+  const payload = withoutSensitiveCanonicalUrl(screened.payload);
   const url = stripTrackingParameters(payload.url);
   const confirmed = confirmedValues(form);
   if (confirmed.invalid !== undefined) {
