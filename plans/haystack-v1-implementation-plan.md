@@ -69,6 +69,14 @@ _Chrome half confirmed in #70, in Playwright's Chromium (Chrome for Testing 156)
 - The extension has no service worker, so its ID comes from `Extensions.getExtensions`, which needs no flag either.
 - The `browser` namespace exists with promises from Chrome 148, so the manifest sets `minimum_chrome_version` to 148 and the popup uses no polyfill.
 
+_Firefox half confirmed in #71, by the manual check, on 2026-10-17._ Playwright cannot load an extension in Firefox, and driving Firefox with Selenium and geckodriver still could not click the toolbar button, so Schalk ran the manual check in "Firefox manual check" under "Testing strategy". The Firefox build is the same popup-only Manifest V3 extension as Chrome's, with no `background` key, so the question for Firefox was only whether the popup does what it did in Chrome.
+
+- **Result of the manual check:** all four checks passed in Firefox Developer Edition 149.0b8 (aarch64), with the extension loaded through "Load Temporary Add-on". The build came from `phase-5/save-url-budget` at e2f6ec5, the top of the Phase 5 stack, so it also had the metadata capture (#72), the canonical URL screening (#75) and the save URL budget (#73). Firefox showed no prompt about the add-on or about data collection when it loaded. A temporary add-on is loaded by the developer rather than installed, so it does not show what a user would be asked when installing a signed one. Phase 6 checks that.
+  - Check A, an https page: passed.
+  - Check B, a sensitive URL: passed.
+  - Check C, a page that cannot be scripted: passed.
+  - Check D, the popup closes: passed.
+
 **Q5. OAuth implementation.** Choose one of three approaches, with sessions stored in D1 in each case. The first is implementing the Google authorization code flow with PKCE directly, using Web Crypto to verify ID tokens against Google's published keys. The second is a small, maintained OAuth client library, with hand-written session handling. The third is Better Auth, which runs on Workers with D1 and handles sessions as well. With the extension no longer holding credentials, a single sign-in flow is all that is needed, so the second option is the recommendation: the session code is small and worth understanding fully. _Resolved again 2026-10-07: `oauth4webapi` for the authorization code flow with PKCE, `jose` for verifying signatures against Google's published keys if `oauth4webapi` does not do it, and hand-written sessions stored in D1. Both libraries are maintained by panva and list Cloudflare Workers as a supported runtime. The first resolution, on 2026-10-06, chose Arctic. Arctic was deprecated on 2026-07-29 (its README and npm say so; last release 3.7.0, May 2025), which CodeRabbit pointed out on #12._
 
 Confirmed in #26 against `oauth4webapi` 3.8.8:
@@ -584,6 +592,17 @@ Built in #70:
 - The popup checks the tab's URL with `detectSensitiveUrl` first, as the browser reports it, then validates `new URL(…).href` with `validateCapturePayload`. A sensitive URL, a page that is not https, and a serialized address over the cap each show a message, and no tab opens. The sensitive URL explanations are `SENSITIVE_URL_EXPLANATIONS` in `packages/schemas`, which the Worker's refusal page uses too.
 - In this slice the save URL carries only `url` and `title`. A title that fails validation is left out, so the form falls back to the address, until #72 truncates titles to the cap.
 
+Built in #71:
+
+- `vp -C apps/extension run build` now writes `dist/chrome` and `dist/firefox`, from the same `manifestFor(browser, version)` in `apps/extension/manifest.ts`. The two manifests differ only in the keys one browser reads: Chrome's has `minimum_chrome_version`, and Firefox's has `browser_specific_settings`. A unit test compares them.
+- Firefox's `browser_specific_settings` (keys checked against MDN's `browser_specific_settings` page and the schema in addons-linter, which `web-ext lint` runs):
+  - `gecko.id` is `bookmarks@schalkneethling.com`. It does not carry the product's name, so a rename (Q6) does not change it, and it is permanent once the add-on is signed. Firefox requires an ID to sign a Manifest V3 add-on.
+  - `gecko.strict_min_version` is `140.0`, the first desktop release with built-in data collection consent. Manifest V3 (109) and `scripting.executeScript` (101 in Manifest V3) are older, and the `browser` namespace with promises has always been there, so the consent is the limit. addons.mozilla.org requires the declaration of new extensions.
+  - There is no `gecko_android` key, so Firefox offers the add-on on desktop only, which is what Haystack targets (MDN's `browser_specific_settings` page: without that key, "the extension is only made available on desktop Firefox"). `web-ext lint` still warns `KEY_FIREFOX_ANDROID_UNSUPPORTED_BY_MIN_VERSION`, because addons-linter takes the Android minimum from `gecko.strict_min_version` (140) when `gecko_android` is absent, and Android 140 predates the consent. That is a limit of the linter, so the lint test accepts that one warning.
+  - `gecko.data_collection_permissions.required` is `["browsingActivity", "websiteContent"]`: the page's address, and its title and description, go to Haystack's own server.
+- `web-ext` is a dev dependency of the extension. `vp -C apps/extension run run:firefox` builds with `build:local`, then starts Firefox with `dist/firefox` loaded temporarily, in a fresh profile each time. It is a convenience, not the main route for the manual check, because on macOS it can fail (see "Firefox manual check").
+- A test builds the Firefox target and lints it with web-ext's Node API (`webExt.cmd.lint`, in `apps/extension/test/firefox-lint.test.ts`). It fails on any error, and on any warning except the Android one above, so a new warning from a web-ext update gets a look. It runs in `vp test`, so it is part of `vp run quality`. addons-linter only reads the built files, so the test needs no network.
+
 ## Save flow
 
 `GET /save` requires a session. Without one, it redirects to Google sign-in and carries the full `/save` path and query as the return target (see "Authentication"). With a session, it validates the query parameters, runs `detectSensitiveUrl` on the submitted URL, removes tracking parameters, renders the form with the values prefilled and editable, and never writes anything. If the URL is already saved for this user, the page says so and links to the existing bookmark instead of offering a duplicate.
@@ -844,6 +863,29 @@ The extension's browser tests (#70):
   - Schalk decided to keep it (#70), and to ask Playwright to support it upstream. The request is a comment on [microsoft/playwright#40554](https://github.com/microsoft/playwright/issues/40554#issuecomment-6226217824), which asks for the variable to be documented or replaced by a supported option.
 - axe runs in the popup in legacy mode (`setLegacyMode`), because by default it opens a new page to gather its results, and Chromium closes a popup when another page takes focus. The popup has no frames, which are the only thing legacy mode skips.
 
+**Firefox manual check** (#71). Firefox is covered by a manual check and by `web-ext lint`, not by Playwright. Playwright cannot load extensions in Firefox, and Selenium with geckodriver still could not click the toolbar button. The lint runs in `vp run quality` (see "Built in #71" under "Extension"), so a manifest that addons.mozilla.org would reject fails CI. The manual check covers what the lint cannot: the popup running in Firefox. Run it before Phase 5 is called done, and after any change to the popup, the manifest or the Firefox build. It needs Firefox 140 or later, the version the manifest requires.
+
+1. Install dependencies with `vp install`. The first time, create the local database with `vp -C apps/worker run db:migrate:local`.
+2. In a terminal, start the Worker with `vp -C apps/worker run dev`, and wait until it listens on `http://localhost:5173`. 1Password may ask you to approve access to the secrets.
+3. In a second terminal, build both targets against the local Worker with `vp -C apps/extension run build:local`.
+4. Open Firefox from the Dock or Finder, not from a terminal (the note after these steps says why). Go to `about:debugging#/runtime/this-firefox`, choose "Load Temporary Add-on…", and pick `apps/extension/dist/firefox/manifest.json`. Firefox keeps a temporary add-on until it quits, so load it again after a restart, and after each new build.
+5. Open `http://localhost:5173`. Haystack redirects to Google sign-in. Sign in with an address that is in `ALLOWED_EMAILS`. The session lasts 30 days and stays in that Firefox profile, so later checks need no sign-in.
+6. Find the "Save to Haystack" button in the toolbar, or in the Extensions menu (the puzzle piece). Pin it to the toolbar if you like. Note any prompt Firefox shows about the add-on or about data collection, and what it says.
+7. **Check A, an https page.** Open `https://example.com/` in a new tab and click the button. Expect a new tab with Haystack's save form, where the address field holds `https://example.com/` and the title field holds "Example Domain". The popup closes by itself.
+8. **Check B, a sensitive URL.** Open `https://example.com/?access_token=manual-check` and click the button. Expect the popup to stay open with the heading "This page can't be saved" and an explanation about access tokens, and no new tab.
+9. **Check C, a page that cannot be scripted.** Open `https://addons.mozilla.org/en-US/firefox/` and click the button. Firefox does not let extensions run scripts on that site, so the popup falls back to the tab's own title. Expect a new tab with the save form, holding that page's address and its title. The popup closes by itself.
+10. **Check D, the popup closes.** In checks A and C, the popup is gone once the save form has opened. In check B it stays, because it is showing the reason.
+11. Record the Firefox version (Firefox menu, About Firefox) and one line per check, A to D, saying passed or what happened instead. Put them in the pull request, and in the Q4 result line.
+
+Stop the Worker with Ctrl+C.
+
+**Why not `web-ext run` from a terminal.** On macOS, `vp -C apps/extension run run:firefox` failed for Schalk in two ways on 2026-10-17. macOS protects one app's data against other apps, and it refused the terminal access to `~/Library/Application Support/Firefox`, even though the files belong to the user. The system log recorded an error for that protection (`kTCCServiceSystemPolicyAppDataDetailed`), and macOS showed no prompt to allow it. A program started from a terminal usually counts as part of that terminal, so the Firefox that web-ext starts is most likely refused in the same way, which would explain the second failure. That part was not proven.
+
+- With a kept profile (`--keep-profile-changes`), web-ext reads Firefox's `profiles.ini` to make sure the profile is not the user's everyday one, and fails with `EPERM`. That is why the script no longer keeps a profile.
+- With a fresh profile, Firefox itself shows "Profile Missing", and web-ext then fails with `ECONNREFUSED`, because Firefox has quit.
+
+The script should work where nothing blocks that access, for example with Full Disk Access granted to the terminal on macOS, which is broader than this needs. It starts with a fresh profile, so sign in at the start of each run. If `web-ext` cannot find Firefox, or you want another edition, pass `--firefox` after the script name, with a path to the binary or one of the aliases `beta`, `nightly` and `deved` (Developer Edition). Stop it with Ctrl+C.
+
 **Screen reader tests** use Guidepup (`@guidepup/guidepup` and `@guidepup/playwright`), which drives VoiceOver on macOS and records every phrase it speaks. The browser tests check the DOM and the accessibility tree, but not what a screen reader says. The first trial runs showed the difference: VoiceOver read a focused dialog's name and heading, but not its description (#56). Set up in #55:
 
 - The tests live in `apps/worker/e2e` as `*.voiceover.ts`, with their own config (`playwright.voiceover.config.ts`), and run with `vp -C apps/worker run test:voiceover`. `e2e/voiceover-fixtures.ts` combines the browser test fixtures with Guidepup's `voiceOver` fixture through Playwright's `mergeTests`, so each test gets the local Worker, `signIn`, and a running VoiceOver.
@@ -927,13 +969,13 @@ Acceptance: the VoiceOver tests pass in CI on the pinned macOS runner, and a fai
 Build the popup capture, validation and truncation, and the `/save` URL builder. Q4 must be resolved first.
 
 Tests: unit tests for the extraction function against fixture documents, for truncation to the shared caps without splitting a surrogate pair, for the encoded-length budget that drops optional fields in order, for a URL whose serialized form exceeds the cap being refused (not truncated), for the fallback on pages that cannot be scripted, and for a sensitive URL stopping the flow before any tab is opened. A Playwright test loads the extension, opens a fixture page, clicks the action, and asserts that the prefilled `/save` form opens.
-Acceptance: in Chrome (automated) and Firefox (manual check with `web-ext run`), the save form opens prefilled from the current page.
+Acceptance: in Chrome (automated) and Firefox (manual check), the save form opens prefilled from the current page.
 
 #### Phase 6: Capture deploy
 
 Deploy to a `workers.dev` subdomain with `wrangler deploy`, after setting the secrets in Cloudflare (#16), apply the migrations remotely, register the Google OAuth redirect URI for that origin, build the extension against the production origin, and run the Playwright suite against production. Write down the D1 restore procedure (see "Data model") before the first real bookmark is saved.
 
-Daily use in Firefox needs a signed extension, because release builds of Firefox install unsigned extensions only temporarily. Sign it through addons.mozilla.org as an unlisted (self-distributed) add-on. An unlisted add-on is not published, so Q6 does not block it, but confirm that the name can change later. In Chrome, loading the unpacked extension in developer mode is enough for v1.
+Daily use in Firefox needs a signed extension, because release builds of Firefox install unsigned extensions only temporarily. Sign it through addons.mozilla.org as an unlisted (self-distributed) add-on. An unlisted add-on is not published, so Q6 does not block it, but confirm that the name can change later. When installing the signed add-on, record what Firefox asks about data collection, and check that it names the two kinds the manifest declares (browsing activity and website content). The manual check in #71 loaded the add-on temporarily, and no prompt appeared. In Chrome, loading the unpacked extension in developer mode is enough for v1.
 
 Acceptance: Schalk saves real bookmarks from the extension in daily use, and they appear in the recent saves list.
 

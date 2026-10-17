@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { beforeAll, describe, expect, it } from "vite-plus/test";
 import { buildExtension, parseHaystackOrigin } from "../build.ts";
-import { manifestFor } from "../manifest.ts";
+import { BROWSERS, manifestFor } from "../manifest.ts";
 
 const ORIGIN = "https://haystack.example";
 
@@ -39,10 +39,70 @@ describe("parseHaystackOrigin", () => {
 
 describe("manifestFor", () => {
   for (const version of ["0", "0.0.0", "1.0.0-beta.1", "01.0", "1.2.3.4.5", "70000"]) {
-    it(`refuses the version ${version}, which Chrome would not load`, () => {
-      expect(() => manifestFor("chrome", version)).toThrow("must be one to four");
-    });
+    for (const browser of BROWSERS) {
+      it(`refuses the version ${version}, which ${browser} would not load`, () => {
+        expect(() => manifestFor(browser, version)).toThrow("must be one to four");
+      });
+    }
   }
+
+  // A key in one browser's manifest and not the other's must be one that only that browser
+  // reads, so the two builds can't drift apart in what they ask of the user.
+  it("gives Chrome and Firefox the same manifest apart from their browser-specific keys", () => {
+    const { minimum_chrome_version, ...chrome } = manifestFor("chrome", "1.2.3") as Record<
+      string,
+      unknown
+    >;
+    const { browser_specific_settings, ...firefox } = manifestFor("firefox", "1.2.3") as Record<
+      string,
+      unknown
+    >;
+
+    expect(minimum_chrome_version).toBeDefined();
+    expect(browser_specific_settings).toBeDefined();
+    expect(firefox).toEqual(chrome);
+  });
+
+  it("keeps each browser's own keys out of the other's manifest", () => {
+    expect(manifestFor("chrome", "1.2.3")).not.toHaveProperty("browser_specific_settings");
+    expect(manifestFor("firefox", "1.2.3")).not.toHaveProperty("minimum_chrome_version");
+  });
+
+  it("gives Firefox a permanent add-on ID that doesn't carry the product's name", () => {
+    expect(manifestFor("firefox", "1.2.3")).toMatchObject({
+      browser_specific_settings: { gecko: { id: "bookmarks@schalkneethling.com" } },
+    });
+  });
+
+  // The popup sends the page's address, title and description to Haystack's own server.
+  it("declares the data the popup sends to Haystack", () => {
+    expect(manifestFor("firefox", "1.2.3")).toMatchObject({
+      browser_specific_settings: {
+        gecko: {
+          data_collection_permissions: { required: ["browsingActivity", "websiteContent"] },
+        },
+      },
+    });
+  });
+
+  // Firefox shows its built-in data consent from 140 on desktop.
+  it("keeps Firefox from installing the add-on where it can't show the data consent", () => {
+    const { gecko } = (
+      manifestFor("firefox", "1.2.3") as unknown as {
+        browser_specific_settings: { gecko: { strict_min_version: string } };
+      }
+    ).browser_specific_settings;
+
+    expect(Number.parseInt(gecko.strict_min_version)).toBeGreaterThanOrEqual(140);
+  });
+
+  // Without a gecko_android key, Firefox offers the add-on on desktop only, and Haystack doesn't
+  // target Android.
+  it("is offered on desktop Firefox only", () => {
+    expect(manifestFor("firefox", "1.2.3")).not.toHaveProperty(
+      "browser_specific_settings.gecko_android",
+    );
+  });
 });
 
 describe("buildExtension", () => {
