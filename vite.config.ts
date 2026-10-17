@@ -1,6 +1,11 @@
-import { defineConfig } from "vite-plus";
+import { defaultExclude, defineConfig } from "vite-plus";
 
 export default defineConfig({
+  test: {
+    // Agent worktrees are full checkouts of other branches inside this one. Their tests belong to
+    // those branches, and may not even have dependencies installed.
+    exclude: [...defaultExclude, ".claude/worktrees/**"],
+  },
   staged: {
     "*": "vp check --fix",
   },
