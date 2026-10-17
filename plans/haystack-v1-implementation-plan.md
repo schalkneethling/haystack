@@ -71,7 +71,7 @@ _Chrome half confirmed in #70, in Playwright's Chromium (Chrome for Testing 156)
 
 _Firefox half confirmed in #71, by the manual check, on 2026-10-17._ Playwright cannot load an extension in Firefox, and driving Firefox with Selenium and geckodriver still could not click the toolbar button, so Schalk ran the manual check in "Firefox manual check" under "Testing strategy". The Firefox build is the same popup-only Manifest V3 extension as Chrome's, with no `background` key, so the question for Firefox was only whether the popup does what it did in Chrome.
 
-- **Result of the manual check:** all four checks passed in Firefox Developer Edition 149.0b8 (aarch64), with the extension loaded through "Load Temporary Add-on". The build came from `phase-5/save-url-budget` at e2f6ec5, the top of the Phase 5 stack, so it also had the metadata capture (#72), the canonical URL screening (#75) and the save URL budget (#73).
+- **Result of the manual check:** all four checks passed in Firefox Developer Edition 149.0b8 (aarch64), with the extension loaded through "Load Temporary Add-on". The build came from `phase-5/save-url-budget` at e2f6ec5, the top of the Phase 5 stack, so it also had the metadata capture (#72), the canonical URL screening (#75) and the save URL budget (#73). Firefox showed no prompt about the add-on or about data collection when it loaded. A temporary add-on is loaded by the developer rather than installed, so it does not show what a user would be asked when installing a signed one. Phase 6 checks that.
   - Check A, an https page: passed.
   - Check B, a sensitive URL: passed.
   - Check C, a page that cannot be scripted: passed.
@@ -975,7 +975,7 @@ Acceptance: in Chrome (automated) and Firefox (manual check), the save form open
 
 Deploy to a `workers.dev` subdomain with `wrangler deploy`, after setting the secrets in Cloudflare (#16), apply the migrations remotely, register the Google OAuth redirect URI for that origin, build the extension against the production origin, and run the Playwright suite against production. Write down the D1 restore procedure (see "Data model") before the first real bookmark is saved.
 
-Daily use in Firefox needs a signed extension, because release builds of Firefox install unsigned extensions only temporarily. Sign it through addons.mozilla.org as an unlisted (self-distributed) add-on. An unlisted add-on is not published, so Q6 does not block it, but confirm that the name can change later. In Chrome, loading the unpacked extension in developer mode is enough for v1.
+Daily use in Firefox needs a signed extension, because release builds of Firefox install unsigned extensions only temporarily. Sign it through addons.mozilla.org as an unlisted (self-distributed) add-on. An unlisted add-on is not published, so Q6 does not block it, but confirm that the name can change later. When installing the signed add-on, record what Firefox asks about data collection, and check that it names the two kinds the manifest declares (browsing activity and website content). The manual check in #71 loaded the add-on temporarily, and no prompt appeared. In Chrome, loading the unpacked extension in developer mode is enough for v1.
 
 Acceptance: Schalk saves real bookmarks from the extension in daily use, and they appear in the recent saves list.
 
