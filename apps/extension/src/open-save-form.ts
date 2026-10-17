@@ -11,6 +11,7 @@ import {
   SENSITIVE_URL_EXPLANATIONS,
   truncate,
   validateCapturePayload,
+  withoutSensitiveCanonicalUrl,
 } from "@haystack/schemas";
 import { type PageMetadata, readPageMetadata } from "./read-page-metadata.ts";
 
@@ -183,7 +184,9 @@ async function decideAndOpen(api: PopupBrowser, origin: string): Promise<PopupOu
   const payload = validated.ok
     ? validated.payload
     : withoutInvalidFields(candidate, validated.invalidFields, urlOnly.payload);
-  const target = saveUrl(origin, payload);
+  // A canonical URL that carries a secret is left out the same way, so it never leaves the
+  // browser. The page itself has already passed the check above.
+  const target = saveUrl(origin, withoutSensitiveCanonicalUrl(payload));
   await api.tabs.create({ url: target });
   return { opened: true, saveUrl: target };
 }

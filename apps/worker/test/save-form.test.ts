@@ -248,6 +248,22 @@ describe("GET /save", () => {
   });
 
   it.each([
+    ["a credential parameter", "https://example.com/share?api_key=secret-value"],
+    ["a fragment credential", "https://example.com/cb#access_token=secret-value"],
+    ["embedded credentials", "https://user:secret-value@example.com/"],
+  ])("shows the form without a canonical URL that has %s", async (_, canonical_url) => {
+    const response = await getSave({ ...article, canonical_url });
+    expect(response.status).toBe(200);
+    const markup = await response.text();
+    expect(markup).toContain('<form method="post" action="/save">');
+    expect(markup).not.toContain('name="canonical_url"');
+    expect(markup).not.toContain("secret-value");
+    expect(formValue(markup, "url")).toBe("https://example.com/article?id=7#top");
+    expect(formValue(markup, "og_title")).toBe(article.og_title);
+    await expectValidHtml(markup);
+  });
+
+  it.each([
     ["the same URL", "https://example.com/article?id=7"],
     ["a URL with tracking parameters", "https://example.com/article?id=7&utm_source=mail"],
     ["a URL with a fragment", "https://example.com/article?id=7#comments"],

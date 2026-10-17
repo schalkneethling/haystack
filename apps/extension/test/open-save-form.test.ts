@@ -309,6 +309,45 @@ describe("openSaveForm", () => {
       expect(saveParameters(fake.created[0] ?? "")).toEqual({ url: "https://example.com/" });
     });
 
+    it.each([
+      ["a credential parameter", "https://example.com/share?api_key=secret-value"],
+      ["a fragment credential", "https://example.com/cb#access_token=secret-value"],
+      ["embedded credentials", "https://user:secret-value@example.com/"],
+      ["an http scheme", "http://example.com/?password=secret-value"],
+    ])("is dropped when it has %s, and the page is still saved", async (_, canonicalUrl) => {
+      const fake = fakeBrowser({
+        tab: tabAt("https://example.com/article"),
+        injected: metadata({ canonicalUrl, ogTitle: "Kept" }),
+      });
+
+      const outcome = await openSaveForm(fake.api, ORIGIN);
+
+      expect(outcome.opened).toBe(true);
+      expect(saveParameters(fake.created[0] ?? "")).toEqual({
+        url: "https://example.com/article",
+        og_title: "Kept",
+      });
+      expect(fake.created[0]).not.toContain("secret-value");
+    });
+
+    it("is dropped when it has a secret after another field was dropped for being invalid", async () => {
+      const fake = fakeBrowser({
+        tab: tabAt("https://example.com/article"),
+        injected: metadata({
+          canonicalUrl: "https://example.com/share?api_key=secret-value",
+          ogSiteName: "\ud800",
+          documentTitle: "Kept",
+        }),
+      });
+
+      await openSaveForm(fake.api, ORIGIN);
+
+      expect(saveParameters(fake.created[0] ?? "")).toEqual({
+        url: "https://example.com/article",
+        title: "Kept",
+      });
+    });
+
     it("may be http, because it is only evidence and is never linked", async () => {
       const fake = fakeBrowser({
         tab: tabAt("https://example.com/"),

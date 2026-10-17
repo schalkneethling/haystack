@@ -238,4 +238,26 @@ describe("POST /save", () => {
     await expectValidHtml(markup);
     expect(await bookmarks()).toHaveLength(0);
   });
+
+  it.each([
+    ["a credential parameter", "https://example.com/share?api_key=secret-value"],
+    ["a fragment credential", "https://example.com/cb#access_token=secret-value"],
+    ["embedded credentials", "https://user:secret-value@example.com/"],
+  ])("saves the bookmark without a canonical URL that has %s", async (_, canonical_url) => {
+    const response = await post({ ...submission, canonical_url });
+    expect(response.status).toBe(200);
+    const markup = await response.text();
+    expect(markup).toContain("<h1>Saved</h1>");
+    expect(markup).not.toContain("secret-value");
+
+    const rows = await bookmarks();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      url: "https://example.com/article?id=7",
+      canonical_url: null,
+      captured_title: "Document title",
+      og_title: "Sharing title",
+    });
+    expect(JSON.stringify(rows)).not.toContain("secret-value");
+  });
 });

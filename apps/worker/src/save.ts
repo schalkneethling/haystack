@@ -12,6 +12,7 @@ import {
   stripTrackingParameters,
   truncate,
   validateCapturePayload,
+  withoutSensitiveCanonicalUrl,
 } from "@haystack/schemas";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "./db/client.ts";
@@ -189,18 +190,22 @@ async function existingBookmark(
     .get();
 }
 
-/** GET /save: validate, refuse sensitive URLs, find duplicates, then show the form. */
+/**
+ * GET /save: validate, refuse sensitive URLs, drop a sensitive canonical URL, find duplicates,
+ * then show the form.
+ */
 export async function showSaveForm(request: Request, db: Db, userId: string): Promise<Response> {
   const validation = validateCapturePayload(capturedFields(new URL(request.url).searchParams));
   if (!validation.ok) {
     return invalidPage(validation.invalidFields);
   }
-  const { payload } = validation;
   // On the URL as submitted, before tracking parameters are removed (plan, "Save flow").
-  const reason = detectSensitiveUrl(new URL(payload.url));
+  const reason = detectSensitiveUrl(new URL(validation.payload.url));
   if (reason !== undefined) {
     return sensitivePage(reason);
   }
+  // A flagged canonical URL is left out of the form, so it is neither shown nor submitted.
+  const payload = withoutSensitiveCanonicalUrl(validation.payload);
   const url = stripTrackingParameters(payload.url);
   const existing = await existingBookmark(db, userId, normalizeUrl(url));
   if (existing !== undefined) {
@@ -257,8 +262,8 @@ function notAFormPage(): Response {
 }
 
 /**
- * POST /save: validate again (hidden inputs can be tampered with), refuse sensitive URLs, strip
- * tracking parameters, and insert. The user comes from the session, never from the form.
+ * POST /save: validate again (hidden inputs can be tampered with), refuse sensitive URLs, drop a
+ * sensitive canonical URL, strip tracking parameters, and insert. The user comes from the session, never from the form.
  */
 export async function saveBookmark(request: Request, db: Db, userId: string): Promise<Response> {
   let form: FormData;
@@ -279,11 +284,12 @@ export async function saveBookmark(request: Request, db: Db, userId: string): Pr
   if (!validation.ok) {
     return invalidPage(validation.invalidFields);
   }
-  const { payload } = validation;
-  const reason = detectSensitiveUrl(new URL(payload.url));
+  const reason = detectSensitiveUrl(new URL(validation.payload.url));
   if (reason !== undefined) {
     return sensitivePage(reason);
   }
+  // Hidden inputs can be tampered with, so this runs again, and the bookmark is stored without it.
+  const payload = withoutSensitiveCanonicalUrl(validation.payload);
   const url = stripTrackingParameters(payload.url);
   const confirmed = confirmedValues(form);
   if (confirmed.invalid !== undefined) {

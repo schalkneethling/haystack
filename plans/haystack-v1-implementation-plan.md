@@ -371,7 +371,7 @@ The schema is `CapturePayload` in `packages/schemas` (#18):
   - The caps count UTF-16 code units (`String.prototype.length`), so an emoji counts as 2.
   - Text containing a lone surrogate is rejected, because `encodeURIComponent` throws on it.
   - The extension truncates without splitting a surrogate pair, with `truncate` from `packages/schemas` (#72). The Worker uses the same function when the address is the title's fallback. When a cut would fall inside a pair, the whole pair is dropped, so the result is one code unit under the cap.
-- **Over-cap values are rejected, not truncated.** The extension truncates the text fields to the exported caps before validating, after trimming them so the cap counts what the schema keeps. It never truncates `url` or `canonical_url`: an over-cap `canonical_url` is dropped, and the page is still saved.
+- **Over-cap values are rejected, not truncated.** The extension truncates the text fields to the exported caps before validating, after trimming them so the cap counts what the schema keeps. It never truncates `url` or `canonical_url`: an over-cap `canonical_url` is dropped, and the page is still saved. A `canonical_url` that `detectSensitiveUrl` flags is dropped too (see "Sensitive URLs").
 - **Empty values:** an optional field that is empty after trimming is left out of the result, not set to `undefined`.
 - **The URL** keeps its submitted form, apart from trimming. The Worker then removes tracking parameters before showing and storing it (see "URL normalization"). Because the stored string must be what the URL parser reads, a URL is rejected when it:
   - contains a control character, tab, newline, or space (the parser strips or percent-encodes them; browsers already send spaces as `%20`)
@@ -600,6 +600,10 @@ Built in #72:
 - The save URL carries every field that survives, under the `CapturePayload` names. The length budget for the whole URL is not part of this slice (#73).
 - The `toolbar-button.e2e.ts` tests show the prefill rules end to end: a fixture with Open Graph tags prefills the title and description from them, one without falls back to the document title and the meta description, and a page with no tags falls back to the address.
 
+Built in #75:
+
+- The popup drops a canonical URL that `detectSensitiveUrl` flags, with `withoutSensitiveCanonicalUrl` from `packages/schemas`, and opens the save form without it. It applies the function to the payload that survived validation, after any invalid field has been left out, so every route to the save URL passes through it. The popup shows no message about it. See "Sensitive URLs" for the decision and its reasons.
+
 Built in #71:
 
 - `vp -C apps/extension run build` now writes `dist/chrome` and `dist/firefox`, from the same `manifestFor(browser, version)` in `apps/extension/manifest.ts`. The two manifests differ only in the keys one browser reads: Chrome's has `minimum_chrome_version`, and Firefox's has `browser_specific_settings`. A unit test compares them.
@@ -621,7 +625,7 @@ The form is never submitted automatically by script. A GET request that saved, o
 
 Application code does not log `/save` query strings. Cloudflare's own invocation logs may record full request URLs if Workers Logs is enabled; that is acceptable for v1, and is revisited before sign-up is opened to other people (see the backlog).
 
-The form is plain HTML and works without JavaScript. It is a `<form method="post">` with a labeled, editable title input and a labeled, editable description field. The title is prefilled from the Open Graph title, falling back to the document title and then to the URL. The description is prefilled from the Open Graph description, falling back to the meta description. The URL is shown as read-only text, next to the notice about sensitive URLs. The URL (with tracking parameters already removed, as shown) and every raw captured value (canonical URL, document title, meta description, and the Open Graph title, description, and site name) travel as hidden inputs, so `POST /save` receives them unchanged. `POST /save` validates and strips them again, because hidden inputs can be tampered with and a POST can be built by hand.
+The form is plain HTML and works without JavaScript. It is a `<form method="post">` with a labeled, editable title input and a labeled, editable description field. The title is prefilled from the Open Graph title, falling back to the document title and then to the URL. The description is prefilled from the Open Graph description, falling back to the meta description. The URL is shown as read-only text, next to the notice about sensitive URLs. The URL (with tracking parameters already removed, as shown) and every raw captured value (canonical URL, document title, meta description, and the Open Graph title, description, and site name) travel as hidden inputs, except a canonical URL that `detectSensitiveUrl` flags, which is dropped (see "Sensitive URLs"), so `POST /save` receives them unchanged. `POST /save` validates and strips them again, because hidden inputs can be tampered with and a POST can be built by hand.
 
 The sensitive URL check always runs on the URL as submitted, before tracking parameters are removed, on both `GET` and `POST`. The extension checks the raw URL too, so the server must not see a cleaner URL than the extension did.
 
@@ -669,6 +673,14 @@ The check runs in three places:
 3. **On `POST /save`.** The server check is the authoritative one, since the other two can be bypassed.
 
 The refusal message states the reason in plain language (for example, "This link contains a signed access key, so it could let anyone who has it download the file") and does not echo the full URL back into the page.
+
+**Which URLs are screened (#75).** Two URLs travel in a save: the page's own address (`url`) and the canonical URL the page declares for itself (`canonical_url`). Both are screened with `detectSensitiveUrl`, in all three places above, but a match does different things:
+
+- **A flagged page address is refused.** Nothing is saved, and the user sees the reason. The address is what the user chose to save, so there is nothing left to save without it.
+- **A flagged canonical URL is dropped, and the bookmark is saved without it.** The page is not refused. Its own address has already passed the check, and it is what the user chose to save. The canonical URL is chosen by the page, not by the user, and it is only enrichment evidence: the form never shows it, nobody edits it, and nothing links to it. A page can declare any canonical URL, including one with a session token in it, and refusing the page for that would make the user's save depend on something they cannot see or change. Dropping it matches how the popup already treats a canonical URL that fails validation (over its cap, or not an http(s) address): the field is left out and the page is still saved.
+- **The form says nothing about a dropped canonical URL.** The user never saw that value, so a notice about it would describe something they did not know was there and give them nothing to act on. It also could not say which URL it meant without repeating a secret.
+- **The rule lives in one place.** `withoutSensitiveCanonicalUrl(payload)` in `packages/schemas` returns the payload without its canonical URL when `detectSensitiveUrl` flags it. The popup applies it to the validated payload just before it builds the save URL, so a flagged canonical URL never leaves the browser. `GET /save` applies it before it renders the form, so the form carries no canonical URL, and `POST /save` applies it again, because a hand-built POST can carry any value. The stored row then has no canonical URL (`canonical_url` is `NULL`).
+- **Nothing else is screened.** The title, the description and the Open Graph values are free text, not addresses, and `detectSensitiveUrl` does not apply to them.
 
 The deterministic check is part of Milestone 1.
 
