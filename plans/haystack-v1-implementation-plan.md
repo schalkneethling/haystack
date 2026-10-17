@@ -69,9 +69,13 @@ _Chrome half confirmed in #70, in Playwright's Chromium (Chrome for Testing 156)
 - The extension has no service worker, so its ID comes from `Extensions.getExtensions`, which needs no flag either.
 - The `browser` namespace exists with promises from Chrome 148, so the manifest sets `minimum_chrome_version` to 148 and the popup uses no polyfill.
 
-_Firefox half: the build is linted in #71, and confirmation by the manual check is pending, as the result line below shows._ Playwright cannot load an extension in Firefox, and driving Firefox with Selenium and geckodriver still could not click the toolbar button, so Schalk runs the manual check in "Firefox manual check" under "Testing strategy", with `web-ext run`. The Firefox build is the same popup-only Manifest V3 extension as Chrome's, with no `background` key, so the question for Firefox is only whether the popup does what it did in Chrome.
+_Firefox half confirmed in #71, by the manual check, on 2026-10-17._ Playwright cannot load an extension in Firefox, and driving Firefox with Selenium and geckodriver still could not click the toolbar button, so Schalk ran the manual check in "Firefox manual check" under "Testing strategy". The Firefox build is the same popup-only Manifest V3 extension as Chrome's, with no `background` key, so the question for Firefox was only whether the popup does what it did in Chrome.
 
-- **Result of the manual check:** not yet run. Schalk fills in this line, or the pull request for #71 records it, with the Firefox version and one line per check (A to D in the steps), and then removes "not yet run". Q4 is resolved when all four checks pass. If one fails, record what Firefox did instead, and fix it or change the design before Phase 5 continues.
+- **Result of the manual check:** all four checks passed in Firefox Developer Edition 149.0b8 (aarch64), with the extension loaded through "Load Temporary Add-on". The build came from `phase-5/save-url-budget` at e2f6ec5, the top of the Phase 5 stack, so it also had the metadata capture (#72), the canonical URL screening (#75) and the save URL budget (#73).
+  - Check A, an https page: passed.
+  - Check B, a sensitive URL: passed.
+  - Check C, a page that cannot be scripted: passed.
+  - Check D, the popup closes: passed.
 
 **Q5. OAuth implementation.** Choose one of three approaches, with sessions stored in D1 in each case. The first is implementing the Google authorization code flow with PKCE directly, using Web Crypto to verify ID tokens against Google's published keys. The second is a small, maintained OAuth client library, with hand-written session handling. The third is Better Auth, which runs on Workers with D1 and handles sessions as well. With the extension no longer holding credentials, a single sign-in flow is all that is needed, so the second option is the recommendation: the session code is small and worth understanding fully. _Resolved again 2026-10-07: `oauth4webapi` for the authorization code flow with PKCE, `jose` for verifying signatures against Google's published keys if `oauth4webapi` does not do it, and hand-written sessions stored in D1. Both libraries are maintained by panva and list Cloudflare Workers as a supported runtime. The first resolution, on 2026-10-06, chose Arctic. Arctic was deprecated on 2026-07-29 (its README and npm say so; last release 3.7.0, May 2025), which CodeRabbit pointed out on #12._
 
@@ -596,7 +600,7 @@ Built in #71:
   - `gecko.strict_min_version` is `140.0`, the first desktop release with built-in data collection consent. Manifest V3 (109) and `scripting.executeScript` (101 in Manifest V3) are older, and the `browser` namespace with promises has always been there, so the consent is the limit. addons.mozilla.org requires the declaration of new extensions.
   - There is no `gecko_android` key, so Firefox offers the add-on on desktop only, which is what Haystack targets (MDN's `browser_specific_settings` page: without that key, "the extension is only made available on desktop Firefox"). `web-ext lint` still warns `KEY_FIREFOX_ANDROID_UNSUPPORTED_BY_MIN_VERSION`, because addons-linter takes the Android minimum from `gecko.strict_min_version` (140) when `gecko_android` is absent, and Android 140 predates the consent. That is a limit of the linter, so the lint test accepts that one warning.
   - `gecko.data_collection_permissions.required` is `["browsingActivity", "websiteContent"]`: the page's address, and its title and description, go to Haystack's own server.
-- `web-ext` is a dev dependency of the extension. `vp -C apps/extension run run:firefox` builds with `build:local`, then starts Firefox with `dist/firefox` loaded temporarily, in a profile that is kept at `apps/extension/dist/firefox-profile`, so a sign-in survives between runs.
+- `web-ext` is a dev dependency of the extension. `vp -C apps/extension run run:firefox` builds with `build:local`, then starts Firefox with `dist/firefox` loaded temporarily, in a fresh profile each time. It is a convenience, not the main route for the manual check, because on macOS it can fail (see "Firefox manual check").
 - A test builds the Firefox target and lints it with web-ext's Node API (`webExt.cmd.lint`, in `apps/extension/test/firefox-lint.test.ts`). It fails on any error, and on any warning except the Android one above, so a new warning from a web-ext update gets a look. It runs in `vp test`, so it is part of `vp run quality`. addons-linter only reads the built files, so the test needs no network.
 
 ## Save flow
@@ -863,16 +867,24 @@ The extension's browser tests (#70):
 
 1. Install dependencies with `vp install`. The first time, create the local database with `vp -C apps/worker run db:migrate:local`.
 2. In a terminal, start the Worker with `vp -C apps/worker run dev`, and wait until it listens on `http://localhost:5173`. 1Password may ask you to approve access to the secrets.
-3. In a second terminal, run `vp -C apps/extension run run:firefox`. It builds both targets against `http://localhost:5173`, then opens Firefox with the extension loaded and the Worker's home page as the first tab. If `web-ext` cannot find Firefox, or you want another edition, pass `--firefox` after the script name, with a path to the binary or one of the aliases `beta`, `nightly` and `deved` (Developer Edition).
-4. Sign in. `web-ext run` normally uses a fresh profile with no cookies, so the script keeps a profile of its own at `apps/extension/dist/firefox-profile` instead. In that first tab, Haystack redirects to Google sign-in. Sign in with an address that is in `ALLOWED_EMAILS`. The session lasts 30 days and stays in the kept profile, so later runs need no sign-in. To start clean, delete that directory.
-5. Find the "Save to Haystack" button in the toolbar, or in the Extensions menu (the puzzle piece). Pin it to the toolbar if you like. Note any prompt Firefox shows about the add-on or about data collection, and what it says.
-6. **Check A, an https page.** Open `https://example.com/` in a new tab and click the button. Expect a new tab with Haystack's save form, where the address field holds `https://example.com/` and the title field holds "Example Domain". The popup closes by itself.
-7. **Check B, a sensitive URL.** Open `https://example.com/?access_token=manual-check` and click the button. Expect the popup to stay open with the heading "This page can't be saved" and an explanation about access tokens, and no new tab.
-8. **Check C, a page that cannot be scripted.** Open `https://addons.mozilla.org/en-US/firefox/` and click the button. Firefox does not let extensions run scripts on that site, so the popup falls back to the tab's own title. Expect a new tab with the save form, holding that page's address and its title. The popup closes by itself.
-9. **Check D, the popup closes.** In checks A and C, the popup is gone once the save form has opened. In check B it stays, because it is showing the reason.
-10. Record the Firefox version (Firefox menu, About Firefox) and one line per check, A to D, saying passed or what happened instead. Put them in the pull request, and in the Q4 result line.
+3. In a second terminal, build both targets against the local Worker with `vp -C apps/extension run build:local`.
+4. Open Firefox from the Dock or Finder, not from a terminal (the note after these steps says why). Go to `about:debugging#/runtime/this-firefox`, choose "Load Temporary Add-on…", and pick `apps/extension/dist/firefox/manifest.json`. Firefox keeps a temporary add-on until it quits, so load it again after a restart, and after each new build.
+5. Open `http://localhost:5173`. Haystack redirects to Google sign-in. Sign in with an address that is in `ALLOWED_EMAILS`. The session lasts 30 days and stays in that Firefox profile, so later checks need no sign-in.
+6. Find the "Save to Haystack" button in the toolbar, or in the Extensions menu (the puzzle piece). Pin it to the toolbar if you like. Note any prompt Firefox shows about the add-on or about data collection, and what it says.
+7. **Check A, an https page.** Open `https://example.com/` in a new tab and click the button. Expect a new tab with Haystack's save form, where the address field holds `https://example.com/` and the title field holds "Example Domain". The popup closes by itself.
+8. **Check B, a sensitive URL.** Open `https://example.com/?access_token=manual-check` and click the button. Expect the popup to stay open with the heading "This page can't be saved" and an explanation about access tokens, and no new tab.
+9. **Check C, a page that cannot be scripted.** Open `https://addons.mozilla.org/en-US/firefox/` and click the button. Firefox does not let extensions run scripts on that site, so the popup falls back to the tab's own title. Expect a new tab with the save form, holding that page's address and its title. The popup closes by itself.
+10. **Check D, the popup closes.** In checks A and C, the popup is gone once the save form has opened. In check B it stays, because it is showing the reason.
+11. Record the Firefox version (Firefox menu, About Firefox) and one line per check, A to D, saying passed or what happened instead. Put them in the pull request, and in the Q4 result line.
 
-Stop the Worker and `web-ext` with Ctrl+C.
+Stop the Worker with Ctrl+C.
+
+**Why not `web-ext run` from a terminal.** On macOS, `vp -C apps/extension run run:firefox` failed for Schalk in two ways on 2026-10-17. macOS protects one app's data against other apps, and it refused the terminal access to `~/Library/Application Support/Firefox`, even though the files belong to the user. The system log recorded an error for that protection (`kTCCServiceSystemPolicyAppDataDetailed`), and macOS showed no prompt to allow it. A program started from a terminal usually counts as part of that terminal, so the Firefox that web-ext starts is most likely refused in the same way, which would explain the second failure. That part was not proven.
+
+- With a kept profile (`--keep-profile-changes`), web-ext reads Firefox's `profiles.ini` to make sure the profile is not the user's everyday one, and fails with `EPERM`. That is why the script no longer keeps a profile.
+- With a fresh profile, Firefox itself shows "Profile Missing", and web-ext then fails with `ECONNREFUSED`, because Firefox has quit.
+
+The script should work where nothing blocks that access, for example with Full Disk Access granted to the terminal on macOS, which is broader than this needs. It starts with a fresh profile, so sign in at the start of each run. If `web-ext` cannot find Firefox, or you want another edition, pass `--firefox` after the script name, with a path to the binary or one of the aliases `beta`, `nightly` and `deved` (Developer Edition). Stop it with Ctrl+C.
 
 **Screen reader tests** use Guidepup (`@guidepup/guidepup` and `@guidepup/playwright`), which drives VoiceOver on macOS and records every phrase it speaks. The browser tests check the DOM and the accessibility tree, but not what a screen reader says. The first trial runs showed the difference: VoiceOver read a focused dialog's name and heading, but not its description (#56). Set up in #55:
 
@@ -957,7 +969,7 @@ Acceptance: the VoiceOver tests pass in CI on the pinned macOS runner, and a fai
 Build the popup capture, validation and truncation, and the `/save` URL builder. Q4 must be resolved first.
 
 Tests: unit tests for the extraction function against fixture documents, for truncation to the shared caps without splitting a surrogate pair, for the encoded-length budget that drops optional fields in order, for a URL whose serialized form exceeds the cap being refused (not truncated), for the fallback on pages that cannot be scripted, and for a sensitive URL stopping the flow before any tab is opened. A Playwright test loads the extension, opens a fixture page, clicks the action, and asserts that the prefilled `/save` form opens.
-Acceptance: in Chrome (automated) and Firefox (manual check with `web-ext run`), the save form opens prefilled from the current page.
+Acceptance: in Chrome (automated) and Firefox (manual check), the save form opens prefilled from the current page.
 
 #### Phase 6: Capture deploy
 

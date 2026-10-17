@@ -6,7 +6,7 @@
   "scripts": {
     "build": "node build.ts",
     "build:local": "HAYSTACK_ORIGIN=http://localhost:5173 node build.ts",
-    "run:firefox": "pnpm build:local && web-ext run --source-dir dist/firefox --firefox-profile dist/firefox-profile --profile-create-if-missing --keep-profile-changes --no-reload --no-input --start-url http://localhost:5173",
+    "run:firefox": "pnpm build:local && web-ext run --source-dir dist/firefox --no-reload --no-input --start-url http://localhost:5173",
     "test:e2e": "playwright test",
     "e2e:install": "playwright install --no-shell chromium"
   },
