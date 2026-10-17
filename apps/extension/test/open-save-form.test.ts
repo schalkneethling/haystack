@@ -6,13 +6,30 @@ import {
   POPUP_MESSAGES,
   type PopupBrowser,
 } from "../src/open-save-form.ts";
+import type { PageMetadata } from "../src/read-page-metadata.ts";
 
 const ORIGIN = "https://haystack.example";
 
+// What readPageMetadata returns for a page with none of the tags, with the given values on top.
+function metadata(values: Partial<PageMetadata> = {}): PageMetadata {
+  return {
+    canonicalUrl: null,
+    description: null,
+    documentTitle: "",
+    ogTitle: null,
+    ogDescription: null,
+    ogSiteName: null,
+    ...values,
+  };
+}
+
 interface FakeOptions {
   tab?: ActiveTab;
-  /** What the page's document.title is, or an error when the page can't be scripted. */
-  documentTitle?: string | Error;
+  /**
+   * What the injected script returns, or an error when the page can't be scripted. Typed
+   * loosely, because a page's answer is untrusted.
+   */
+  injected?: unknown;
   createFails?: boolean;
   queryFails?: boolean;
 }
@@ -20,7 +37,7 @@ interface FakeOptions {
 // The popup's view of the browser, recording the tabs it opens and the scripts it runs.
 function fakeBrowser({
   tab,
-  documentTitle = "Document title",
+  injected = metadata({ documentTitle: "Document title" }),
   createFails = false,
   queryFails = false,
 }: FakeOptions) {
@@ -44,10 +61,10 @@ function fakeBrowser({
     scripting: {
       executeScript: async ({ target }) => {
         scripted.push(target.tabId);
-        if (documentTitle instanceof Error) {
-          throw documentTitle;
+        if (injected instanceof Error) {
+          throw injected;
         }
-        return [{ result: documentTitle }];
+        return [{ result: injected }];
       },
     },
   };
@@ -134,7 +151,7 @@ describe("openSaveForm", () => {
   it("falls back to the tab's title when the page can't be scripted", async () => {
     const fake = fakeBrowser({
       tab: tabAt("https://chromewebstore.google.com/detail/x", "Store listing"),
-      documentTitle: new Error("The extensions gallery cannot be scripted."),
+      injected: new Error("The extensions gallery cannot be scripted."),
     });
 
     const outcome = await openSaveForm(fake.api, ORIGIN);
@@ -146,15 +163,238 @@ describe("openSaveForm", () => {
     });
   });
 
-  it("leaves out a title that fails validation, so the form falls back to the address", async () => {
+  it("puts every captured field into the save URL, under the names /save reads", async () => {
+    const fake = fakeBrowser({
+      tab: tabAt("https://example.com/article"),
+      injected: metadata({
+        canonicalUrl: "https://example.com/canonical",
+        description: "The meta description.",
+        documentTitle: "Document title",
+        ogTitle: "Open Graph title",
+        ogDescription: "Open Graph description.",
+        ogSiteName: "Example",
+      }),
+    });
+
+    await openSaveForm(fake.api, ORIGIN);
+
+    expect(saveParameters(fake.created[0] ?? "")).toEqual({
+      url: "https://example.com/article",
+      canonical_url: "https://example.com/canonical",
+      title: "Document title",
+      description: "The meta description.",
+      og_title: "Open Graph title",
+      og_description: "Open Graph description.",
+      og_site_name: "Example",
+    });
+  });
+
+  it("leaves out the fields a page doesn't have", async () => {
     const fake = fakeBrowser({
       tab: tabAt("https://example.com/"),
-      documentTitle: "t".repeat(CAPTURE_CAPS.title + 1),
+      injected: metadata({ ogTitle: "   ", description: "" }),
     });
 
     await openSaveForm(fake.api, ORIGIN);
 
     expect(saveParameters(fake.created[0] ?? "")).toEqual({ url: "https://example.com/" });
+  });
+
+  describe("a text field over its cap", () => {
+    const fields = [
+      ["title", "documentTitle"],
+      ["description", "description"],
+      ["og_title", "ogTitle"],
+      ["og_description", "ogDescription"],
+      ["og_site_name", "ogSiteName"],
+    ] as const;
+
+    for (const [field, key] of fields) {
+      it(`is cut to the cap for ${field}, so the page is still saved with it`, async () => {
+        const cap = CAPTURE_CAPS[field];
+        const fake = fakeBrowser({
+          tab: tabAt("https://example.com/"),
+          injected: metadata({ [key]: "x".repeat(cap + 50) }),
+        });
+
+        const outcome = await openSaveForm(fake.api, ORIGIN);
+
+        expect(outcome.opened).toBe(true);
+        expect(saveParameters(fake.created[0] ?? "")[field]).toBe("x".repeat(cap));
+      });
+    }
+
+    it("is cut without splitting a surrogate pair", async () => {
+      const grin = "😀";
+      const fake = fakeBrowser({
+        tab: tabAt("https://example.com/"),
+        injected: metadata({ ogTitle: `${"a".repeat(CAPTURE_CAPS.og_title - 1)}${grin}` }),
+      });
+
+      await openSaveForm(fake.api, ORIGIN);
+
+      expect(saveParameters(fake.created[0] ?? "").og_title).toBe(
+        "a".repeat(CAPTURE_CAPS.og_title - 1),
+      );
+    });
+
+    it("is cut after trimming, so leading whitespace doesn't use up the cap", async () => {
+      const fake = fakeBrowser({
+        tab: tabAt("https://example.com/"),
+        injected: metadata({ documentTitle: `   ${"t".repeat(CAPTURE_CAPS.title)}` }),
+      });
+
+      await openSaveForm(fake.api, ORIGIN);
+
+      expect(saveParameters(fake.created[0] ?? "").title).toBe("t".repeat(CAPTURE_CAPS.title));
+    });
+
+    it("is cut for the tab's title too, when the page can't be scripted", async () => {
+      const fake = fakeBrowser({
+        tab: tabAt("https://example.com/", "t".repeat(CAPTURE_CAPS.title + 1)),
+        injected: new Error("The extensions gallery cannot be scripted."),
+      });
+
+      await openSaveForm(fake.api, ORIGIN);
+
+      expect(saveParameters(fake.created[0] ?? "").title).toBe("t".repeat(CAPTURE_CAPS.title));
+    });
+  });
+
+  describe("the canonical URL", () => {
+    it("is sent as the URL parser serializes it", async () => {
+      const fake = fakeBrowser({
+        tab: tabAt("https://example.com/"),
+        injected: metadata({ canonicalUrl: "https://EXAMPLE.com/café" }),
+      });
+
+      await openSaveForm(fake.api, ORIGIN);
+
+      expect(saveParameters(fake.created[0] ?? "").canonical_url).toBe(
+        "https://example.com/caf%C3%A9",
+      );
+    });
+
+    it("is dropped, not truncated, when its serialized form is over the cap", async () => {
+      // 400 characters before serializing, but each one becomes 6 once percent-encoded.
+      const canonical = `https://example.com/${"é".repeat(400)}`;
+      expect(canonical.length).toBeLessThanOrEqual(CAPTURE_CAPS.canonical_url);
+      const fake = fakeBrowser({
+        tab: tabAt("https://example.com/"),
+        injected: metadata({ canonicalUrl: canonical, ogTitle: "Kept" }),
+      });
+
+      const outcome = await openSaveForm(fake.api, ORIGIN);
+
+      expect(outcome.opened).toBe(true);
+      expect(saveParameters(fake.created[0] ?? "")).toEqual({
+        url: "https://example.com/",
+        og_title: "Kept",
+      });
+    });
+
+    it.each([
+      ["not a URL", "not a url"],
+      ["relative", "/article"],
+      ["a script", "javascript:alert(1)"],
+      ["a file", "file:///etc/passwd"],
+    ])("is dropped when it is %s", async (_, canonicalUrl) => {
+      const fake = fakeBrowser({
+        tab: tabAt("https://example.com/"),
+        injected: metadata({ canonicalUrl }),
+      });
+
+      await openSaveForm(fake.api, ORIGIN);
+
+      expect(saveParameters(fake.created[0] ?? "")).toEqual({ url: "https://example.com/" });
+    });
+
+    it("may be http, because it is only evidence and is never linked", async () => {
+      const fake = fakeBrowser({
+        tab: tabAt("https://example.com/"),
+        injected: metadata({ canonicalUrl: "http://example.com/article" }),
+      });
+
+      await openSaveForm(fake.api, ORIGIN);
+
+      expect(saveParameters(fake.created[0] ?? "").canonical_url).toBe(
+        "http://example.com/article",
+      );
+    });
+  });
+
+  describe("an executeScript result that isn't what readPageMetadata returns", () => {
+    // The function's types say what it returns, but whatever comes back is data from an
+    // untrusted page, so the popup checks the shape instead of trusting the types.
+    it.each([
+      ["a string", "Page title"],
+      ["a number", 42],
+      ["null", null],
+      ["an array", ["Page title"]],
+      ["an object without the fields", {}],
+    ])("is ignored when it is %s, and the tab's title is used", async (_, injected) => {
+      const fake = fakeBrowser({ tab: tabAt("https://example.com/", "Tab title"), injected });
+
+      const outcome = await openSaveForm(fake.api, ORIGIN);
+
+      expect(outcome.opened).toBe(true);
+      expect(saveParameters(fake.created[0] ?? "")).toEqual({
+        url: "https://example.com/",
+        title: "Tab title",
+      });
+    });
+
+    it("is used field by field: a value that isn't a string is left out", async () => {
+      const fake = fakeBrowser({
+        tab: tabAt("https://example.com/", "Tab title"),
+        injected: {
+          canonicalUrl: { href: "https://example.com/" },
+          description: 7,
+          documentTitle: ["not", "a", "string"],
+          ogTitle: "Open Graph title",
+          ogDescription: null,
+          ogSiteName: true,
+          unexpected: "https://attacker.example/",
+        },
+      });
+
+      await openSaveForm(fake.api, ORIGIN);
+
+      expect(saveParameters(fake.created[0] ?? "")).toEqual({
+        url: "https://example.com/",
+        title: "Tab title",
+        og_title: "Open Graph title",
+      });
+    });
+
+    it("never lets a value change which page is saved", async () => {
+      const fake = fakeBrowser({
+        tab: tabAt("https://example.com/article"),
+        injected: { ...metadata(), url: "https://attacker.example/", ogTitle: "Title" },
+      });
+
+      await openSaveForm(fake.api, ORIGIN);
+
+      expect(saveParameters(fake.created[0] ?? "")).toEqual({
+        url: "https://example.com/article",
+        og_title: "Title",
+      });
+    });
+
+    it("leaves out a text field with a lone surrogate, keeping the others", async () => {
+      const fake = fakeBrowser({
+        tab: tabAt("https://example.com/"),
+        injected: metadata({ ogTitle: "broken \ud83d", ogSiteName: "Example" }),
+      });
+
+      const outcome = await openSaveForm(fake.api, ORIGIN);
+
+      expect(outcome.opened).toBe(true);
+      expect(saveParameters(fake.created[0] ?? "")).toEqual({
+        url: "https://example.com/",
+        og_site_name: "Example",
+      });
+    });
   });
 
   // The empty address is the case a user can reach. Chrome reports `url` as "" while a tab's

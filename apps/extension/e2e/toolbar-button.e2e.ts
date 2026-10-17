@@ -1,12 +1,16 @@
 import AxeBuilder from "@axe-core/playwright";
-import { SENSITIVE_URL_EXPLANATIONS } from "@haystack/schemas";
+import { CAPTURE_CAPS, SENSITIVE_URL_EXPLANATIONS } from "@haystack/schemas";
 import { expect, test } from "./fixtures.ts";
 
 const ARTICLE = "https://fixture.test/article";
 const SENSITIVE = "https://fixture.test/callback?access_token=fixture-token";
 
+function fixtureWithHead(head: string): string {
+  return `<!doctype html><html lang="en"><head>${head}</head><body><p>Fixture</p></body></html>`;
+}
+
 function fixtureDocument(title: string): string {
-  return `<!doctype html><html lang="en"><head><title>${title}</title></head><body><p>Fixture</p></body></html>`;
+  return fixtureWithHead(`<title>${title}</title>`);
 }
 
 test("the toolbar button opens the save form, prefilled with the page's title", async ({
@@ -36,6 +40,130 @@ test("the toolbar button opens the save form, prefilled with the page's title", 
   if (!popup.isClosed()) {
     await popup.waitForEvent("close");
   }
+});
+
+// The plan's prefill rules ("Save flow"): the title comes from the Open Graph title, then the
+// document title, then the address, and the description from the Open Graph description, then
+// the meta description.
+test.describe("the save form's prefill", () => {
+  test("uses the Open Graph title and description, and carries every captured field", async ({
+    context,
+    fixturePages,
+    haystackWorker,
+    page,
+    signIn,
+    toolbar,
+  }) => {
+    await signIn();
+    fixturePages.serve(
+      ARTICLE,
+      fixtureWithHead(`<title>Document title</title>
+        <link rel="canonical" href="/articles/one">
+        <meta name="description" content="The meta description.">
+        <meta property="og:title" content="Open Graph title">
+        <meta property="og:description" content="Open Graph description.">
+        <meta property="og:site_name" content="Fixture Site">`),
+    );
+    await page.goto(ARTICLE);
+
+    const saveForm = context.waitForEvent("page", {
+      predicate: (opened) => opened.url().startsWith(`${haystackWorker.origin}/save?`),
+    });
+    await toolbar.click(page);
+    const form = await saveForm;
+
+    // The names are the ones /save reads, and the canonical URL is the absolute one.
+    await expect(form).toHaveURL(
+      `${haystackWorker.origin}/save?${new URLSearchParams({
+        url: ARTICLE,
+        canonical_url: "https://fixture.test/articles/one",
+        title: "Document title",
+        description: "The meta description.",
+        og_title: "Open Graph title",
+        og_description: "Open Graph description.",
+        og_site_name: "Fixture Site",
+      })}`,
+    );
+    await expect(form.getByLabel("Title")).toHaveValue("Open Graph title");
+    await expect(form.getByLabel("Description")).toHaveValue("Open Graph description.");
+    // The raw values travel on to POST /save as hidden inputs.
+    await expect(form.locator('input[name="canonical_url"]')).toHaveValue(
+      "https://fixture.test/articles/one",
+    );
+    await expect(form.locator('input[name="og_site_name"]')).toHaveValue("Fixture Site");
+  });
+
+  test("falls back to the document title and the meta description without Open Graph tags", async ({
+    context,
+    fixturePages,
+    haystackWorker,
+    page,
+    signIn,
+    toolbar,
+  }) => {
+    await signIn();
+    fixturePages.serve(
+      ARTICLE,
+      fixtureWithHead(`<title>Document title</title>
+        <meta name="description" content="The meta description.">`),
+    );
+    await page.goto(ARTICLE);
+
+    const saveForm = context.waitForEvent("page", {
+      predicate: (opened) => opened.url().startsWith(`${haystackWorker.origin}/save?`),
+    });
+    await toolbar.click(page);
+    const form = await saveForm;
+
+    await expect(form.getByLabel("Title")).toHaveValue("Document title");
+    await expect(form.getByLabel("Description")).toHaveValue("The meta description.");
+  });
+
+  test("falls back to the address, with an empty description, on a page with no tags", async ({
+    context,
+    fixturePages,
+    haystackWorker,
+    page,
+    signIn,
+    toolbar,
+  }) => {
+    await signIn();
+    fixturePages.serve(ARTICLE, fixtureWithHead(""));
+    await page.goto(ARTICLE);
+
+    const saveForm = context.waitForEvent("page", {
+      predicate: (opened) => opened.url().startsWith(`${haystackWorker.origin}/save?`),
+    });
+    await toolbar.click(page);
+    const form = await saveForm;
+
+    await expect(form.getByLabel("Title")).toHaveValue(ARTICLE);
+    await expect(form.getByLabel("Description")).toHaveValue("");
+  });
+
+  test("cuts an over-long Open Graph title to its cap, so the page is still saved", async ({
+    context,
+    fixturePages,
+    haystackWorker,
+    page,
+    signIn,
+    toolbar,
+  }) => {
+    await signIn();
+    const grin = "😀";
+    // The pair starts at the last code unit the cap allows, so it can't be kept whole.
+    const title = `${"a".repeat(CAPTURE_CAPS.og_title - 1)}${grin}tail`;
+    fixturePages.serve(ARTICLE, fixtureWithHead(`<meta property="og:title" content="${title}">`));
+    await page.goto(ARTICLE);
+
+    const saveForm = context.waitForEvent("page", {
+      predicate: (opened) => opened.url().startsWith(`${haystackWorker.origin}/save?`),
+    });
+    await toolbar.click(page);
+    const form = await saveForm;
+
+    await expect(form.getByLabel("Title")).toHaveValue("a".repeat(CAPTURE_CAPS.og_title - 1));
+  });
 });
 
 test.describe("a sensitive URL", () => {

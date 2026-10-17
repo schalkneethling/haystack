@@ -16,3 +16,4 @@ export {
 } from "./detect-sensitive-url.ts";
 export { isHttpsOrLoopbackUrl, LOOPBACK_HOSTS } from "./loopback.ts";
 export { normalizeUrl, stripTrackingParameters, TRACKING_PARAMETERS } from "./normalize-url.ts";
+export { truncate } from "./truncate.ts";

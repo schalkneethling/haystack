@@ -4,12 +4,15 @@
 // browser API and the Worker's origin as parameters, so tests can pass fakes.
 import {
   CAPTURE_CAPS,
+  type CaptureField,
   type CapturePayload,
   detectSensitiveUrl,
   isHttpsUrl,
   SENSITIVE_URL_EXPLANATIONS,
+  truncate,
   validateCapturePayload,
 } from "@haystack/schemas";
+import { type PageMetadata, readPageMetadata } from "./read-page-metadata.ts";
 
 /** The tab fields the popup reads. `activeTab` grants the URL and title of the active tab. */
 export interface ActiveTab {
@@ -27,8 +30,8 @@ export interface PopupBrowser {
   scripting: {
     executeScript(injection: {
       target: { tabId: number };
-      func: () => string;
-    }): Promise<Array<{ result?: string | undefined }>>;
+      func: () => PageMetadata;
+    }): Promise<Array<{ result?: unknown }>>;
   };
 }
 
@@ -49,26 +52,79 @@ function refused(message: string): PopupOutcome {
   return { opened: false, heading: CANT_SAVE, message };
 }
 
-// Runs in the page, through executeScript, so it must not use anything from this module.
-function readDocumentTitle(): string {
-  return document.title;
+// The text fields of the payload and where each comes from in the page's metadata. Every cap
+// is a field's own, so a new text field needs only a line here.
+const TEXT_FIELDS = [
+  ["title", "documentTitle"],
+  ["description", "description"],
+  ["og_title", "ogTitle"],
+  ["og_description", "ogDescription"],
+  ["og_site_name", "ogSiteName"],
+] as const satisfies ReadonlyArray<readonly [CaptureField, keyof PageMetadata]>;
+
+const METADATA_KEYS = ["canonicalUrl", ...TEXT_FIELDS.map(([, key]) => key)] as const;
+
+type RawMetadata = Partial<Record<keyof PageMetadata, string>>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-// The page's own title, or the tab's title when the page can't be scripted (browser pages and
-// the extension stores refuse executeScript).
-async function pageTitle(api: PopupBrowser, tab: ActiveTab): Promise<string | undefined> {
+// The strings among what the page returned. The result comes from a page the user does not
+// control, so a result that is not an object, and any value that is not a string, is ignored
+// rather than trusted to have the shape readPageMetadata gives it.
+function stringsIn(result: unknown): RawMetadata {
+  if (!isRecord(result)) {
+    return {};
+  }
+  const strings: RawMetadata = {};
+  for (const key of METADATA_KEYS) {
+    const value = result[key];
+    if (typeof value === "string") {
+      strings[key] = value;
+    }
+  }
+  return strings;
+}
+
+// What the page says about itself. The tab's title stands in for the page's own only when the
+// page can't be scripted (browser pages and the extension stores refuse executeScript) or the
+// result has no string document title. A page without a title gives "", which wins: for an
+// untitled page Chrome's tab title is the host and path, which is worse than the form's
+// fallback, the full address.
+async function pageMetadata(api: PopupBrowser, tab: ActiveTab): Promise<RawMetadata> {
+  const fromTab: RawMetadata = tab.title === undefined ? {} : { documentTitle: tab.title };
   if (tab.id === undefined) {
-    return tab.title;
+    return fromTab;
   }
   try {
     const [injection] = await api.scripting.executeScript({
       target: { tabId: tab.id },
-      func: readDocumentTitle,
+      func: readPageMetadata,
     });
-    return typeof injection?.result === "string" ? injection.result : tab.title;
+    return { ...fromTab, ...stringsIn(injection?.result) };
   } catch {
-    return tab.title;
+    return fromTab;
   }
+}
+
+// The payload to validate: the page's address, and each captured field cut to its cap. Text is
+// trimmed first so that the cap counts what the schema keeps. The canonical URL is serialized
+// the way the page's own address is, and never cut, because a shortened URL can point
+// somewhere else. An over-cap one is therefore left for validation to reject.
+function candidatePayload(url: string, metadata: RawMetadata): Record<string, string> {
+  const candidate: Record<string, string> = { url };
+  if (metadata.canonicalUrl !== undefined) {
+    candidate.canonical_url =
+      URL.parse(metadata.canonicalUrl.trim())?.href ?? metadata.canonicalUrl;
+  }
+  for (const [field, key] of TEXT_FIELDS) {
+    const text = metadata[key];
+    if (text !== undefined) {
+      candidate[field] = truncate(text.trim(), CAPTURE_CAPS[field]);
+    }
+  }
+  return candidate;
 }
 
 /** The Worker's save form for a payload. `origin` is an origin alone, without a slash. */
@@ -78,6 +134,20 @@ function saveUrl(origin: string, payload: CapturePayload): string {
     parameters.set(name, value);
   }
   return `${origin}/save?${parameters.toString()}`;
+}
+
+// The payload without the fields that failed validation. The address passed on its own, so a
+// second failure is not expected, but if it happens the address alone is sent.
+function withoutInvalidFields(
+  candidate: Record<string, string>,
+  invalidFields: readonly CaptureField[],
+  urlOnly: CapturePayload,
+): CapturePayload {
+  const kept = Object.entries(candidate).filter(
+    ([name]) => !invalidFields.includes(name as CaptureField),
+  );
+  const revalidated = validateCapturePayload(Object.fromEntries(kept));
+  return revalidated.ok ? revalidated.payload : urlOnly;
 }
 
 const NOT_OPENED: PopupOutcome = {
@@ -106,11 +176,13 @@ async function decideAndOpen(api: PopupBrowser, origin: string): Promise<PopupOu
     const tooLong = isHttpsUrl(url) && url.length > CAPTURE_CAPS.url;
     return refused(tooLong ? POPUP_MESSAGES.tooLong : POPUP_MESSAGES.notHttps);
   }
-  // A title that fails validation is left out rather than refusing the page, because the form
-  // falls back to the address. Truncating titles to the cap comes with the metadata (#72).
-  const title = await pageTitle(api, tab);
-  const withTitle = title === undefined ? urlOnly : validateCapturePayload({ url, title });
-  const payload = withTitle.ok ? withTitle.payload : urlOnly.payload;
+  // A field that fails validation is left out rather than refusing the page: the form falls
+  // back to the other fields, and in the end to the address.
+  const candidate = candidatePayload(url, await pageMetadata(api, tab));
+  const validated = validateCapturePayload(candidate);
+  const payload = validated.ok
+    ? validated.payload
+    : withoutInvalidFields(candidate, validated.invalidFields, urlOnly.payload);
   const target = saveUrl(origin, payload);
   await api.tabs.create({ url: target });
   return { opened: true, saveUrl: target };

@@ -10,6 +10,7 @@ import {
   SENSITIVE_URL_EXPLANATIONS,
   type SensitiveUrlReason,
   stripTrackingParameters,
+  truncate,
   validateCapturePayload,
 } from "@haystack/schemas";
 import { and, eq } from "drizzle-orm";
@@ -99,16 +100,6 @@ function hiddenInputs(payload: CapturePayload, url: string) {
   );
 }
 
-// The URL can be the title fallback and is longer than the title cap. Cut by UTF-16 code units,
-// as the caps count, without splitting a surrogate pair.
-function truncate(value: string, maxLength: number): string {
-  if (value.length <= maxLength) {
-    return value;
-  }
-  const end = /[\ud800-\udbff]/.test(value.charAt(maxLength - 1)) ? maxLength - 1 : maxLength;
-  return value.slice(0, end);
-}
-
 type ConfirmedField = "title" | "description";
 
 interface FormState {
@@ -128,6 +119,7 @@ const CONFIRMED_ERRORS: Record<ConfirmedField, string> = {
 function prefill(payload: CapturePayload, url: string): FormState {
   const title = collapseWhitespace(payload.og_title ?? payload.title ?? url);
   return {
+    // The URL can be the title fallback and is longer than the title cap.
     title: truncate(title, CAPTURE_CAPS.title),
     description: payload.og_description ?? payload.description ?? "",
   };
