@@ -5,8 +5,12 @@ import { expect, test } from "./fixtures.ts";
 const ARTICLE = "https://fixture.test/article";
 const SENSITIVE = "https://fixture.test/callback?access_token=fixture-token";
 
+function fixtureWithHead(head: string): string {
+  return `<!doctype html><html lang="en"><head>${head}</head><body><p>Fixture</p></body></html>`;
+}
+
 function fixtureDocument(title: string): string {
-  return `<!doctype html><html lang="en"><head><title>${title}</title></head><body><p>Fixture</p></body></html>`;
+  return fixtureWithHead(`<title>${title}</title>`);
 }
 
 test("the toolbar button opens the save form, prefilled with the page's title", async ({
@@ -37,10 +41,6 @@ test("the toolbar button opens the save form, prefilled with the page's title", 
     await popup.waitForEvent("close");
   }
 });
-
-function fixtureWithHead(head: string): string {
-  return `<!doctype html><html lang="en"><head>${head}</head><body><p>Fixture</p></body></html>`;
-}
 
 // The plan's prefill rules ("Save flow"): the title comes from the Open Graph title, then the
 // document title, then the address, and the description from the Open Graph description, then

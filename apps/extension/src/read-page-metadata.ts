@@ -26,9 +26,12 @@ export interface PageMetadata {
  * A value that is empty or only whitespace counts as absent, so a blank tag cannot hide a later
  * tag that has content. When a tag appears more than once, the first one with content wins. The
  * Open Graph protocol says that "the first tag (from top to bottom) is given preference during
- * conflicts" (https://ogp.me/#array). It says that about tags that repeat to make a list, such
- * as `og:image`, and `og:title` does not, so taking the first here is a choice that follows the
- * protocol's only rule about repeats.
+ * conflicts" (https://ogp.me/#array), but only about tags that repeat to make a list, such as
+ * `og:image`. Taking the first `og:title` applies the rule to a tag the protocol does not cover.
+ *
+ * The protocol specifies `property` for the Open Graph tags, but pages often write `name`
+ * instead, so both are read. One selector list matches both, and `querySelectorAll` returns the
+ * matches in document order, so the first-with-content rule holds across the two attributes.
  */
 export function readPageMetadata(): PageMetadata {
   const metaContent = (selector: string): string | null => {
@@ -55,12 +58,15 @@ export function readPageMetadata(): PageMetadata {
     return null;
   };
 
+  const openGraph = (name: string): string | null =>
+    metaContent(`meta[property="${name}" i], meta[name="${name}" i]`);
+
   return {
     canonicalUrl: canonicalUrl(),
     description: metaContent('meta[name="description" i]'),
     documentTitle: document.title,
-    ogTitle: metaContent('meta[property="og:title"]'),
-    ogDescription: metaContent('meta[property="og:description"]'),
-    ogSiteName: metaContent('meta[property="og:site_name"]'),
+    ogTitle: openGraph("og:title"),
+    ogDescription: openGraph("og:description"),
+    ogSiteName: openGraph("og:site_name"),
   };
 }

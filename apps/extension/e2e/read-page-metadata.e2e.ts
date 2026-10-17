@@ -4,31 +4,54 @@
 // here with a ReferenceError. That is what proves it is self-contained. The popup's own use of it
 // is covered by toolbar-button.e2e.ts, which runs the built extension.
 import { CAPTURE_CAPS, truncate, validateCapturePayload } from "@haystack/schemas";
-import { expect, type Page, test } from "@playwright/test";
+import { expect, test as base } from "@playwright/test";
 import { readPageMetadata } from "../src/read-page-metadata.ts";
-
-// Playwright's full Chromium, as in fixtures.ts, because the config does not install the headless
-// shell.
-test.use({ channel: "chromium" });
 
 const PAGE_URL = "https://fixture.test/guides/article";
 
-// Serves the fixture document at an https address through a route, so a relative canonical URL
-// has a base to resolve against and no request leaves the machine.
-async function openFixture(page: Page, head: string, url = PAGE_URL): Promise<void> {
-  await page.route("**/*", async (route) => {
-    const isPage = route.request().url() === url;
-    await route.fulfill(
-      isPage
-        ? {
+interface FixturePage {
+  /**
+   * Serves a document with the given head at an https address, through a route, and opens it.
+   * An https address gives a relative canonical URL a base to resolve against, which
+   * `setContent` (a base of about:blank) does not.
+   */
+  (head: string, url?: string): Promise<void>;
+}
+
+// A plain browser context, because these tests never load the extension. As in fixtures.ts,
+// every request must go to the fixture page, and anything else is aborted and fails the test, so
+// no request leaves the machine.
+const test = base.extend<{ openFixture: FixturePage }>({
+  openFixture: async ({ page }, use) => {
+    const unexpected: string[] = [];
+    await use(async (head, url = PAGE_URL) => {
+      await page.route("**/*", async (route) => {
+        const requested = new URL(route.request().url());
+        if (requested.href === url) {
+          await route.fulfill({
             contentType: "text/html; charset=utf-8",
             body: `<!doctype html><html lang="en"><head>${head}</head><body><p>Fixture</p></body></html>`,
-          }
-        : { status: 404 },
-    );
-  });
-  await page.goto(url);
-}
+          });
+        } else if (
+          requested.pathname === "/favicon.ico" &&
+          requested.origin === new URL(url).origin
+        ) {
+          // Chromium asks each site for its icon.
+          await route.fulfill({ status: 404 });
+        } else {
+          unexpected.push(requested.href);
+          await route.abort("blockedbyclient");
+        }
+      });
+      await page.goto(url);
+    });
+    expect(unexpected, "requests to anything but the fixture page").toEqual([]);
+  },
+});
+
+// Playwright's full Chromium, as in fixtures.ts. Only the full Chromium is installed
+// (`e2e:install`), not the headless shell, and the config installs nothing itself.
+test.use({ channel: "chromium" });
 
 const NOTHING = {
   canonicalUrl: null,
@@ -39,15 +62,14 @@ const NOTHING = {
   ogSiteName: null,
 };
 
-test("reads null for every tag a page doesn't have", async ({ page }) => {
-  await openFixture(page, "");
+test("reads null for every tag a page doesn't have", async ({ openFixture, page }) => {
+  await openFixture("");
 
   expect(await page.evaluate(readPageMetadata)).toEqual(NOTHING);
 });
 
-test("reads every tag", async ({ page }) => {
+test("reads every tag", async ({ openFixture, page }) => {
   await openFixture(
-    page,
     `<title>Document title</title>
      <link rel="canonical" href="https://fixture.test/canonical">
      <meta name="description" content="The meta description.">
@@ -71,17 +93,17 @@ test("reads every tag", async ({ page }) => {
 });
 
 test("returns values as the page wrote them, leaving trimming to the popup's validation", async ({
+  openFixture,
   page,
 }) => {
-  await openFixture(page, `<meta property="og:title" content="  Padded title  ">`);
+  await openFixture(`<meta property="og:title" content="  Padded title  ">`);
 
   expect((await page.evaluate(readPageMetadata)).ogTitle).toBe("  Padded title  ");
 });
 
 test.describe("several og:title tags", () => {
-  test("uses the first, as the Open Graph protocol does when tags conflict", async ({ page }) => {
+  test("uses the first tag that has content", async ({ openFixture, page }) => {
     await openFixture(
-      page,
       `<meta property="og:title" content="First">
        <meta property="og:title" content="Second">
        <meta property="og:title" content="Third">`,
@@ -90,9 +112,11 @@ test.describe("several og:title tags", () => {
     expect((await page.evaluate(readPageMetadata)).ogTitle).toBe("First");
   });
 
-  test("skips a first tag that has no content, so it can't hide a later one", async ({ page }) => {
+  test("skips a first tag that has no content, so it can't hide a later one", async ({
+    openFixture,
+    page,
+  }) => {
     await openFixture(
-      page,
       `<meta property="og:title" content="   ">
        <meta property="og:title">
        <meta property="og:title" content="Second">`,
@@ -102,9 +126,45 @@ test.describe("several og:title tags", () => {
   });
 });
 
+test.describe("Open Graph tags written with name instead of property", () => {
+  test("are read, whatever the case of the attribute value", async ({ openFixture, page }) => {
+    await openFixture(
+      `<meta name="og:title" content="Title by name">
+       <meta name="OG:Description" content="Description by name.">
+       <meta property="OG:SITE_NAME" content="Site by property, in capitals">`,
+    );
+
+    expect(await page.evaluate(readPageMetadata)).toEqual({
+      ...NOTHING,
+      ogTitle: "Title by name",
+      ogDescription: "Description by name.",
+      ogSiteName: "Site by property, in capitals",
+    });
+  });
+
+  test("count with property tags in document order, so the first with content wins", async ({
+    openFixture,
+    page,
+  }) => {
+    await openFixture(
+      `<meta name="og:title" content="First, by name">
+       <meta property="og:title" content="Second, by property">`,
+    );
+    expect((await page.evaluate(readPageMetadata)).ogTitle).toBe("First, by name");
+  });
+
+  test("do not hide a later property tag when they are blank", async ({ openFixture, page }) => {
+    await openFixture(
+      `<meta name="og:title" content="  ">
+       <meta property="og:title" content="Second, by property">`,
+    );
+    expect((await page.evaluate(readPageMetadata)).ogTitle).toBe("Second, by property");
+  });
+});
+
 test.describe("the canonical link", () => {
-  test("is resolved to an absolute URL against the page", async ({ page }) => {
-    await openFixture(page, `<link rel="canonical" href="/articles/one?page=2">`);
+  test("is resolved to an absolute URL against the page", async ({ openFixture, page }) => {
+    await openFixture(`<link rel="canonical" href="/articles/one?page=2">`);
 
     expect((await page.evaluate(readPageMetadata)).canonicalUrl).toBe(
       "https://fixture.test/articles/one?page=2",
@@ -112,18 +172,21 @@ test.describe("the canonical link", () => {
   });
 
   test("is resolved against the page's directory when the path has no leading slash", async ({
+    openFixture,
     page,
   }) => {
-    await openFixture(page, `<link rel="canonical" href="renamed">`);
+    await openFixture(`<link rel="canonical" href="renamed">`);
 
     expect((await page.evaluate(readPageMetadata)).canonicalUrl).toBe(
       "https://fixture.test/guides/renamed",
     );
   });
 
-  test("is resolved against a base element, the way a link would be", async ({ page }) => {
+  test("is resolved against a base element, the way a link would be", async ({
+    openFixture,
+    page,
+  }) => {
     await openFixture(
-      page,
       `<base href="https://cdn.fixture.test/base/"><link rel="canonical" href="one">`,
     );
 
@@ -132,15 +195,17 @@ test.describe("the canonical link", () => {
     );
   });
 
-  test("is found whatever the case of rel, and among other rel values", async ({ page }) => {
-    await openFixture(page, `<link rel="Alternate CANONICAL" href="https://fixture.test/one">`);
+  test("is found whatever the case of rel, and among other rel values", async ({
+    openFixture,
+    page,
+  }) => {
+    await openFixture(`<link rel="Alternate CANONICAL" href="https://fixture.test/one">`);
 
     expect((await page.evaluate(readPageMetadata)).canonicalUrl).toBe("https://fixture.test/one");
   });
 
-  test("ignores links that aren't canonical", async ({ page }) => {
+  test("ignores links that aren't canonical", async ({ openFixture, page }) => {
     await openFixture(
-      page,
       `<link rel="alternate" href="https://fixture.test/feed">
        <link rel="canonicalize" href="https://fixture.test/almost">`,
     );
@@ -149,16 +214,16 @@ test.describe("the canonical link", () => {
   });
 
   test("is null when the href is blank, which would otherwise resolve to the page itself", async ({
+    openFixture,
     page,
   }) => {
-    await openFixture(page, `<link rel="canonical" href=""><link rel="canonical" href="   ">`);
+    await openFixture(`<link rel="canonical" href=""><link rel="canonical" href="   ">`);
 
     expect((await page.evaluate(readPageMetadata)).canonicalUrl).toBeNull();
   });
 
-  test("uses the first usable link", async ({ page }) => {
+  test("uses the first usable link", async ({ openFixture, page }) => {
     await openFixture(
-      page,
       `<link rel="canonical" href="">
        <link rel="canonical" href="https://fixture.test/first">
        <link rel="canonical" href="https://fixture.test/second">`,
@@ -168,15 +233,14 @@ test.describe("the canonical link", () => {
   });
 });
 
-test("reads a meta description whatever the case of its name", async ({ page }) => {
-  await openFixture(page, `<meta name="Description" content="Capitalized name.">`);
+test("reads a meta description whatever the case of its name", async ({ openFixture, page }) => {
+  await openFixture(`<meta name="Description" content="Capitalized name.">`);
 
   expect((await page.evaluate(readPageMetadata)).description).toBe("Capitalized name.");
 });
 
-test("treats values that are only whitespace as absent", async ({ page }) => {
+test("treats values that are only whitespace as absent", async ({ openFixture, page }) => {
   await openFixture(
-    page,
     `<title>   </title>
      <link rel="canonical" href="   ">
      <meta name="description" content=" &#9; &#10; ">
@@ -192,11 +256,12 @@ test("treats values that are only whitespace as absent", async ({ page }) => {
 });
 
 test("returns a surrogate pair at the cap boundary whole, for the popup to truncate", async ({
+  openFixture,
   page,
 }) => {
   const grin = "😀";
   const title = `${"a".repeat(CAPTURE_CAPS.og_title - 1)}${grin}${"b".repeat(10)}`;
-  await openFixture(page, `<meta property="og:title" content="${title}">`);
+  await openFixture(`<meta property="og:title" content="${title}">`);
 
   const { ogTitle } = await page.evaluate(readPageMetadata);
 

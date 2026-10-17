@@ -87,9 +87,11 @@ function stringsIn(result: unknown): RawMetadata {
   return strings;
 }
 
-// What the page says about itself. The tab's title stands in for the page's own when the page
-// can't be scripted (browser pages and the extension stores refuse executeScript) or doesn't
-// give one.
+// What the page says about itself. The tab's title stands in for the page's own only when the
+// page can't be scripted (browser pages and the extension stores refuse executeScript) or the
+// result has no string document title. A page without a title gives "", which wins: for an
+// untitled page Chrome's tab title is the host and path, which is worse than the form's
+// fallback, the full address.
 async function pageMetadata(api: PopupBrowser, tab: ActiveTab): Promise<RawMetadata> {
   const fromTab: RawMetadata = tab.title === undefined ? {} : { documentTitle: tab.title };
   if (tab.id === undefined) {
