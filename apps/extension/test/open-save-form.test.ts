@@ -1,4 +1,4 @@
-import { CAPTURE_CAPS, SENSITIVE_URL_EXPLANATIONS } from "@haystack/schemas";
+import { CAPTURE_CAPS, SAVE_URL_BUDGET, SENSITIVE_URL_EXPLANATIONS } from "@haystack/schemas";
 import { describe, expect, it } from "vite-plus/test";
 import {
   type ActiveTab,
@@ -469,4 +469,235 @@ describe("openSaveForm", () => {
       expect(fake.created).toEqual([]);
     });
   }
+});
+
+describe("the save URL's length budget", () => {
+  // The optional fields in the order the plan drops them, written out here on purpose so that
+  // a change to the order in the popup fails a test.
+  const DROP_ORDER = [
+    "og_description",
+    "description",
+    "og_title",
+    "og_site_name",
+    "canonical_url",
+  ] as const;
+
+  type Fields = Record<string, string>;
+
+  // The length of the save URL for these query fields, built the way a browser serializes a
+  // query (`URLSearchParams`), with the origin and `/save?` counted.
+  function lengthOf(fields: Fields): number {
+    return `${ORIGIN}/save?${new URLSearchParams(fields).toString()}`.length;
+  }
+
+  // Text that encodes to exactly `chars` characters in a save URL: each "€" (three UTF-8
+  // bytes) to nine, and each "x" to one.
+  function encodedText(chars: number): string {
+    return "€".repeat(Math.floor(chars / 9)) + "x".repeat(chars % 9);
+  }
+
+  // How many characters a value takes in a save URL, without its name.
+  function encodedLength(value: string): number {
+    return new URLSearchParams({ a: value }).toString().length - "a=".length;
+  }
+
+  const PREFIX = "https://example.com/";
+
+  // An https address that encodes to exactly `chars` characters, at least the prefix's: each
+  // "/" encodes to three, and "a" to one.
+  function address(chars: number, prefix = PREFIX): string {
+    const rest = chars - encodedLength(prefix);
+    return `${prefix}${"/".repeat(Math.floor(rest / 3))}${"a".repeat(rest % 3)}`;
+  }
+
+  // An https address of exactly the cap in code units, made of the characters that encode to
+  // the most in a save URL.
+  function addressAtCap(): string {
+    const url = `${PREFIX}${"/".repeat(CAPTURE_CAPS.url - PREFIX.length)}`;
+    expect(url).toHaveLength(CAPTURE_CAPS.url);
+    return url;
+  }
+
+  // Maps the payload's query names back to what the page returns.
+  function pageMetadata(fields: Fields): PageMetadata {
+    return metadata({
+      canonicalUrl: fields.canonical_url ?? null,
+      description: fields.description ?? null,
+      documentTitle: fields.title ?? "",
+      ogTitle: fields.og_title ?? null,
+      ogDescription: fields.og_description ?? null,
+      ogSiteName: fields.og_site_name ?? null,
+    });
+  }
+
+  // Every field a page can give, each at a size that leaves room to tune the total with the
+  // address. The sizes are encoded characters.
+  function everyField(overrides: Fields = {}): Fields {
+    return {
+      canonical_url: address(1200, "https://example.com/canonical"),
+      title: encodedText(1800),
+      description: encodedText(900),
+      og_title: encodedText(900),
+      og_description: encodedText(900),
+      og_site_name: encodedText(450),
+      ...overrides,
+    };
+  }
+
+  // A page whose save URL is exactly `total` characters once the fields in `gone` are left
+  // out, with the address sized to make it so.
+  function pageAt(total: number, gone: readonly string[], overrides: Fields = {}) {
+    const fields = everyField(overrides);
+    const remaining = { ...fields };
+    for (const field of gone) {
+      delete remaining[field];
+    }
+    const shortest = lengthOf({ url: PREFIX, ...remaining });
+    const url = address(encodedLength(PREFIX) + total - shortest);
+    expect(lengthOf({ url, ...remaining })).toBe(total);
+    return { url, fields };
+  }
+
+  async function open(url: string, fields: Fields) {
+    const fake = fakeBrowser({ tab: tabAt(url), injected: pageMetadata(fields) });
+    const outcome = await openSaveForm(fake.api, ORIGIN);
+    expect(outcome.opened).toBe(true);
+    const saved = fake.created[0] ?? "";
+    return { saved, parameters: saveParameters(saved) };
+  }
+
+  // What the save URL carries once `dropped` optional fields of the order are gone, and the
+  // fields in `alsoGone`.
+  function without(
+    fields: Fields,
+    url: string,
+    dropped: number,
+    alsoGone: readonly string[] = [],
+  ): Fields {
+    const kept: Fields = { url, ...fields };
+    for (const field of [...DROP_ORDER.slice(0, dropped), ...alsoGone]) {
+      delete kept[field];
+    }
+    return kept;
+  }
+
+  it("is the 8,000 characters the plan sets", () => {
+    expect(SAVE_URL_BUDGET).toBe(8000);
+  });
+
+  describe("drops the optional fields in order, and stops as soon as the URL fits", () => {
+    // `dropped` is how many fields of the order have to go for the URL to fit. A URL of exactly
+    // the budget fits, and one more character does not.
+    const rows = DROP_ORDER.flatMap((_, dropped) => [
+      { dropped, total: SAVE_URL_BUDGET, goes: dropped },
+      { dropped, total: SAVE_URL_BUDGET + 1, goes: dropped + 1 },
+    ]);
+
+    it.each(rows)(
+      "drops $goes field(s) when the URL is $total characters after $dropped",
+      async ({ dropped, total, goes }) => {
+        const { url, fields } = pageAt(total, DROP_ORDER.slice(0, dropped));
+
+        const { saved, parameters } = await open(url, fields);
+
+        expect(parameters).toEqual(without(fields, url, goes));
+        expect(saved.length).toBeLessThanOrEqual(SAVE_URL_BUDGET);
+      },
+    );
+
+    it("leaves a URL that is under the budget as it is", async () => {
+      const { url, fields } = pageAt(SAVE_URL_BUDGET - 500, []);
+
+      const { parameters } = await open(url, fields);
+
+      expect(parameters).toEqual({ url, ...fields });
+    });
+
+    it("sends the address and the title when every optional field has to go", async () => {
+      const { url, fields } = pageAt(SAVE_URL_BUDGET + 1, DROP_ORDER.slice(0, -1));
+
+      const { parameters } = await open(url, fields);
+
+      expect(parameters).toEqual({ url, title: fields.title });
+    });
+  });
+
+  describe("never drops or cuts the address", () => {
+    it("fits an address at its cap with the longest title, and drops the rest", async () => {
+      const url = addressAtCap();
+      const fields = {
+        canonical_url: address(2000),
+        title: "€".repeat(CAPTURE_CAPS.title),
+        description: "€".repeat(CAPTURE_CAPS.description),
+        og_title: "€".repeat(CAPTURE_CAPS.og_title),
+        og_description: "€".repeat(CAPTURE_CAPS.og_description),
+        og_site_name: "€".repeat(CAPTURE_CAPS.og_site_name),
+      };
+
+      const { saved, parameters } = await open(url, fields);
+
+      expect(parameters).toEqual({ url, title: fields.title });
+      expect(saved.length).toBeLessThanOrEqual(SAVE_URL_BUDGET);
+    });
+
+    it("fits an address at its cap on its own", async () => {
+      const url = addressAtCap();
+      const fake = fakeBrowser({ tab: tabAt(url), injected: metadata() });
+
+      await openSaveForm(fake.api, ORIGIN);
+
+      expect(saveParameters(fake.created[0] ?? "")).toEqual({ url });
+      expect(fake.created[0]?.length).toBeLessThanOrEqual(SAVE_URL_BUDGET);
+    });
+  });
+
+  describe("measures text as it is encoded", () => {
+    // Each kind is padded between two letters so that it survives trimming. A space is one
+    // character in a query ("+"), and the others are two, six, nine and twelve once
+    // percent-encoded. A measure of the raw text, or of `encodeURIComponent`'s output for a
+    // space ("%20"), gets the total wrong, so the exact boundary shows it.
+    const kinds = [
+      ["spaces", " ", 250],
+      ["accented letters", "é", 140],
+      ["Chinese characters", "字", 90],
+      ["emoji", "😀", 50],
+    ] as const;
+
+    for (const [kind, character, count] of kinds) {
+      const description = `a${character.repeat(count)}a`;
+
+      it(`keeps ${kind} at exactly the budget`, async () => {
+        const { url, fields } = pageAt(SAVE_URL_BUDGET, [], { og_description: description });
+
+        const { parameters } = await open(url, fields);
+
+        expect(parameters.og_description).toBe(description);
+      });
+
+      it(`drops the next field for ${kind} one character over the budget`, async () => {
+        const { url, fields } = pageAt(SAVE_URL_BUDGET + 1, [], { og_description: description });
+
+        const { parameters } = await open(url, fields);
+
+        expect(parameters).toEqual(without(fields, url, 1));
+      });
+    }
+  });
+
+  describe("runs on the payload that is sent", () => {
+    it("counts a canonical URL that carries a secret as already gone", async () => {
+      // With this canonical URL the save URL is over the budget by its size. It is dropped
+      // for the secret, so the fields that would otherwise go are kept.
+      const secret = address(1200, "https://example.com/?api_key=secret-value");
+      const { url, fields } = pageAt(SAVE_URL_BUDGET, ["canonical_url"], {
+        canonical_url: secret,
+      });
+      expect(lengthOf({ url, ...fields })).toBeGreaterThan(SAVE_URL_BUDGET);
+
+      const { saved, parameters } = await open(url, fields);
+
+      expect(parameters).toEqual(without(fields, url, 0, ["canonical_url"]));
+      expect(saved).not.toContain("secret-value");
+    });
+  });
 });

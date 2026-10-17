@@ -5,7 +5,7 @@ import * as v from "valibot";
 // Caps in UTF-16 code units (String.prototype.length), so an emoji counts as 2. The extension
 // truncates to these caps without splitting a surrogate pair, then validates; anything longer
 // is rejected. The caps alone do not keep the save URL under Cloudflare's 16 KB limit: the
-// extension also checks the encoded length (see the plan).
+// extension also keeps the encoded save URL within SAVE_URL_BUDGET (see the plan).
 export const CAPTURE_CAPS = {
   url: 2048,
   canonical_url: 2048,
@@ -15,6 +15,16 @@ export const CAPTURE_CAPS = {
   og_description: 300,
   og_site_name: 100,
 } as const;
+
+/**
+ * The longest save URL, in characters, that the extension opens without dropping optional
+ * fields. The Worker re-encodes a signed-out `/save` request into the sign-in redirect's
+ * `return_to`, so each `%` in the save URL becomes `%25` and each `+` (a space) becomes `%2B`,
+ * and the redirect is longer than the save URL. 8,000 keeps the longest redirect the caps allow
+ * under Cloudflare's URL limit (see the plan). The Worker's test uses the same number, so the
+ * two cannot disagree.
+ */
+export const SAVE_URL_BUDGET = 8000;
 
 // The URL parser silently strips leading control characters, removes tab, CR, and LF
 // anywhere, trims trailing spaces, and percent-encodes inner ones. The stored URL is the

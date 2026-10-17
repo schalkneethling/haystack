@@ -4,6 +4,7 @@ export {
   CapturePayload,
   type CaptureValidation,
   isHttpsUrl,
+  SAVE_URL_BUDGET,
   validateCapturePayload,
 } from "./capture-payload.ts";
 export {
