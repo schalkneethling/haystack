@@ -15,7 +15,8 @@ import { createTestHarness } from "wrangler";
 // Cloudflare's "Request and response limits" table on
 // https://developers.cloudflare.com/workers/platform/limits/ gives the URL size as "16 KB". The
 // page does not say whether a KB is 1,000 or 1,024 bytes, so the test holds the redirect to the
-// smaller 16,000.
+// smaller 16,000. The limit is in bytes and the test counts UTF-16 code units, which is the same
+// number because the redirect is pure ASCII (the test checks that too).
 const CLOUDFLARE_URL_LIMIT = 16_000;
 
 // The origin the extension is built with. The budget counts it, and a browser resolves the
@@ -45,8 +46,8 @@ function saveUrlLength(fields: Record<string, string>): number {
 
 // An address of `units` code units. Each "/" is encoded to "%2F" in the save URL, which the
 // redirect encodes again to "%252F".
-function address(units: number, scheme = "https"): string {
-  const prefix = `${scheme}://example.com/`;
+function address(units: number): string {
+  const prefix = "https://example.com/";
   return prefix + "/".repeat(units - prefix.length);
 }
 
@@ -109,10 +110,11 @@ describe("a save URL at the budget", () => {
 
       expect(response.status).toBe(302);
       const location = response.headers.get("location") ?? "";
-      expect(location).toBe(`/auth/sign-in?return_to=${encodeURIComponent(path)}`);
       // The browser resolves the Location against the origin it asked, so this is the full URL
       // it requests next. The sign-in then keeps the return target in D1, not in a URL.
       const requested = new URL(location, ORIGIN);
+      expect(requested.pathname).toBe("/auth/sign-in");
+      expect(requested.href).toMatch(/^[\x21-\x7e]+$/);
       expect(requested.href.length).toBeLessThan(CLOUDFLARE_URL_LIMIT);
       expect(requested.searchParams.get("return_to")).toBe(path);
     },

@@ -138,19 +138,24 @@ function saveUrl(origin: string, payload: CapturePayload): string {
   return `${origin}/save?${parameters.toString()}`;
 }
 
+// The fields that can be dropped: every one but the address and the title. The address is never
+// dropped or cut, and the title is at most 200 code units, which encode to at most 1,800
+// characters.
+type DroppableField = Exclude<CaptureField, "url" | "title">;
+
 // The optional fields dropped, in this order, while the save URL is over the budget (the order
-// is the plan's, in "Captured payload from the extension"). `url` is not here, because the
-// address is never dropped or cut. `title` is not either: it is at most 200 code units, which
-// encode to at most 1,800 characters.
+// is the plan's, in "Captured payload from the extension").
 const DROP_ORDER = [
   "og_description",
   "description",
   "og_title",
   "og_site_name",
   "canonical_url",
-] as const satisfies readonly CaptureField[];
+] as const satisfies readonly DroppableField[];
 
-function without(payload: CapturePayload, field: CaptureField): CapturePayload {
+// The cast is sound because `url` is the payload's only required field, and DroppableField
+// excludes it, so what is left after removing a field is still a CapturePayload.
+function without(payload: CapturePayload, field: DroppableField): CapturePayload {
   return Object.fromEntries(
     Object.entries(payload).filter(([name]) => name !== field),
   ) as CapturePayload;

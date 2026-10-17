@@ -510,6 +510,14 @@ describe("the save URL's length budget", () => {
     return `${prefix}${"/".repeat(Math.floor(rest / 3))}${"a".repeat(rest % 3)}`;
   }
 
+  // An https address of exactly the cap in code units, made of the characters that encode to
+  // the most in a save URL.
+  function addressAtCap(): string {
+    const url = `${PREFIX}${"/".repeat(CAPTURE_CAPS.url - PREFIX.length)}`;
+    expect(url).toHaveLength(CAPTURE_CAPS.url);
+    return url;
+  }
+
   // Maps the payload's query names back to what the page returns.
   function pageMetadata(fields: Fields): PageMetadata {
     return metadata({
@@ -616,8 +624,7 @@ describe("the save URL's length budget", () => {
 
   describe("never drops or cuts the address", () => {
     it("fits an address at its cap with the longest title, and drops the rest", async () => {
-      const url = `https://example.com/${"/".repeat(CAPTURE_CAPS.url - "https://example.com/".length)}`;
-      expect(url).toHaveLength(CAPTURE_CAPS.url);
+      const url = addressAtCap();
       const fields = {
         canonical_url: address(2000),
         title: "€".repeat(CAPTURE_CAPS.title),
@@ -634,7 +641,7 @@ describe("the save URL's length budget", () => {
     });
 
     it("fits an address at its cap on its own", async () => {
-      const url = `https://example.com/${"/".repeat(CAPTURE_CAPS.url - "https://example.com/".length)}`;
+      const url = addressAtCap();
       const fake = fakeBrowser({ tab: tabAt(url), injected: metadata() });
 
       await openSaveForm(fake.api, ORIGIN);
