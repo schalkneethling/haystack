@@ -108,12 +108,7 @@ describe("openSaveForm", () => {
     expect(fake.created).toEqual([]);
   });
 
-  for (const url of [
-    "http://example.com/article",
-    "chrome://newtab/",
-    "file:///Users/me/a.html",
-    "about:blank",
-  ]) {
+  for (const url of ["http://example.com/article", "chrome://newtab/", "file:///Users/me/a.html"]) {
     it(`refuses a page that isn't https (${url})`, async () => {
       const fake = fakeBrowser({ tab: tabAt(url) });
 
@@ -162,6 +157,10 @@ describe("openSaveForm", () => {
     expect(saveParameters(fake.created[0] ?? "")).toEqual({ url: "https://example.com/" });
   });
 
+  // The empty address is the case a user can reach. Chrome reports `url` as "" while a tab's
+  // first page has not arrived yet, for example a link opened in a new tab on a slow server
+  // (https://developer.chrome.com/docs/extensions/reference/api/tabs). No active tab,
+  // and a tab without `url`, are what the API's types allow.
   it("says it can't read the tab when there is no address", async () => {
     for (const tab of [undefined, { id: 1, title: "No URL" }, { id: 1, url: "", title: "" }]) {
       const fake = fakeBrowser(tab === undefined ? {} : { tab });

@@ -91,7 +91,11 @@ export async function buildExtension({ origin, browser, outDir }: BuildOptions):
     build: {
       outDir,
       emptyOutDir: true,
-      // The popup is one entry with no dynamic imports, so the polyfill would be dead code.
+      // The polyfill would be dead code. Every browser the manifest allows supports modulepreload
+      // natively, so the polyfill returns at once, and the popup is one entry with no dynamic
+      // imports, so there is nothing to preload. It is also the bundle's only `fetch` call,
+      // which anyone checking that the extension makes no requests of its own would have to
+      // rule out.
       modulePreload: { polyfill: false },
     },
     plugins: [manifestPlugin(manifest)],
