@@ -85,19 +85,23 @@ describe("manifestFor", () => {
     });
   });
 
-  // Firefox shows its built-in data consent from 140 on desktop and 142 on Android.
+  // Firefox shows its built-in data consent from 140 on desktop.
   it("keeps Firefox from installing the add-on where it can't show the data consent", () => {
-    const { gecko, gecko_android } = (
+    const { gecko } = (
       manifestFor("firefox", "1.2.3") as unknown as {
-        browser_specific_settings: {
-          gecko: { strict_min_version: string };
-          gecko_android: { strict_min_version: string };
-        };
+        browser_specific_settings: { gecko: { strict_min_version: string } };
       }
     ).browser_specific_settings;
 
     expect(Number.parseInt(gecko.strict_min_version)).toBeGreaterThanOrEqual(140);
-    expect(Number.parseInt(gecko_android.strict_min_version)).toBeGreaterThanOrEqual(142);
+  });
+
+  // Without a gecko_android key, Firefox offers the add-on on desktop only, and Haystack doesn't
+  // target Android.
+  it("is offered on desktop Firefox only", () => {
+    expect(manifestFor("firefox", "1.2.3")).not.toHaveProperty(
+      "browser_specific_settings.gecko_android",
+    );
   });
 });
 

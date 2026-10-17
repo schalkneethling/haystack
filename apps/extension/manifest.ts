@@ -33,7 +33,6 @@ type FirefoxManifest = Omit<chrome.runtime.ManifestV3, "minimum_chrome_version">
         required: [DataCollectionPermission, ...DataCollectionPermission[]];
       };
     };
-    gecko_android: { strict_min_version: string };
   };
 };
 
@@ -62,13 +61,11 @@ const FIREFOX_ADDON_ID = "bookmarks@schalkneethling.com";
 // https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/scripting/executeScript),
 // and the promise-based `browser` namespace, which Firefox has always had. A lower minimum would
 // let the add-on install on a Firefox that cannot show the consent the declaration below needs.
+//
+// The manifest has no `gecko_android` key on purpose. Without it, Firefox offers the add-on on
+// desktop only, which is what Haystack targets
+// (https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json/browser_specific_settings).
 const FIREFOX_MINIMUM_VERSION = "140.0";
-
-// Firefox for Android added built-in consent two releases later, in 142. Without its own minimum,
-// the Android one falls back to the desktop minimum, and web-ext lint warns that Android 140
-// cannot show the consent. Haystack doesn't target Android, so this only keeps the add-on from
-// installing on a version that would let it send data without consent.
-const FIREFOX_ANDROID_MINIMUM_VERSION = "142.0";
 
 // Chrome accepts one to four dot-separated integers from 0 to 65535, without leading zeros
 // and not all zero (https://developer.chrome.com/docs/extensions/reference/manifest/version).
@@ -118,7 +115,6 @@ export function manifestFor(browser: Browser, version: string): Manifest {
             // description (website content) to Haystack's own server.
             data_collection_permissions: { required: ["browsingActivity", "websiteContent"] },
           },
-          gecko_android: { strict_min_version: FIREFOX_ANDROID_MINIMUM_VERSION },
         },
       };
   }
