@@ -254,9 +254,9 @@ describe("an address the checks reject", () => {
     const fields = { url, title: "A page", og_site_name: "Example" };
     const response = await get(saveUrl(fields));
     expect(response.status).toBe(400);
-    expect(mainContent(await response.text())).toBe(
-      mainContent(await (await get(saveUrl({ url }))).text()),
-    );
+    const markup = await response.text();
+    expect(addressField(markup).get("aria-invalid")).toBe("true");
+    expect(mainContent(markup)).toBe(mainContent(await (await get(saveUrl({ url }))).text()));
   });
 
   // The address form has no field for the others, so they keep the validation page, which lists
@@ -298,6 +298,8 @@ describe("an address the checks reject", () => {
     expect(response.status).toBe(400);
     expect(response.headers.get("location")).toBeNull();
     const markup = await response.text();
+    expectAddressForm(markup);
+    expect(addressField(markup).get("aria-invalid")).toBe("true");
     expect(mainContent(markup)).toBe(mainContent(await (await get(saveUrl({ url }))).text()));
     expect(markup).not.toContain('action="/auth/sign-out"');
     expect(await rowCounts()).toEqual(before);
