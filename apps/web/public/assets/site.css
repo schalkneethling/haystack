@@ -272,7 +272,8 @@ main > :where(p, ul, div) {
 }
 
 /* An inset shadow doubles the border without moving the text. */
-.field [aria-invalid="true"] {
+.field [aria-invalid="true"],
+.address-input[aria-invalid="true"] {
   border-color: var(--color-danger);
   box-shadow: inset 0 0 0 1px var(--color-danger);
 }
@@ -296,6 +297,46 @@ main > :where(p, ul, div) {
   font-family: var(--font-mono);
   font-size: var(--text-small);
   overflow-wrap: anywhere;
+}
+
+/* The address form (#97). The field and Continue share a row, capped at the form pages' width,
+   and Continue moves under the field when the row has no room for both. */
+.address-form {
+  gap: var(--space-s);
+}
+
+.address-form-title {
+  font-size: var(--text-form-title);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: var(--leading-heading);
+}
+
+.hint {
+  color: var(--color-ink-muted);
+  font-size: var(--text-small);
+}
+
+.address-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-s);
+  max-inline-size: var(--width-narrow);
+}
+
+/* `min-inline-size: 0` lets the field shrink below its basis at 320 px instead of overflowing. */
+.address-input {
+  background-color: var(--color-field);
+  border: 1px solid var(--color-control-border);
+  border-radius: var(--radius-pill);
+  color: var(--color-ink);
+  flex: 1 1 18rem;
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  min-block-size: var(--target-primary);
+  min-inline-size: 0;
+  padding-block: var(--space-s);
+  padding-inline: 1.125rem;
 }
 
 /* Notices and messages. */
