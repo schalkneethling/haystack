@@ -97,6 +97,13 @@ export async function completeSignIn(
   codeVerifier: string,
   redirectUri: string,
 ): Promise<GoogleIdentity> {
+  // An empty secret is easy to store by mistake, and oauth4webapi would only report
+  // ERR_INVALID_ARG_VALUE, which does not say which value is empty.
+  if (!config.GOOGLE_CLIENT_SECRET) {
+    throw Object.assign(new Error("GOOGLE_CLIENT_SECRET is empty"), {
+      code: "GOOGLE_CLIENT_SECRET_EMPTY",
+    });
+  }
   const as = authorizationServer(config);
   const client: oauth.Client = { client_id: config.GOOGLE_CLIENT_ID };
   const options = requestOptions(config);

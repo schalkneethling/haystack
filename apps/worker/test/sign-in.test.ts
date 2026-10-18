@@ -119,6 +119,22 @@ function startFixture(): Promise<void> {
   });
 }
 
+// The Worker under test, with the given Google client secret.
+function workerInput(clientSecret: string) {
+  return {
+    configPath: new URL("../wrangler.jsonc", import.meta.url),
+    vars: {
+      ALLOWED_EMAILS: "owner@example.com, second@example.com",
+      GOOGLE_CLIENT_ID: CLIENT_ID,
+      GOOGLE_ISSUER: ISSUER,
+      GOOGLE_AUTHORIZATION_ENDPOINT: `${fixtureOrigin}/authorize`,
+      GOOGLE_TOKEN_ENDPOINT: `${fixtureOrigin}/token`,
+      GOOGLE_JWKS_URI: `${fixtureOrigin}/jwks`,
+    },
+    secrets: { GOOGLE_CLIENT_SECRET: clientSecret },
+  };
+}
+
 let server: ReturnType<typeof createTestHarness>;
 let workerOrigin: string;
 
@@ -127,20 +143,7 @@ beforeAll(async () => {
   otherKey = await generateKey();
   await startFixture();
   server = createTestHarness({
-    workers: [
-      {
-        configPath: new URL("../wrangler.jsonc", import.meta.url),
-        vars: {
-          ALLOWED_EMAILS: "owner@example.com, second@example.com",
-          GOOGLE_CLIENT_ID: CLIENT_ID,
-          GOOGLE_ISSUER: ISSUER,
-          GOOGLE_AUTHORIZATION_ENDPOINT: `${fixtureOrigin}/authorize`,
-          GOOGLE_TOKEN_ENDPOINT: `${fixtureOrigin}/token`,
-          GOOGLE_JWKS_URI: `${fixtureOrigin}/jwks`,
-        },
-        secrets: { GOOGLE_CLIENT_SECRET: CLIENT_SECRET },
-      },
-    ],
+    workers: [workerInput(CLIENT_SECRET)],
   });
   workerOrigin = (await server.listen()).url.origin;
   await server.getWorker().applyD1Migrations("DB");
@@ -525,5 +528,39 @@ describe("a rejected sign-in", () => {
     });
     await expectRejected(response, 403);
     expect(await response.text()).not.toContain("stranger@example.com");
+  });
+});
+
+describe("a Worker whose Google client secret is empty", () => {
+  let emptySecretServer: ReturnType<typeof createTestHarness>;
+
+  beforeAll(async () => {
+    emptySecretServer = createTestHarness({ workers: [workerInput("")] });
+    await emptySecretServer.listen();
+    await emptySecretServer.getWorker().applyD1Migrations("DB");
+  });
+
+  afterAll(async () => {
+    await emptySecretServer.close();
+  });
+
+  it("shows the sign-in failed page, names the empty secret in the log, and clears the flow cookie", async () => {
+    const start = await emptySecretServer.fetch("/auth/sign-in", { redirect: "manual" });
+    emptySecretServer.clearLogs();
+    const authorization = new URL(start.headers.get("location") ?? "").searchParams;
+    const flowCookie = (start.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+    const response = await emptySecretServer.fetch(
+      `/auth/callback?code=unused&state=${encodeURIComponent(authorization.get("state") ?? "")}`,
+      { headers: { cookie: flowCookie }, redirect: "manual" },
+    );
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("Sign-in failed");
+    expect(response.headers.get("set-cookie")).toContain("__Host-auth_flow=; Max-Age=0");
+    expect(emptySecretServer.getLogs()).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        message: "Sign-in failed: GOOGLE_CLIENT_SECRET_EMPTY",
+      }),
+    );
   });
 });
