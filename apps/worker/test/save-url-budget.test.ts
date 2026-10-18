@@ -33,6 +33,7 @@ const server = createTestHarness({
 
 beforeAll(async () => {
   await server.listen();
+  await server.getWorker().applyD1Migrations("DB");
 });
 
 afterAll(async () => {
@@ -105,7 +106,7 @@ describe("a save URL at the budget", () => {
   });
 
   it.each(cases)(
-    "still redirects to a sign-in URL under Cloudflare's limit: $name",
+    "redirects to a sign-in URL under Cloudflare's limit, which stores it unchanged: $name",
     async ({ fields }) => {
       const validation = validateCapturePayload(fields);
       if (!validation.ok) {
@@ -129,6 +130,17 @@ describe("a save URL at the budget", () => {
       expect(requested.href).toMatch(/^[\x21-\x7e]+$/);
       expect(requested.href.length).toBeLessThan(CLOUDFLARE_URL_LIMIT);
       expect(requested.searchParams.get("return_to")).toBe(path);
+
+      // Sign-in screens the save link again before it stores it, and the rebuilt target is the
+      // same string. Only the redirect to Google is asked for, and it is not followed.
+      const DB = (await server.getWorker().getEnv()).DB;
+      await DB.prepare("DELETE FROM auth_flows").run();
+      const signIn = await server.fetch(requested.pathname + requested.search, {
+        redirect: "manual",
+      });
+      expect(signIn.status).toBe(302);
+      const { results } = await DB.prepare("SELECT return_to FROM auth_flows").all();
+      expect(results).toEqual([{ return_to: path }]);
     },
   );
 });
