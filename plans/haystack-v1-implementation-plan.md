@@ -609,6 +609,57 @@ If only one question is asked, the other column in `search_answers` has no value
 
 Write a small typed client with `fetch`. It sends the request, validates the response with Valibot, and retries with exponential backoff on `429` and `529`, as the API reference recommends. It also applies a client-side limiter below 1,200 requests per minute, and it estimates request size against both token budgets before sending (see "Jev model limits"). It surfaces `usage.input_tokens` for logging. The API key is only ever read server-side.
 
+## Design
+
+The interface follows the "Night field" direction, which Schalk chose from three directions on a design canvas (#99). It is a dark interface with a straw accent, set in Space Grotesk, with addresses in JetBrains Mono, and the saved links are cards in a grid. The palette follows the system's color scheme: the dark palette is the default, and a light palette replaces it when the system asks for light.
+
+**Where the CSS lives.** The styles are two plain files in `apps/web/public/assets`, served as static assets with no build step (#43). `tokens.css` holds the font faces and the design tokens, as custom properties on `:root`. `site.css` styles every page the Worker renders, and uses only those tokens. Every page links both, the tokens first, and `delete-dialog.js` gives the dialog it builds `site.css`'s classes. The file names are not hashed, which is fine, because the asset server sends `max-age=0, must-revalidate` with an ETag (see "Secrets and configuration"). The CSP gains exactly `style-src 'self'` and `font-src 'self'`, and nothing broader. Without `'unsafe-inline'`, no page can have a `style` attribute or a `<style>` block, and `apps/worker/test/pages.test.ts` checks the header and the markup for that.
+
+**Tokens.** `color-scheme: light dark` is set on `:root`, and one `@media (prefers-color-scheme: light)` block swaps the colors, so a stylesheet never names a color itself. The colors, dark then light:
+
+| Token                              | Dark                            | Light                           | Used for                                                    |
+| ---------------------------------- | ------------------------------- | ------------------------------- | ----------------------------------------------------------- |
+| `--color-ground`                   | `#121417`                       | `#F6F4EF`                       | the page background                                         |
+| `--color-surface`                  | `#1C1F24`                       | `#FFFFFF`                       | cards, forms and the dialog                                 |
+| `--color-raised`                   | `#23272D`                       | `#EFECE5`                       | secondary buttons and the notice box                        |
+| `--color-border`                   | `#343A42`                       | `#D9D4C9`                       | the edges of cards and forms, which are not controls        |
+| `--color-control-border`           | `#6B7178`                       | `#8A857B`                       | the edge of a field or a secondary button                   |
+| `--color-field`                    | ground                          | surface                         | a field's background                                        |
+| `--color-ink`                      | `#ECE8DF`                       | `#1A1C1F`                       | text                                                        |
+| `--color-ink-secondary`            | `#CFCAC0`                       | `#3D3A34`                       | descriptions and the notice in the form                     |
+| `--color-ink-muted`                | `#A9A49A`                       | `#5C5850`                       | dates, labels above the address, and the notice on the list |
+| `--color-accent`                   | `#E9C46A` (straw)               | `#7A5A00` (ochre)               | links, addresses and the focus ring                         |
+| `--color-accent-hover`             | `#F4DC9C`                       | `#5C4400`                       | a link under the pointer                                    |
+| `--color-primary`                  | `#E9C46A`                       | `#E9C46A`                       | the primary button and the current navigation link          |
+| `--color-primary-hover`            | `#F4DC9C`                       | `#F4DC9C`                       | the primary button under the pointer                        |
+| `--color-primary-border`           | straw                           | `#7A5A00`                       | the primary button's edge                                   |
+| `--color-on-primary`               | `#121417`                       | `#1A1C1F`                       | text on the primary button                                  |
+| `--color-danger`                   | `#FF8A7A`                       | `#B42318`                       | Delete, the invalid field and the alert's icon              |
+| `--color-danger-border`            | `#B5625A`                       | `#B42318`                       | the edge of a card's Delete button                          |
+| `--color-on-danger`                | `#121417`                       | `#FFFFFF`                       | text on the dialog's Delete button                          |
+| `--color-alert`, `-border`, `-ink` | `#3A2321`, `#6B3B35`, `#FFD2CB` | `#FDF0EE`, `#F0C2BB`, `#8A1A12` | the save form's error                                       |
+| `--color-backdrop`                 | `rgb(8 9 11 / 72%)`             | `rgb(26 28 31 / 45%)`           | behind the open dialog                                      |
+
+The other tokens are the type (body text at 17 px with a line height of 1.55, the `h1` at 40 px, weight 700 and letter spacing -0.03em, card titles at 19 px and weight 600), a spacing scale from 4 to 64 px, the radii (10 px for fields, 14 px for cards, 16 px for forms and the dialog, and pills for buttons), the target sizes, the focus ring, and the two content widths. Sizes are in `rem`, so they follow the reader's font size.
+
+The tokens are not registered with `@property`, which the "Search page" section asked for. A registered property needs an `initial-value` that does not depend on anything else, and a length in `rem` depends on the root font size, so only the colors could be registered. Registering only the colors would give the tokens file two styles for one job, so that is left for the search page to decide.
+
+**Fonts.** Both families are self-hosted, because the CSP allows fonts from this origin only. They come from Fontsource 5.3.0 (`@fontsource-variable/space-grotesk` and `@fontsource-variable/jetbrains-mono`, published from `fontsource/font-files` on 2026-07-19, a project that releases regularly). Each is the Latin subset of the variable font, because the variable file is smaller than the static weights the design needs: 22 KB against 52 KB for Space Grotesk's four weights, and 40 KB against 43 KB for JetBrains Mono's two. Both are under the SIL Open Font License 1.1, and the license files sit next to the fonts in `apps/web/public/assets/fonts` and are served with them. The files were copied from the npm tarballs, and nothing depends on the packages, so Dependabot does not update them. To update a font, copy `files/<family>-latin-wght-normal.woff2` and `LICENSE` from the new tarball. The faces use `font-display: swap`, the fallbacks are `system-ui, sans-serif` and `ui-monospace, monospace`, and the `unicode-range` is Fontsource's, so a character outside the subset falls back too.
+
+**The popup shares the tokens file.** `apps/extension/src/popup.css` imports `apps/web/public/assets/tokens.css` by its relative path, and the extension's Vite build inlines it and bundles the fonts it names. So the palette and the type have one source, the Worker's assets keep having no build step, and only the extension's build, which already exists, reads the file. Copying the tokens into the popup would duplicate knowledge that must change together. Making `apps/web` a workspace package that exports the file would name the dependency in a `package.json`, but it would add a package and change how knip sees `apps/web/public`, whose entry is set in the Calavera-managed `knip.json`. The minifier drops the license comments in the CSS, so `apps/extension/build.ts` also copies the fonts' license files into the build's `licenses/` folder, and a build test checks that each bundled font has one.
+
+**The header.** Every page has a header with the wordmark, which links to `/`. On a signed-in user's pages, it also has a `<nav aria-label="Main">` with "Saved links" (with `aria-current="page"` on that page) and a Sign out button. The button is in a `<form method="post" action="/auth/sign-out">`, so it works without JavaScript and passes the Origin check like any other form. Before this, nothing in the interface let a user sign out. The sign-in outcomes, the signed-out page, the not-found page for `/auth/*` routes (which never look up a session), and the invalid-link and refusal pages shown before sign-in have the wordmark only. `htmlResponse` takes the signed-in state, the width and the current navigation link, so each page says which header it gets. The header adds three Tab stops before the content on a signed-in page, and one on a signed-out page. Its landmarks are what a screen reader user skips it by, and there is no skip link.
+
+**Layout.** Form pages are 46rem wide, and the saved links page is 72rem, so its grid has room for columns. The header takes the width of its page's content, so the two line up. The saved links are an `<ol>` laid out with `grid-template-columns: repeat(auto-fill, minmax(min(18rem, 100%), 1fr))`. Each card shows the date, the title (the `h2` link), the address, the description, and the Delete button pinned to the bottom. The date used to come after the description in the markup, so it moved to the start: a visual order that differed from the reading order would fail WCAG 1.3.2 and 2.4.3. Moving by heading still lands on each title, and the date is the line before it. The cards are flex items, so they draw no list marker without `list-style: none`, which would make WebKit drop the list's role. The address form of #97 has its classes reserved in `site.css`, so that issue adds only markup.
+
+**Accessibility.** Every text color pair in the table meets 4.5:1 against the backgrounds it is used on, and each boundary that identifies a control meets 3:1 against what is next to it. The colors chosen for that are:
+
+- The card's Delete outline is `#B5625A` in the dark scheme (3.82:1 on the surface), because the design's `#5A3A36` was 1.65:1. In the light scheme it is the danger color, `#B42318` (6.57:1 on white), because the design's `#D99A93` was 2.33:1.
+- Fields and secondary buttons are outlined in `--color-control-border`: `#6B7178` is 3.74:1 on the dark ground and 3.35:1 on the dark surface, and `#8A857B` is 3.34:1 on the light ground and 3.67:1 on white.
+- Straw on white is 1.67:1, so in the light scheme the primary button and the current navigation link have an ochre edge (`#7A5A00`, 6.38:1 on white and 5.81:1 on the ground).
+
+Focus is a 3 px solid outline in the accent color, offset 3 px. Controls are at least 44 px high, the primary button 48 px, and the header's and the cards' buttons 40 px, which clears WCAG 2.5.8's 24 px. Addresses break anywhere (`overflow-wrap: anywhere`), and other text breaks inside long words, so nothing scrolls horizontally at 320 px (#33). The only motion is a short color transition on links and buttons, and it runs only under `prefers-reduced-motion: no-preference`. The save form's error icon is drawn in CSS, so a screen reader reads nothing extra in the alert.
+
 ## Search page
 
 The page is plain HTML, CSS, and JavaScript with no framework. The HTML is served by the Worker behind the session check; the CSS and JavaScript are static assets.
@@ -617,7 +668,7 @@ The page is plain HTML, CSS, and JavaScript with no framework. The HTML is serve
 
 **Voice.** A microphone button next to the search input starts browser speech recognition. The button is rendered only when the page detects support for `SpeechRecognition`; check the current support data for whether Chrome still needs the `webkitSpeechRecognition` prefix, and detect both if it does. Without support, the page is the plain text search, with no disabled control and no message. The page notes that in some browsers, including Chrome, speech recognition sends audio to the browser vendor's servers. The button has an accessible name, and it shows and announces when it is listening. Recognition errors (microphone permission denied, no speech detected, or a network failure) end listening and show a short message next to the input. The transcribed text is placed in the input for the user to review before searching. It is never submitted automatically. There is no control to choose a mode, and no stored preference, until a second voice mode exists.
 
-**CSS.** Follow the Shared First methodology. Define design tokens as custom properties registered with `@property`. Respect `prefers-color-scheme` and `prefers-reduced-motion`.
+**CSS.** Follow the Shared First methodology. Use the tokens and the stylesheet described under "Design", and decide there whether the color tokens are registered with `@property`. Respect `prefers-color-scheme` and `prefers-reduced-motion`.
 
 **Performance.** No blocking scripts, and one small module script. Results are rendered from JSON with DOM APIs, not `innerHTML` built from bookmark data.
 
@@ -988,6 +1039,15 @@ Set up in #11:
 - axe runs every rule, including the best-practice rules, with no `withTags` filter. The best-practice rules (landmarks, heading order) matter for server-rendered pages.
 - The Phase 6 run against production needs a different fixture.
 
+The design's browser tests (#99, in `apps/worker/e2e/design.e2e.ts`):
+
+- At a 320 px viewport, the signed-out page, the save form and its error state, and the recent saves list with its delete dialog open have no horizontal scroll (`document.documentElement.scrollWidth <= clientWidth`). The address and the title have no character a line could break at, so only `overflow-wrap` can keep them in the page (#33).
+- axe runs every rule in Playwright's `colorScheme: "dark"` and `"light"`, on the signed-out page, the save form and its error state, the list with the dialog open, and the validation and refusal pages. Each scan first checks the scheme's ground color on `body`, so it scanned the palette it names. The other browser tests run in Playwright's default, which is light. The popup's axe test scans both schemes too, with `emulateMedia`.
+- On the signed-out page and the save form, `body` is set in Space Grotesk, both fonts load where they are used, and there is no `securitypolicyviolation` event, no console error, and no request off the Worker's origin.
+- "Saved links" is the current page on the list only, and Sign out, without JavaScript, shows the signed-out page and ends the session. The check after it follows no redirect, so nothing goes to Google.
+- The integration tests check that every HTML response's CSP is exactly the expected one, that each page links `tokens.css` and then `site.css` and has no inline style, that only a signed-in page's header has the navigation and Sign out, that the assets are served with their content types and `nosniff`, and that the build output contains them.
+- The header comes before the content, so the two keyboard tests that pressed Tab once now expect the header's stops first: the wordmark on the signed-out page, and the wordmark, "Saved links" and Sign out on the save form.
+
 The extension's browser tests (#70):
 
 - They live in `apps/extension/e2e` and run in `vp run quality` with the other browser tests. They need Playwright's full Chromium (`channel: "chromium"`), which runs extensions headless. The headless shell has no `Extensions` protocol domain at all. Install it once with `vp -C apps/extension run e2e:install` (`playwright install --no-shell chromium`), and CI installs it before `quality`.
@@ -1118,7 +1178,7 @@ Deploy to a `workers.dev` subdomain, following "Deploys" under "Secrets and conf
 
 Daily use in Firefox needs a signed extension, because release builds of Firefox install unsigned extensions only temporarily. Sign it through addons.mozilla.org as an unlisted (self-distributed) add-on. An unlisted add-on is not published, so Q6 does not block it, but confirm that the name can change later. When installing the signed add-on, record what Firefox asks about data collection, and check that it names the two kinds the manifest declares (browsing activity and website content). The manual check in #71 loaded the add-on temporarily, and no prompt appeared. In Chrome, loading the unpacked extension in developer mode is enough for v1.
 
-Acceptance: Schalk saves real bookmarks from the extension in daily use, and they appear in the recent saves list.
+Acceptance: Schalk saves real bookmarks from the extension in daily use, and they appear in the recent saves list. Daily use also needs #99, the design of the Milestone 1 interface, which includes the reflow fix in #33, and #97, saving a link by typing or pasting its address. Without them, every page has the browser's default styles, and a link can be saved only from a browser with the extension.
 
 ### Milestone 2: Enrichment
 
