@@ -181,11 +181,15 @@ describe("buildExtension", () => {
       const ground = /--color-ground:\s*(#[0-9a-f]+);/.exec(tokens)?.[1];
       expect(ground).toBeDefined();
       expect(styles.join("")).toContain(`--color-ground:${String(ground)}`);
-      for (const family of ["space-grotesk", "jetbrains-mono"]) {
-        expect(files.some((file) => file.startsWith(join("assets", `${family}-latin-wght`)))).toBe(
-          true,
-        );
-        expect(files).toContain(join("licenses", `${family}-OFL.txt`));
+      // The popup's text is set in Space Grotesk.
+      const fonts = files.filter((file) => file.endsWith(".woff2"));
+      expect(fonts.some((file) => file.startsWith(join("assets", "space-grotesk-")))).toBe(true);
+      // Every font the build bundles needs its license, whichever ones the tokens name. That
+      // includes JetBrains Mono, which the popup never uses.
+      for (const font of fonts) {
+        const family = /^assets[/\\](.+)-latin-wght-normal-/.exec(font)?.[1];
+        expect(family, font).toBeDefined();
+        expect(files).toContain(join("licenses", `${String(family)}-OFL.txt`));
       }
     });
 
