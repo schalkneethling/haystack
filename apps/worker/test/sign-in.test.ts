@@ -394,6 +394,18 @@ describe("a save link given to sign-in directly", () => {
     expect(signedIn.headers.get("location")).toBe("/");
   });
 
+  // safeReturnTarget resolves dot segments and drops tabs before sign-in reads the path, so the
+  // path it compares is the one the router compares.
+  it.each(["/x/../save", "/./save", "/sa\tve"])(
+    "screens a save link written as %j",
+    async (path) => {
+      await startSignIn(
+        `${path}?url=${encodeURIComponent(`${article}?access_token=secret-value`)}`,
+      );
+      expect(await storedReturnTargets()).toEqual([{ return_to: "/" }]);
+    },
+  );
+
   it("stores / for a bare /save", async () => {
     await startSignIn("/save");
     expect(await storedReturnTargets()).toEqual([{ return_to: "/" }]);

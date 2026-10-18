@@ -197,7 +197,7 @@ async function handleAppRoute(
 
 // Where sign-in returns to, or the page to show instead of signing in. A signed-out GET or HEAD
 // /save is screened first, so a link that sign-in would not keep gets its page now, and no
-// Location header carries a link that holds a secret (plan, "Sensitive URLs").
+// Location header carries a link the check flags (plan, "Sensitive URLs").
 function beforeSignIn(request: Request): { page: Response } | { returnTo: string } {
   const url = new URL(request.url);
   if (url.pathname === "/save" && isReadRequest(request)) {
