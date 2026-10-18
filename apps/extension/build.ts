@@ -2,7 +2,7 @@
 // plans/haystack-v1-implementation-plan.md. The Haystack origin is a build-time constant, so
 // local development and production get separate builds. Run as a script, it builds Chrome into
 // dist/chrome and Firefox into dist/firefox, both from HAYSTACK_ORIGIN.
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { isHttpsOrLoopbackUrl, LOOPBACK_HOSTS } from "@haystack/schemas";
 import { build, type Plugin } from "vite-plus";
@@ -39,6 +39,27 @@ export function parseHaystackOrigin(value: string | undefined): string {
     );
   }
   return url.origin;
+}
+
+// The popup's stylesheet imports the site's tokens, and the build bundles the fonts they name.
+// The fonts are under the SIL Open Font License, which asks for the license to travel with
+// them, and the minifier drops the license comments, so the license files are copied too.
+const FONT_LICENSES = new URL("../web/public/assets/fonts/", import.meta.url);
+
+function fontLicensesPlugin(): Plugin {
+  return {
+    name: "haystack-font-licenses",
+    async generateBundle() {
+      const names = (await readdir(FONT_LICENSES)).filter((name) => name.endsWith("-OFL.txt"));
+      for (const name of names) {
+        this.emitFile({
+          type: "asset",
+          fileName: `licenses/${name}`,
+          source: await readFile(new URL(name, FONT_LICENSES)),
+        });
+      }
+    },
+  };
 }
 
 // Writes manifest.json into the build, so the manifest exists only as the typed object.
@@ -98,7 +119,7 @@ export async function buildExtension({ origin, browser, outDir }: BuildOptions):
       // rule out.
       modulePreload: { polyfill: false },
     },
-    plugins: [manifestPlugin(manifest)],
+    plugins: [manifestPlugin(manifest), fontLicensesPlugin()],
   });
 }
 
