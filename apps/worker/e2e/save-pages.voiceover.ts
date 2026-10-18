@@ -1,5 +1,6 @@
 // What VoiceOver says on the save pages that report a problem: the page for an invalid link,
-// the refusal page for a link with a secret in it, and the save form after a rejected title.
+// the refusal page for a link with a secret in it, the save form after a rejected title, and the
+// address form after a rejected address (#97).
 // Each check matches one part of a phrase, ignoring case, and the parts must come in the order
 // the user hears them. A change in how VoiceOver words a role fails the test and is worth
 // reviewing.
@@ -10,6 +11,10 @@
 // either: it is in the page when it loads, so the user reaches it by moving to it. The field
 // reads the error as its description, which works only because the field points at a plain
 // paragraph inside the alert, not at the alert itself (see "Save flow" in the plan).
+//
+// Since #97, GET /save shows the address form for a rejected address, so the validation page is
+// reached with a title over its cap, and the refusal page with a tampered POST.
+import { INVALID_LINK, openRefusalPage } from "./rejected-save-pages.ts";
 import { expect, test } from "./voiceover-fixtures.ts";
 
 function saveUrl(values: Record<string, string>): string {
@@ -46,7 +51,7 @@ test("an invalid save link announces its title, then the heading and the reasons
   page,
   voiceOver,
 }) => {
-  await page.goto(saveUrl({ url: "javascript:alert(1)" }));
+  await page.goto(INVALID_LINK);
   await page.getByRole("heading", { level: 1 }).waitFor();
   await voiceOver.navigateToWebContent();
 
@@ -72,7 +77,7 @@ test("an invalid save link announces its title, then the heading and the reasons
     /\bheading\b.*\blevel 1\b.*this link can't be saved/i,
     /values haystack can't use/i,
     /\blist\b/i,
-    /the address of the page/i,
+    /the page title/i,
   ]);
 });
 
@@ -80,8 +85,7 @@ test("a save link with a secret announces its title, then the heading and the re
   page,
   voiceOver,
 }) => {
-  await page.goto(saveUrl({ url: "https://example.com/?access_token=secret-value" }));
-  await page.getByRole("heading", { level: 1 }).waitFor();
+  await openRefusalPage(page);
   await voiceOver.navigateToWebContent();
 
   await voiceOver.stopInteracting({ capture: true });
@@ -158,4 +162,51 @@ test("a rejected title announces the page, then the error, then the field as inv
   // The error is the field's description, so the user hears it without moving away from the field.
   expect(field).toMatch(/enter a title of up to 200 characters/i);
   expect(field).toMatch(/\bedit text\b/i);
+});
+
+test("a rejected address announces the page, then the error, then the field as invalid", async ({
+  page,
+  voiceOver,
+}) => {
+  await page.goto("/save");
+  // The browser's own checks are off, so an http: address reaches the server's.
+  await page.getByLabel("Save a link").fill("http://example.com/voiceover-address");
+  await voiceOver.navigateToWebContent();
+
+  // The user presses Continue with VoiceOver, so the page that loads is a result of their action.
+  await page.getByRole("button", { name: "Continue" }).focus();
+  await voiceOver.perform(voiceOver.keyboardCommands.moveCursorToKeyboardFocus);
+  await voiceOver.clearSpokenPhraseLog();
+  await voiceOver.act({ capture: true });
+  await expect(page).toHaveTitle("Check the address - Haystack");
+  // The page starts with its header, so VoiceOver can end this announcement with a hint about the
+  // banner. The title is part of the same announcement, so the whole log is searched.
+  expect((await voiceOver.spokenPhraseLog()).join(" ")).toMatch(/check the address/i);
+
+  // The page that loaded has no cursor position the test knows, so start from the first item of
+  // the page before moving by heading. The heading holds the field's label, so VoiceOver may read
+  // the label as an item of its own before the error, and the error is looked for in the next two
+  // items.
+  await voiceOver.navigateToWebContent();
+  await voiceOver.clearSpokenPhraseLog();
+  await voiceOver.nextHeading();
+  await voiceOver.next();
+  await voiceOver.next();
+  expectInOrder(await voiceOver.spokenPhraseLog(), [
+    /\bheading\b.*\blevel 1\b.*save a link|save a link.*\bheading\b.*\blevel 1\b/i,
+    /haystack saves only secure pages/i,
+  ]);
+
+  // The field gets keyboard focus, and the VoiceOver cursor is moved to it, as in the test of the
+  // rejected title above, which says why.
+  await page.getByLabel("Save a link").focus();
+  await voiceOver.clearSpokenPhraseLog();
+  await voiceOver.perform(voiceOver.keyboardCommands.moveCursorToKeyboardFocus, { capture: true });
+  const field = (await voiceOver.spokenPhraseLog()).join(" ");
+  expect(field).toMatch(/\bsave a link\b/i);
+  expect(field).toMatch(/\binvalid data\b/i);
+  // The error is the field's description, so the user hears it without moving away from the field.
+  expect(field).toMatch(/haystack saves only secure pages/i);
+  // The typed address was kept, so the user can correct it.
+  expect(field).toMatch(/voiceover-address/i);
 });
