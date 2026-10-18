@@ -76,7 +76,7 @@ describe("GET /", () => {
     const markup = await listMarkup();
     expect(markup).toContain('<h1 id="list-heading">Saved links</h1>');
     expect(markup).toContain("You haven't saved any links yet.");
-    expect(markup).not.toContain("<ol>");
+    expect(markup).not.toContain("<ol");
     await expectValidHtml(markup);
   });
 
@@ -105,8 +105,8 @@ describe("GET /", () => {
     expect(markup).toContain(
       `<h2 id="title-${id}"><a href="https://example.com/guide?page=2" rel="noreferrer">A guide</a></h2>`,
     );
-    expect(markup).toContain("<p>https://example.com/guide?page=2</p>");
-    expect(markup).toContain("<p>How to do the thing.</p>");
+    expect(markup).toContain('<p class="address">https://example.com/guide?page=2</p>');
+    expect(markup).toContain('<p class="card-description">How to do the thing.</p>');
     expect(markup).toContain('<time datetime="2026-10-13T23:30:00.000Z">October 13, 2026</time>');
     await expectValidHtml(markup);
   });
@@ -115,7 +115,8 @@ describe("GET /", () => {
     await save("https://example.com/", { title: "Home" });
     const item =
       /<li id="bookmark-[^"]+"[^>]*>([\s\S]*?)<\/li>/.exec(await listMarkup())?.[1] ?? "";
-    expect(item.match(/<p>/g)).toHaveLength(2);
+    // The date and the address.
+    expect(item.match(/<p[\s>]/g)).toHaveLength(2);
   });
 
   it("renders a title and description containing markup as text, with the CSP header", async () => {
@@ -139,11 +140,11 @@ describe("GET /", () => {
     const markup = await listMarkup();
     expect(markup).toMatch(/<h2 id="title-[^"]+">Saved before https only<\/h2>/);
     expect(markup).not.toContain('href="http://example.com/old"');
-    expect(markup).toContain("<p>http://example.com/old</p>");
+    expect(markup).toContain('<p class="address">http://example.com/old</p>');
   });
 
   it("shows the sensitive URL notice", async () => {
-    expect(await listMarkup()).toContain('<p id="sensitive-notice">');
+    expect(await listMarkup()).toContain('<p id="sensitive-notice" class="notice">');
   });
 
   it(`shows the newest ${RECENT_SAVES_LIMIT} and says so when there are more`, async () => {
@@ -155,7 +156,9 @@ describe("GET /", () => {
     expect(itemIds(markup)).toEqual(ids.slice(1).reverse());
     expect(markup).toContain(`This list shows only your ${RECENT_SAVES_LIMIT} most recent links.`);
     // The dialog script reveals this after deleting every shown link; older ones remain.
-    expect(markup).toMatch(/<p id="empty-state" hidden>\s*You deleted every link shown here\./);
+    expect(markup).toMatch(
+      /<p id="empty-state" class="empty-state" hidden>\s*You deleted every link shown here\./,
+    );
     await expectValidHtml(markup);
   });
 
@@ -170,7 +173,9 @@ describe("GET /", () => {
 
   it("keeps line breaks in the description", async () => {
     await save("https://example.com/", { description: "First line\n<b>Second</b> line" });
-    expect(await listMarkup()).toContain("<p>First line<br>&lt;b&gt;Second&lt;/b&gt; line</p>");
+    expect(await listMarkup()).toContain(
+      '<p class="card-description">First line<br>&lt;b&gt;Second&lt;/b&gt; line</p>',
+    );
   });
 
   it("answers HEAD like GET", async () => {

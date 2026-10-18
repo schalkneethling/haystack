@@ -46,14 +46,15 @@ function item(save: RecentSave): SafeHtml {
     save.description === null
       ? null
       : html`
-        <p>${withLineBreaks(save.description)}</p>`;
+        <p class="card-description">${withLineBreaks(save.description)}</p>`;
+  // The date comes first, as the card shows it, so the reading order matches what is seen.
   // The button's name is "Delete" followed by the title, so a list of them is told apart.
   return html`<li id="bookmark-${save.id}">
+        <p class="card-date">Saved <time datetime="${saved.toISOString()}">${SAVED_DATE.format(saved)}</time></p>
         <h2 id="title-${save.id}">${savedLink(save.url, save.title)}</h2>
-        <p>${save.url}</p>${description}
-        <p>Saved <time datetime="${saved.toISOString()}">${SAVED_DATE.format(saved)}</time></p>
+        <p class="address">${save.url}</p>${description}
         <form method="post" action="${deleteAction(save.id)}">
-          <button type="submit" id="delete-${save.id}" aria-labelledby="delete-${save.id} title-${save.id}">Delete</button>
+          <button class="button button-small button-danger-outline" type="submit" id="delete-${save.id}" aria-labelledby="delete-${save.id} title-${save.id}">Delete</button>
         </form>
       </li>`;
 }
@@ -66,7 +67,7 @@ function list(saves: readonly RecentSave[], more: boolean): SafeHtml {
   const emptyText = more
     ? html`You deleted every link shown here. Reload the page to see your older links.`
     : html`You haven't saved any links yet. Links you save appear here, newest first.`;
-  const emptyState = html`<p id="empty-state"${saves.length === 0 ? null : html` hidden`}>
+  const emptyState = html`<p id="empty-state" class="empty-state"${saves.length === 0 ? null : html` hidden`}>
         ${emptyText}
       </p>`;
   if (saves.length === 0) {
@@ -77,7 +78,7 @@ function list(saves: readonly RecentSave[], more: boolean): SafeHtml {
     ? html`<p>This list shows only your ${RECENT_SAVES_LIMIT} most recent links.</p>
       `
     : null;
-  return html`${limitNote}<ol id="recent-saves">
+  return html`${limitNote}<ol id="recent-saves" class="cards">
         ${saves.map(item)}
       </ol>
       ${emptyState}`;
@@ -142,10 +143,10 @@ export async function showRecentSaves(
   return htmlResponse(
     outcome === null ? "Saved links" : `${outcome.title} - Saved links`,
     html`<h1 id="list-heading">Saved links</h1>
-      <div id="list-status" role="status">${outcome?.message}</div>
+      <div id="list-status" class="status" role="status">${outcome?.message}</div>
       ${SENSITIVE_NOTICE}
       ${list(saves, rows.length > RECENT_SAVES_LIMIT)}`,
     200,
-    [DELETE_DIALOG_SCRIPT],
+    { signedIn: true, width: "wide", current: "saved-links", scripts: [DELETE_DIALOG_SCRIPT] },
   );
 }

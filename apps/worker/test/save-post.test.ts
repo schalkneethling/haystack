@@ -158,7 +158,9 @@ describe("POST /save", () => {
     const markup = await response.text();
     // The alert wraps the error. The paragraph the field points at has no live-region role of its
     // own, because VoiceOver does not read the description of such an element.
-    expect(markup).toContain(`<div role="alert"><p id="save-error">${message}</p></div>`);
+    expect(markup).toContain(
+      `<div class="alert" role="alert"><p id="save-error">${message}</p></div>`,
+    );
     expect(markup).toMatch(
       new RegExp(`id="${id}"[^>]*aria-invalid="true" aria-describedby="save-error"`),
     );
@@ -269,7 +271,7 @@ describe("POST /save", () => {
     });
     expect(response.status).toBe(400);
     const markup = await response.text();
-    expect(markup).toContain('<form method="post" action="/save">');
+    expect(markup).toContain('<form class="panel" method="post" action="/save">');
     expect(markup).not.toContain('name="canonical_url"');
     expect(markup).not.toContain("secret-value");
     expect(await bookmarks()).toHaveLength(0);

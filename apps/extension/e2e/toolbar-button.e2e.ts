@@ -193,10 +193,19 @@ test.describe("a sensitive URL", () => {
       SENSITIVE_URL_EXPLANATIONS["credential-parameter"],
     );
 
-    // By default axe gathers its results in a new page, and Chromium closes a popup as soon as
-    // another page takes focus. Legacy mode runs axe in the page alone, and only skips
-    // cross-origin frames, which the popup doesn't have.
-    const results = await new AxeBuilder({ page: popup }).setLegacyMode().analyze();
-    expect(results.violations).toEqual([]);
+    // The popup follows the system's color scheme with the site's tokens, so it is scanned in
+    // both. The ground color shows that the scheme took effect before each scan.
+    for (const [colorScheme, ground] of [
+      ["dark", "rgb(18, 20, 23)"],
+      ["light", "rgb(246, 244, 239)"],
+    ] as const) {
+      await popup.emulateMedia({ colorScheme });
+      await expect(popup.locator("body")).toHaveCSS("background-color", ground);
+      // By default axe gathers its results in a new page, and Chromium closes a popup as soon
+      // as another page takes focus. Legacy mode runs axe in the page alone, and only skips
+      // cross-origin frames, which the popup doesn't have.
+      const results = await new AxeBuilder({ page: popup }).setLegacyMode().analyze();
+      expect(results.violations, colorScheme).toEqual([]);
+    }
   });
 });

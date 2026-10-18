@@ -52,8 +52,13 @@ test("an invalid save link announces its title, then the heading and the reasons
 
   // Leaving and entering the web content again is how a user hears the page title.
   await voiceOver.stopInteracting({ capture: true });
+  await voiceOver.clearSpokenPhraseLog();
   await voiceOver.interact({ capture: true });
-  expect(await voiceOver.lastSpokenPhrase()).toMatch(/this link can't be saved - haystack/i);
+  // The page starts with its header, so VoiceOver can end this announcement with a hint about the
+  // banner it lands on. The title is part of the same announcement, before that hint.
+  expect((await voiceOver.spokenPhraseLog()).join(" ")).toMatch(
+    /this link can't be saved - haystack/i,
+  );
 
   // Re-entering does not say where the cursor is, so start again from the first item of the page
   // before moving by heading.
@@ -80,8 +85,13 @@ test("a save link with a secret announces its title, then the heading and the re
   await voiceOver.navigateToWebContent();
 
   await voiceOver.stopInteracting({ capture: true });
+  await voiceOver.clearSpokenPhraseLog();
   await voiceOver.interact({ capture: true });
-  expect(await voiceOver.lastSpokenPhrase()).toMatch(/this link can't be saved - haystack/i);
+  // The page starts with its header, so VoiceOver can end this announcement with a hint about the
+  // banner it lands on. The title is part of the same announcement, before that hint.
+  expect((await voiceOver.spokenPhraseLog()).join(" ")).toMatch(
+    /this link can't be saved - haystack/i,
+  );
 
   // Re-entering does not say where the cursor is, so start again from the first item of the page
   // before moving by heading.

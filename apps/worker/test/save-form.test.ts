@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vite-plus
 import { createTestHarness } from "wrangler";
 import { generateSessionId } from "../src/auth/session-token.ts";
 import { seedBookmark, seedSignedInUser, type SeededUser } from "./seed.ts";
+import { mainContent } from "./main-content.ts";
 import { expectValidHtml } from "./validate-html.ts";
 
 const server = createTestHarness({
@@ -117,7 +118,9 @@ describe("GET /save without a session", () => {
       expect(signedOut.headers.get("location")).toBeNull();
       const markup = await signedOut.text();
       expect(markup).not.toContain("secret-value");
-      expect(markup).toBe(await (await getSave({ url })).text());
+      // The same page apart from the header, which has no navigation before sign-in.
+      expect(mainContent(markup)).toBe(mainContent(await (await getSave({ url })).text()));
+      expect(markup).not.toContain('action="/auth/sign-out"');
       expect(await rowCounts()).toEqual(before);
       await expectValidHtml(markup);
     },
@@ -171,7 +174,8 @@ describe("GET /save without a session", () => {
     const signedOut = await getPath(path);
     expect(signedOut.status).toBe(400);
     expect(signedOut.headers.get("location")).toBeNull();
-    expect(await signedOut.text()).toBe(await (await getPath(path, owner.cookie)).text());
+    const signedIn = await (await getPath(path, owner.cookie)).text();
+    expect(mainContent(await signedOut.text())).toBe(mainContent(signedIn));
     expect(await rowCounts()).toEqual(before);
   });
 
@@ -224,14 +228,16 @@ describe("GET /save", () => {
     const response = await getSave(article);
     expect(response.status).toBe(200);
     const markup = await response.text();
-    expect(markup).toContain('<form method="post" action="/save">');
+    expect(markup).toContain('<form class="panel" method="post" action="/save">');
     expect(await rowCounts()).toEqual(before);
     await expectValidHtml(markup);
   });
 
   it("shows and submits the URL with tracking parameters removed", async () => {
     const markup = await (await getSave(article)).text();
-    expect(markup).toContain('<span id="save-address">https://example.com/article?id=7#top</span>');
+    expect(markup).toContain(
+      '<span id="save-address" class="address">https://example.com/article?id=7#top</span>',
+    );
     expect(formValue(markup, "url")).toBe("https://example.com/article?id=7#top");
   });
 
@@ -382,7 +388,7 @@ describe("GET /save", () => {
     const response = await getSave({ ...article, canonical_url });
     expect(response.status).toBe(200);
     const markup = await response.text();
-    expect(markup).toContain('<form method="post" action="/save">');
+    expect(markup).toContain('<form class="panel" method="post" action="/save">');
     expect(markup).not.toContain('name="canonical_url"');
     expect(markup).not.toContain("secret-value");
     expect(formValue(markup, "url")).toBe("https://example.com/article?id=7#top");
@@ -427,6 +433,6 @@ describe("GET /save", () => {
       normalizeUrl("https://example.com/a"),
     );
     const markup = await (await getSave({ url: "https://example.com/a" })).text();
-    expect(markup).toContain('<form method="post" action="/save">');
+    expect(markup).toContain('<form class="panel" method="post" action="/save">');
   });
 });

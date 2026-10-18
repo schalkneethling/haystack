@@ -25,12 +25,16 @@ function element(tag, text) {
 
 function createDialog() {
   const dialog = /** @type {HTMLDialogElement} */ (element("dialog"));
+  // The classes are site.css's, as on the server-rendered pages.
+  dialog.className = "delete-dialog";
   const title = element("h2", "Delete this link?");
   title.id = "delete-dialog-heading";
   const name = element("p");
   name.id = "delete-dialog-name";
+  name.className = "delete-dialog-name";
   const notice = element("p", "Deleting is permanent. You can save the link again later.");
   notice.id = "delete-dialog-notice";
+  notice.className = "delete-dialog-notice";
   // The dialog itself takes focus when it opens (see the submit listener), so a screen reader
   // announces it before any button, and a stray Enter neither deletes nor cancels. tabindex -1
   // makes it focusable without adding it to the Tab order.
@@ -42,8 +46,10 @@ function createDialog() {
   dialog.setAttribute("aria-describedby", notice.id);
   const confirm = /** @type {HTMLButtonElement} */ (element("button", "Delete"));
   confirm.type = "button";
+  confirm.className = "button button-danger";
   const cancel = /** @type {HTMLButtonElement} */ (element("button", "Cancel"));
   cancel.type = "button";
+  cancel.className = "button";
   // Cancel comes first, so it is the first button Tab and a screen reader reach, and the one
   // showModal focuses if focusing the dialog fails.
   dialog.append(title, name, notice, cancel, confirm);

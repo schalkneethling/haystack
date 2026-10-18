@@ -53,6 +53,10 @@ describe("build output", () => {
     expect(files).toEqual(
       expect.arrayContaining([
         join("client", "assets", "delete-dialog.js"),
+        join("client", "assets", "tokens.css"),
+        join("client", "assets", "site.css"),
+        join("client", "assets", "fonts", "space-grotesk-latin-wght-normal.woff2"),
+        join("client", "assets", "fonts", "jetbrains-mono-latin-wght-normal.woff2"),
         join("client", "_headers"),
       ]),
     );

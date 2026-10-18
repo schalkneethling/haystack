@@ -2,6 +2,7 @@ import { normalizeUrl } from "@haystack/schemas";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
 import { createTestHarness } from "wrangler";
 import { seedBookmark, seedSignedInUser, type SeededUser } from "./seed.ts";
+import { mainContent } from "./main-content.ts";
 import { expectValidHtml } from "./validate-html.ts";
 
 const server = createTestHarness({
@@ -75,10 +76,13 @@ describe("POST /bookmarks/:id/delete", () => {
     const markup = await response.text();
     expect(markup).toContain("<h1>Delete this link?</h1>");
     expect(markup).toContain("<p><strong>Title:</strong> A guide</p>");
-    expect(markup).toContain(`<p><strong>Address:</strong> ${url}</p>`);
+    expect(markup).toContain(
+      `<p><strong>Address:</strong> <span class="address">${url}</span></p>`,
+    );
     expect(markup).toContain('<input type="hidden" name="confirm" value="yes">');
     expect(markup).toContain(`<a href="/#bookmark-${bookmarkId}">`);
-    expect(markup.match(/<button/g)).toHaveLength(1);
+    // The page's own button. The header's Sign out button is outside <main>.
+    expect(mainContent(markup).match(/<button/g)).toHaveLength(1);
     await expectValidHtml(markup);
     expect(await bookmarkIds()).toEqual([bookmarkId]);
   });
@@ -99,7 +103,9 @@ describe("POST /bookmarks/:id/delete", () => {
     const response = await postDelete(bookmarkId, confirmed);
     expect(response.status).toBe(200);
     const markup = await response.text();
-    expect(markup).toContain('<div id="list-status" role="status"><p>Deleted “A guide”.</p></div>');
+    expect(markup).toContain(
+      '<div id="list-status" class="status" role="status"><p>Deleted “A guide”.</p></div>',
+    );
     expect(markup).toContain("<title>Deleted “A guide” - Saved links - Haystack</title>");
     expect(markup).not.toContain(`bookmark-${bookmarkId}`);
     expect(markup).toContain(`bookmark-${other}`);
@@ -203,7 +209,7 @@ describe("the list's delete buttons", () => {
     const markup = await response.text();
     expect(markup).toContain(`<form method="post" action="/bookmarks/${bookmarkId}/delete">`);
     expect(markup).toContain(
-      `<button type="submit" id="delete-${bookmarkId}" aria-labelledby="delete-${bookmarkId} title-${bookmarkId}">Delete</button>`,
+      `<button class="button button-small button-danger-outline" type="submit" id="delete-${bookmarkId}" aria-labelledby="delete-${bookmarkId} title-${bookmarkId}">Delete</button>`,
     );
     expect(markup).toContain(`<h2 id="title-${bookmarkId}">`);
   });

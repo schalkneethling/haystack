@@ -120,6 +120,7 @@ describe("buildExtension", () => {
     let files: string[];
     let manifest: Record<string, unknown> & { action: { default_popup: string } };
     let scripts: string[];
+    let styles: string[];
 
     // One build for every check below. The files are read into memory, so the directory can go.
     beforeAll(async () => {
@@ -130,6 +131,11 @@ describe("buildExtension", () => {
       scripts = await Promise.all(
         files
           .filter((file) => file.endsWith(".js"))
+          .map((file) => readFile(join(outDir.path, file), "utf8")),
+      );
+      styles = await Promise.all(
+        files
+          .filter((file) => file.endsWith(".css"))
           .map((file) => readFile(join(outDir.path, file), "utf8")),
       );
     });
@@ -163,6 +169,28 @@ describe("buildExtension", () => {
         await readFile(new URL("../package.json", import.meta.url), "utf8"),
       );
       expect(manifest.version).toBe(packageJson.version);
+    });
+
+    // The popup shares the site's tokens file (plan, "Design"), so its stylesheet carries the
+    // same palette, and the fonts the tokens name travel with their licenses.
+    it("styles the popup with the site's tokens, fonts and font licenses", async () => {
+      const tokens = await readFile(
+        new URL("../../web/public/assets/tokens.css", import.meta.url),
+        "utf8",
+      );
+      const ground = /--color-ground:\s*(#[0-9a-f]+);/.exec(tokens)?.[1];
+      expect(ground).toBeDefined();
+      expect(styles.join("")).toContain(`--color-ground:${String(ground)}`);
+      // The popup's text is set in Space Grotesk.
+      const fonts = files.filter((file) => file.endsWith(".woff2"));
+      expect(fonts.some((file) => file.startsWith(join("assets", "space-grotesk-")))).toBe(true);
+      // Every font the build bundles needs its license, whichever ones the tokens name. That
+      // includes JetBrains Mono, which the popup never uses.
+      for (const font of fonts) {
+        const family = /^assets[/\\](.+)-latin-wght-normal-/.exec(font)?.[1];
+        expect(family, font).toBeDefined();
+        expect(files).toContain(join("licenses", `${String(family)}-OFL.txt`));
+      }
     });
 
     // `define` inlines the origin as a string literal, so the check looks for the whole origin
