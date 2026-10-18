@@ -112,4 +112,24 @@ describe("completeSignIn", () => {
       ),
     ).rejects.toThrow(/https/i);
   });
+
+  it.each([
+    ["an empty string", ""],
+    ["a missing value", undefined as unknown as string],
+  ])(
+    "refuses %s as the client secret, with a code that names it, before any request",
+    async (_, secret) => {
+      const error = await completeSignIn(
+        {
+          ...config("https://oauth.example/token", "https://oauth.example/jwks"),
+          GOOGLE_CLIENT_SECRET: secret,
+        },
+        callbackUrl,
+        "s",
+        "verifier",
+        "https://haystack.example/auth/callback",
+      ).catch((caught: unknown) => caught);
+      expect(error).toMatchObject({ code: "GOOGLE_CLIENT_SECRET_EMPTY" });
+    },
+  );
 });
