@@ -65,9 +65,23 @@ function redirectUri(request: Request): string {
   return `${new URL(request.url).origin}/auth/callback`;
 }
 
+// The return target a sign-in stores. A save link is screened here as a signed-out /save is,
+// because a URL that carries a secret is never stored (plan, decision 18), and a hand-built
+// /auth/sign-in link never passes through /save. A save link that would get a page instead of
+// the form falls back to `/`, as a target off this origin does (plan, "Return targets").
+function storedReturnTarget(request: Request, value: string | null): string {
+  const target = safeReturnTarget(value);
+  const url = new URL(target, request.url);
+  if (url.pathname !== "/save") {
+    return target;
+  }
+  const screened = signedOutSave(url);
+  return "page" in screened ? "/" : screened.returnTo;
+}
+
 async function signIn(request: Request, env: Env, db: Db): Promise<Response> {
   const parameters = new URL(request.url).searchParams;
-  const returnTo = safeReturnTarget(parameters.get("return_to"));
+  const returnTo = storedReturnTarget(request, parameters.get("return_to"));
   const { state, codeChallenge } = await createAuthFlow(db, returnTo, Date.now());
   const location = authorizationUrl(
     env,
@@ -182,8 +196,8 @@ async function handleAppRoute(
 }
 
 // Where sign-in returns to, or the page to show instead of signing in. A signed-out GET or HEAD
-// /save is screened first, so a link that carries a secret does not become a stored return
-// target through /save (plan, "Sensitive URLs").
+// /save is screened first, so a link that sign-in would not keep gets its page now, and no
+// Location header carries a link that holds a secret (plan, "Sensitive URLs").
 function beforeSignIn(request: Request): { page: Response } | { returnTo: string } {
   const url = new URL(request.url);
   if (url.pathname === "/save" && isReadRequest(request)) {

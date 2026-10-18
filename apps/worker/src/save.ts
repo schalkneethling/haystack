@@ -233,9 +233,8 @@ export async function showSaveForm(request: Request, db: Db, userId: string): Pr
  * GET or HEAD /save without a session: the page to show instead of signing in, or the path and
  * query to return to after it. Sign-in stores the return target in auth_flows, and a URL that
  * carries a secret is never stored (plan, decision 18), so a link that enters through /save is
- * screened before the redirect. /auth/sign-in itself still stores whatever return target it is
- * given, until #86 closes that. An invalid or sensitive link gets its page now, because signing
- * in would not change it.
+ * screened before the redirect, and /auth/sign-in screens a save link it is given the same way.
+ * An invalid or sensitive link gets its page now, because signing in would not change it.
  *
  * The return target is built from the validated payload, without a canonical URL the form
  * leaves out, so it holds only screened values: no unknown key, no second `url`, and no empty

@@ -277,7 +277,14 @@ describe("a successful sign-in", () => {
   });
 
   it("keeps a return target longer than 4 KB", async () => {
-    const returnTo = `/save?title=${"a".repeat(5000)}`;
+    // A valid save link, because sign-in screens one and would not keep an invalid one.
+    const address = `https://example.com/${"a".repeat(2000)}`;
+    const returnTo = `/save?${new URLSearchParams({
+      url: address,
+      canonical_url: address,
+      title: "a".repeat(200),
+    }).toString()}`;
+    expect(returnTo.length).toBeGreaterThan(4096);
     const response = await callBack(await startSignIn(returnTo));
     expect(response.headers.get("location")).toBe(returnTo);
   });
@@ -358,6 +365,65 @@ describe("signing in from a signed-out save link", () => {
     expect(markup).toContain('<form method="post" action="/save">');
     expect(markup.includes('name="canonical_url"')).toBe("canonical_url" in expected);
     expect(markup).not.toContain("secret-value");
+  });
+});
+
+// A hand-built sign-in link skips the check on /save, so sign-in screens a save link itself
+// before it stores it (plan, "Return targets").
+describe("a save link given to sign-in directly", () => {
+  async function storedReturnTargets(): Promise<unknown[]> {
+    const { results } = await (await db()).prepare("SELECT return_to FROM auth_flows").all();
+    return results;
+  }
+
+  const article = "https://example.com/article";
+
+  it.each([
+    ["an access token", { url: `${article}?access_token=secret-value` }],
+    ["a signed storage URL", { url: `${article}?X-Amz-Signature=secret-value&X-Amz-Credential=a` }],
+    ["embedded credentials", { url: "https://user:secret-value@example.com/" }],
+    [
+      "a title over its cap, so the address is never checked",
+      { url: `${article}?access_token=secret-value`, title: "a".repeat(201) },
+    ],
+    ["an http address", { url: "http://example.com/?access_token=secret-value" }],
+  ])("stores / for a link with %s, and returns there", async (_, fields) => {
+    const start = await startSignIn(`/save?${new URLSearchParams(fields).toString()}`);
+    expect(await storedReturnTargets()).toEqual([{ return_to: "/" }]);
+    const signedIn = await callBack(start);
+    expect(signedIn.headers.get("location")).toBe("/");
+  });
+
+  it("stores / for a bare /save", async () => {
+    await startSignIn("/save");
+    expect(await storedReturnTargets()).toEqual([{ return_to: "/" }]);
+  });
+
+  it.each([
+    [
+      "a flagged canonical URL",
+      `/save?url=${encodeURIComponent(article)}&canonical_url=${encodeURIComponent(`${article}?access_token=secret-value`)}`,
+    ],
+    [
+      "a second url",
+      `/save?url=${encodeURIComponent(article)}&url=${encodeURIComponent(`${article}?access_token=secret-value`)}`,
+    ],
+    ["an unknown key", `/save?url=${encodeURIComponent(article)}&token=secret-value`],
+    ["a fragment", `/save?url=${encodeURIComponent(article)}#access_token=secret-value`],
+  ])("stores only the screened fields for a link with %s", async (_, returnTo) => {
+    const start = await startSignIn(returnTo);
+    const expected = `/save?${new URLSearchParams({ url: article }).toString()}`;
+    expect(await storedReturnTargets()).toEqual([{ return_to: expected }]);
+    const signedIn = await callBack(start);
+    expect(signedIn.headers.get("location")).toBe(expected);
+  });
+
+  it.each([
+    `/save?${new URLSearchParams({ url: article, canonical_url: article, title: "An article" }).toString()}`,
+    "/?view=recent#bookmark-1",
+  ])("stores %j as given", async (returnTo) => {
+    await startSignIn(returnTo);
+    expect(await storedReturnTargets()).toEqual([{ return_to: returnTo }]);
   });
 });
 
