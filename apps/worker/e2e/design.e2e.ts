@@ -4,6 +4,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
+import { INVALID_LINK, openRefusalPage } from "./rejected-save-pages.ts";
 import { saveThroughForm } from "./save-through-form.ts";
 
 // One unbroken word, with no hyphen or slash a line could break at, so only `overflow-wrap` can
@@ -61,6 +62,20 @@ test.describe("at a 320 px viewport, nothing scrolls horizontally", () => {
     test("the save form after a rejected title", async ({ page }) => {
       await page.goto(saveUrl({ url: LONG_URL }));
       await rejectTitle(page);
+      await expectNoHorizontalScroll(page);
+    });
+
+    test("the saved links page with the address form", async ({ page }) => {
+      await page.goto("/");
+      await expect(page.getByLabel("Save a link")).toBeVisible();
+      await expectNoHorizontalScroll(page);
+    });
+
+    // The rejected address is put back in the field, where it scrolls inside the field.
+    test("the address form after a rejected long address", async ({ page }) => {
+      const url = LONG_URL.replace("https:", "http:");
+      await page.goto(saveUrl({ url }));
+      await expect(page.getByLabel("Save a link")).toHaveValue(url);
       await expectNoHorizontalScroll(page);
     });
 
@@ -161,12 +176,30 @@ for (const [colorScheme, ground] of [
         await expectNoViolations(page);
       });
 
+      // A rejected address gets the address form (#97), so these pages are reached the ways
+      // that remain: a link whose title is over its cap, and a tampered POST.
       test("the validation and refusal pages", async ({ page }) => {
-        for (const url of ["javascript:alert(1)", "https://example.com/?access_token=secret"]) {
+        await page.goto(INVALID_LINK);
+        await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+          "This link can't be saved",
+        );
+        await expectNoViolations(page);
+        await openRefusalPage(page);
+        await expectNoViolations(page);
+      });
+
+      test("the address form on a bare /save", async ({ page }) => {
+        await page.goto("/save");
+        await expect(page.getByLabel("Save a link")).toBeVisible();
+        await expectNoViolations(page);
+      });
+
+      test("the address form after a rejected address, and after a flagged one", async ({
+        page,
+      }) => {
+        for (const url of ["http://example.com/axe", "https://example.com/?access_token=secret"]) {
           await page.goto(saveUrl({ url }));
-          await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-            "This link can't be saved",
-          );
+          await expect(page).toHaveTitle("Check the address - Haystack");
           await expectNoViolations(page);
         }
       });
@@ -249,6 +282,35 @@ for (const viewport of [
       const right = viewport.width - (box.x + box.width);
       expect(Math.abs(box.y - below)).toBeLessThanOrEqual(2);
       expect(Math.abs(box.x - right)).toBeLessThanOrEqual(2);
+    });
+  });
+}
+
+// The design puts Continue next to the field, and under it when the row has no room for both.
+for (const [width, beside] of [
+  [1280, true],
+  [320, false],
+] as const) {
+  test.describe(`at ${width} px wide`, () => {
+    test.use({ viewport: { width, height: 800 } });
+
+    test(`Continue is ${beside ? "next to" : "under"} the address field`, async ({
+      page,
+      signIn,
+    }) => {
+      await signIn();
+      await page.goto("/");
+      const field = await page.getByLabel("Save a link").boundingBox();
+      const button = await page.getByRole("button", { name: "Continue" }).boundingBox();
+      if (field === null || button === null) {
+        throw new Error("The address form is not drawn");
+      }
+      if (beside) {
+        expect(button.y).toBeCloseTo(field.y, 0);
+        expect(button.x).toBeGreaterThan(field.x + field.width);
+      } else {
+        expect(button.y).toBeGreaterThanOrEqual(field.y + field.height);
+      }
     });
   });
 }

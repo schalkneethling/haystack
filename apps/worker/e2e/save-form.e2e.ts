@@ -1,5 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "./fixtures.ts";
+import { INVALID_LINK, openRefusalPage } from "./rejected-save-pages.ts";
 
 const fields = {
   url: "https://example.com/article?utm_source=feed",
@@ -34,17 +35,19 @@ test("the form after a rejected title has no axe violations", async ({ page }) =
   expect(results.violations).toEqual([]);
 });
 
+// A rejected address gets the address form (#97), which address-form.e2e.ts scans. These pages
+// are reached the ways that remain.
 test.describe("other /save pages have no axe violations", () => {
-  for (const [name, values] of [
-    ["the validation page", { url: "javascript:alert(1)" }],
-    ["the refusal page", { url: "https://example.com/?access_token=secret" }],
-  ] as const) {
-    test(name, async ({ page }) => {
-      await page.goto(saveUrl(values));
-      await expect(page.getByRole("heading", { level: 1 })).toHaveText("This link can't be saved");
-      expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
-    });
-  }
+  test("the validation page", async ({ page }) => {
+    await page.goto(INVALID_LINK);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("This link can't be saved");
+    expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  });
+
+  test("the refusal page", async ({ page }) => {
+    await openRefusalPage(page);
+    expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  });
 });
 
 test("the save form can be completed with the keyboard alone", async ({ page }) => {
