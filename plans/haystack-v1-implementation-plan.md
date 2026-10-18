@@ -204,7 +204,23 @@ Compatibility with Wrangler's migration tracking was confirmed in #7, on the sta
 
 - drizzle-kit 0.31 writes flat files (`migrations/0000_init.sql`), plus its own `migrations/meta/` folder.
 - Wrangler reads `migrations_dir/*.sql` by default (its `getD1MigrationFiles`), so it ignores `meta/`. It records each migration by file name in `d1_migrations`. Applying twice applies nothing the second time.
-- Drizzle 1.0 writes one folder per migration (`migrations/<name>/migration.sql`). Wrangler 4.147.0 supports that layout through `migrations_pattern`, and it warns about Drizzle's layout by name when that option is missing. The recorded names then change, so a switch must happen before the first production deploy, or with a planned rename of the rows in `d1_migrations`. See #13.
+- Drizzle 1.0 writes one folder per migration (`migrations/<name>/migration.sql`). Wrangler 4.147.0 supports that layout through `migrations_pattern`, and it warns about Drizzle's layout by name when that option is missing. Wrangler records each migration by its path relative to `migrations_dir`, so the recorded names change with the layout. A move after the first production deploy therefore needs a planned rename of the rows in `d1_migrations`, described below (#13).
+
+**Decision: the first production deploy stays on Drizzle 0.x (#13).** On 2026-10-18, npm's `latest` tag is drizzle-orm 0.45.4 and drizzle-kit 0.31.11, and Drizzle 1.0 is still a release candidate (the `rc` tag is 1.0.0-rc.4). Moving now would put the production migration history on a pre-release tool, so the project stays on the stable lines and accepts the rename below as the cost of moving later.
+
+**When to revisit.** Revisit when `vp view drizzle-orm dist-tags.latest` and `vp view drizzle-kit dist-tags.latest` both print 1.0.0 or later. Check this at each milestone deploy, as with Q14 (when to move from Wrangler to `cf`).
+
+**Moving to the folder layout later.** Without a rename, Wrangler treats every migration as unapplied after the move and runs it again. Wrangler 4.149.0 creates the tracking table as `d1_migrations(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)`, and a migration counts as applied only when its path appears in `name`. The steps were tested with drizzle-kit 1.0.0-rc.4 and Wrangler 4.149.0 on local databases, so repeat the test with the stable release before using them.
+
+1. Take an export with `vp -C apps/worker run db:export:remote` (see "Backups and restore" below).
+2. Upgrade drizzle-orm and drizzle-kit, then run `vp -C apps/worker exec drizzle-kit up`. It reads `drizzle.config.ts`, moves each flat file into a folder named from the migration's `when` timestamp in `meta/_journal.json` (in UTC) and its name, and deletes `meta/`. The SQL is unchanged. Today's `0000_init.sql` becomes `20261009194159_init/migration.sql`. This step is required, because drizzle-kit 1.0's `generate` stops with "Your migrations folder format is outdated, please run drizzle-kit up" while the old layout is in place.
+3. Add `"migrations_pattern": "migrations/*/migration.sql"` to the D1 binding in `apps/worker/wrangler.jsonc`, next to `migrations_dir`.
+4. Rename each recorded row from its old file name to its new path, one `UPDATE` per migration, for example `vp -C apps/worker exec wrangler d1 execute DB --remote --command "UPDATE d1_migrations SET name = '20261009194159_init/migration.sql' WHERE name = '0000_init.sql'"`. Do the same for any local database worth keeping, with `--local` in place of `--remote`. Otherwise delete `apps/worker/.wrangler/state`.
+5. Run `vp -C apps/worker exec wrangler d1 migrations list DB --remote`. It must print "No migrations to apply!".
+
+Run the rename only as part of the change that converts the folder. After the rename, a checkout with the old layout sees every migration as unapplied, and its `migrations apply` fails on tables that already exist.
+
+The test used two flat migrations and a fresh state directory for each case (`--persist-to`). A fresh database on the converted layout recorded each migration once, and a second `migrations apply` printed "No migrations to apply!". A database first migrated on the flat layout listed both migrations as unapplied after the switch. After the rename, `migrations list` and `migrations apply` both printed "No migrations to apply!", each migration was recorded once, and a row added before the switch was still there.
 
 Name each migration, because the name is recorded in `d1_migrations` permanently: `vp run db:generate --name <slug>`. Without `--name`, drizzle-kit picks a random name.
 
@@ -212,7 +228,7 @@ From the first production deploy at the end of Milestone 1, the database holds r
 
 Rolling back a Worker deployment does not roll back D1. Every migration must therefore stay compatible with the Worker version deployed before it (expand, then contract). Add a column or table in one deploy, and remove what it replaces in a later deploy, after nothing reads it. If a migration cannot stay compatible, it needs a written rollback procedure before it is applied.
 
-Before Phase 6, confirm D1's point-in-time recovery (Time Travel) retention on the chosen plan, and write down the restore procedure. Also take a `wrangler d1 export` before each remote migration. From Milestone 1 onward, the bookmarks exist only in this database.
+The bookmarks exist only in the production database, so "Backups and restore" below says how it is protected and how to restore it (#91).
 
 **Conventions.** All timestamps are `INTEGER` Unix epoch milliseconds, and application code sets them. Do not use `datetime('now')` defaults. SQLite's `datetime('now')` gives `2026-10-05 21:14:00`, and JavaScript's `toISOString()` gives `2026-10-05T21:14:00.000Z`. If both formats are compared as text, for example `expires_at < ?` in the session lookup, the comparison is wrong on the same day, because a space sorts before `T`. One numeric representation removes that type of bug. Application code generates IDs with `crypto.randomUUID()`. Cascading deletes need foreign key enforcement. D1 enforces foreign keys by default, equivalent to SQLite's `PRAGMA foreign_keys = on` ([D1 foreign keys](https://developers.cloudflare.com/d1/sql-api/foreign-keys/)). The deletion tests in `apps/worker/test/db.test.ts` prove the schema's delete behavior in the local runtime: deleting a user deletes their sessions, and a user who still has bookmarks cannot be deleted.
 
@@ -358,6 +374,32 @@ The function is `normalizeUrl` (#19). Details that are part of the rules, so cha
 `normalized_url` is stored, so a change to the normalization function (for example, a new tracking parameter in the list) makes existing rows out of date. When recomputed, two existing bookmarks can collide on `UNIQUE (user_id, normalized_url)`. Such a change therefore needs a migration that recomputes the column and states how collisions are resolved (keep the oldest bookmark, and report the others). It is not a code-only change.
 
 Two submissions of the same URL can race, for example from two tabs. The second insert then fails on the unique constraint. `POST /save` must show the "already saved" result for that case, not an error page.
+
+### Backups and restore
+
+Two things protect the production database: D1's point-in-time recovery (Time Travel) for the last 7 days, and an export taken before each remote migration for anything older (#91). Every command below runs from the repository root, and Wrangler finds `DB` through `apps/worker/wrangler.jsonc`. The commands and flags were checked against Wrangler 4.149.0's `--help` and source.
+
+**Time Travel retention.** The account is on Workers Free, so Time Travel can restore the database to any minute in the last 7 days. Workers Paid allows 30 days ([Time Travel](https://developers.cloudflare.com/d1/reference/time-travel/)). If the account moves to Workers Paid (Q1, which decides the Workers plan), change the window in this section to 30 days. The procedure stays the same. A restore overwrites the database in place and cancels queries in flight. It cannot restore into a new database. It returns a bookmark for the state before the restore, so a restore can be undone.
+
+**Export before each remote migration.** Run `vp -C apps/worker run db:export:remote` before every `wrangler d1 migrations apply DB --remote`. It writes two files with the same UTC timestamp to `apps/worker/backups/`: `haystack-<timestamp>-schema.sql` (from `--no-data`) and `haystack-<timestamp>-data.sql` (from `--no-schema`). The files hold every user, session and bookmark row, so `.gitignore` keeps that folder out of the repository. They exist only on the machine that ran the script. An export blocks other queries to the database while it runs, and Wrangler asks for confirmation before each of the two. Because Time Travel reaches back only 7 days, these files are the only copy of anything older. Wrangler's help for `migrations apply` says a backup is captured after applying, but the 4.149.0 source takes none.
+
+The export is split in two because a single full export cannot be imported. It lists tables in alphabetical order, so the `bookmarks` rows come before the `users` table they reference, and the import fails with "no such table: main.users". Adding `PRAGMA foreign_keys=OFF` to the top of the file did not help in the local test, because Wrangler runs a local file as one batch, which is one transaction, and SQLite's documentation says that pragma is a no-op inside a transaction. Importing the schema file first and the data file second works.
+
+**Restoring with Time Travel, for a problem less than 7 days old.**
+
+1. **Find the restore point.** Record the current bookmark first, so there is a way back even if the restore output is lost: `vp -C apps/worker exec wrangler d1 time-travel info DB`. Then get the bookmark for a time just before the problem: `vp -C apps/worker exec wrangler d1 time-travel info DB --timestamp=2026-10-18T09:00:00Z`. The timestamp is an RFC 3339 string or Unix seconds (10 digits).
+2. **Restore.** `vp -C apps/worker exec wrangler d1 time-travel restore DB --bookmark=<bookmark>`. `--timestamp=<time>` works in place of `--bookmark`, but not together with it. Wrangler asks for confirmation, then prints the bookmark it restored to and the previous bookmark. Keep the previous bookmark.
+3. **Check the result.** Count the rows and compare them with what you expect: `vp -C apps/worker exec wrangler d1 execute DB --remote --command "SELECT count(*) FROM bookmarks"`. Then run `vp -C apps/worker exec wrangler d1 migrations list DB --remote`. The restore also rolls back `d1_migrations`, so a migration applied after the restore point shows as unapplied again. If the deployed Worker needs it, apply it again, or roll the Worker back to the version that matches the restored schema.
+4. **Undo the restore** if the result is wrong: `vp -C apps/worker exec wrangler d1 time-travel restore DB --bookmark=<previous bookmark>`.
+
+**Restoring from an export, for a problem 7 days old or more.** Time Travel cannot reach that far back. Import the newest export from before the problem into a new database, and leave the current one untouched until the new one is confirmed. The files cannot be imported into the existing database, because their `CREATE TABLE` statements fail on tables that already exist ("table `auth_flows` already exists").
+
+1. **Create a database.** `vp -C apps/worker exec wrangler d1 create haystack-restore-<date>`. It prints the new `database_id`.
+2. **Import the schema, then the data.** `vp -C apps/worker exec wrangler d1 execute haystack-restore-<date> --remote --file=backups/haystack-<timestamp>-schema.sql`, then the same command with the `-data.sql` file. The paths are relative to `apps/worker`. Wrangler finds a database that is not in `wrangler.jsonc` by its name. The two files also restore `d1_migrations`, so Wrangler knows which migrations the restored database already has.
+3. **Switch the binding.** Set `database_name` and `database_id` of the `DB` binding in `apps/worker/wrangler.jsonc` to the new database. Then run `vp -C apps/worker exec wrangler d1 migrations apply DB --remote` to apply the migrations that came after the export.
+4. **Check the result** with the same commands as step 3 of the Time Travel restore, then deploy. Keep the old database until the restored one has been in use for a while.
+
+This path was tested locally with a seeded database: the two files, exported with `--local` and imported into a fresh database with `--persist-to`, kept every row and every quote in the data, `PRAGMA foreign_key_check` found nothing, and `migrations list` printed "No migrations to apply!". The remote import goes through D1's import API instead, which was not tested.
 
 ## Enrichment design
 
