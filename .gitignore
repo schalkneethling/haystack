@@ -38,6 +38,9 @@ dist-ssr
 # Wrangler local state
 .wrangler/
 
+# D1 exports from `vp -C apps/worker run db:export:remote`. They hold every user, session and bookmark row.
+apps/worker/backups/
+
 # Claude Code local settings
 .claude/settings.local.json
 
