@@ -95,9 +95,54 @@ for (const [colorScheme, ground] of [
       await expectNoViolations(page);
     });
 
+    // /auth/* routes never look up a session, so this is the not-found page's signed-out form.
+    test("the signed-out not-found page", async ({ page }) => {
+      await page.goto("/auth/nowhere");
+      await expect(page.getByRole("heading", { level: 1 })).toHaveText("Page not found");
+      await expectNoViolations(page);
+    });
+
     test.describe("signed in", () => {
       test.beforeEach(async ({ signIn }) => {
         await signIn();
+      });
+
+      test("the signed-in not-found page", async ({ page }) => {
+        await page.goto("/nowhere");
+        await expect(page.getByRole("heading", { level: 1 })).toHaveText("Page not found");
+        await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+        await expectNoViolations(page);
+      });
+
+      test("the empty saved links list", async ({ page }) => {
+        await page.goto("/");
+        await expect(page.getByText("You haven't saved any links yet.")).toBeVisible();
+        await expectNoViolations(page);
+      });
+
+      test("the saved confirmation, then the already saved page", async ({ page }) => {
+        const url = `https://example.com/saved-${colorScheme}`;
+        // It ends on the page that confirms the save.
+        await saveThroughForm(page, url, "A saved guide");
+        await expectNoViolations(page);
+        await page.goto(saveUrl({ url }));
+        await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+          "You already saved this link",
+        );
+        await expectNoViolations(page);
+      });
+
+      // The page a browser without JavaScript gets from a Delete button. axe runs in the page, so
+      // it cannot scan with JavaScript disabled. form.submit() skips the dialog script's submit
+      // listener, which is what a browser without JavaScript does.
+      test("the delete confirmation page", async ({ page }) => {
+        await saveThroughForm(page, `https://example.com/confirm-${colorScheme}`, "A guide");
+        await page.goto("/");
+        await page
+          .getByRole("button", { name: "Delete A guide" })
+          .evaluate((button) => button.closest("form")?.submit());
+        await expect(page.getByRole("heading", { level: 1 })).toHaveText("Delete this link?");
+        await expectNoViolations(page);
       });
 
       test("the save form", async ({ page }) => {
@@ -182,6 +227,75 @@ test.describe("the stylesheets and fonts load under the CSP", () => {
       expect(offOrigin).toEqual([]);
     });
   }
+});
+
+// The dialog sits inside <main>, whose children are spaced with margins, so this catches a
+// margin that replaces the browser's centering of a modal dialog.
+for (const viewport of [
+  { width: 1280, height: 900 },
+  { width: 320, height: 640 },
+]) {
+  test.describe(`at ${viewport.width} × ${viewport.height}`, () => {
+    test.use({ viewport });
+
+    test("the open delete dialog is centered", async ({ page, signIn }) => {
+      await signIn();
+      await openDeleteDialog(page, `https://example.com/centered-${viewport.width}`, "A guide");
+      const box = await page.getByRole("dialog").boundingBox();
+      if (box === null) {
+        throw new Error("The open dialog has no box");
+      }
+      const below = viewport.height - (box.y + box.height);
+      const right = viewport.width - (box.x + box.width);
+      expect(Math.abs(box.y - below)).toBeLessThanOrEqual(2);
+      expect(Math.abs(box.x - right)).toBeLessThanOrEqual(2);
+    });
+  });
+}
+
+// Forced colors, such as Windows' contrast themes, replace the palette with system colors.
+test.describe("in forced colors", () => {
+  test.use({ forcedColors: "active" });
+
+  test.beforeEach(async ({ signIn }) => {
+    await signIn();
+  });
+
+  test("only the current page's link is outlined and underlined", async ({ page }) => {
+    const savedLinks = page
+      .getByRole("navigation", { name: "Main" })
+      .getByRole("link", { name: "Saved links" });
+    await page.goto("/");
+    await expect(savedLinks).toHaveCSS("border-top-style", "solid");
+    await expect(savedLinks).toHaveCSS("text-decoration-line", "underline");
+    await page.goto(saveUrl({ url: "https://example.com/forced-colors" }));
+    await expect(savedLinks).toHaveCSS("border-top-style", "none");
+  });
+
+  test("the alert's icon keeps its glyph and circle, and adds nothing to what is read", async ({
+    page,
+  }) => {
+    await page.goto(saveUrl({ url: "https://example.com/forced-colors-alert" }));
+    await rejectTitle(page);
+    const alert = page.getByRole("alert");
+    const icon = await alert.evaluate((element) => {
+      const style = getComputedStyle(element, "::before");
+      return { content: style.content, border: style.borderTopStyle };
+    });
+    // Text and borders keep forced colors, while a drawn background would be dropped.
+    expect(icon.content).toContain('"!"');
+    expect(icon.border).toBe("solid");
+    // Playwright's aria snapshot leaves generated content out, so the check reads Chromium's own
+    // accessibility tree, where "!" would be a text node if it had no empty alternative.
+    const cdp = await page.context().newCDPSession(page);
+    const { nodes } = await cdp.send("Accessibility.getFullAXTree");
+    await cdp.detach();
+    const texts = nodes
+      .filter((node) => node.role?.value === "StaticText")
+      .map((node) => String(node.name?.value ?? "").trim());
+    expect(texts).toContain("Enter a title of up to 200 characters.");
+    expect(texts).not.toContain("!");
+  });
 });
 
 test.describe("the header", () => {

@@ -211,10 +211,15 @@ main > :where(p, ul, div) {
   padding-inline: var(--space-m);
 }
 
-/* The dialog's buttons while a delete runs. They stay focusable (delete-dialog.js). */
-.button[aria-disabled="true"] {
+/* The dialog's buttons while a delete runs. They stay focusable (delete-dialog.js). The fill and
+   the border go quiet, and the text stays at 6:1 on the raised fill in both schemes. */
+.button[aria-disabled="true"],
+.button[aria-disabled="true"]:hover {
+  background-color: var(--color-raised);
+  border-color: var(--color-border);
+  border-style: dashed;
+  color: var(--color-ink-muted);
   cursor: progress;
-  opacity: 0.6;
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -293,41 +298,6 @@ main > :where(p, ul, div) {
   overflow-wrap: anywhere;
 }
 
-/* Reserved for the address form at the top of the saved links page (#97), so that issue adds
-   only markup: a .panel form with a .address-form-label, a .address-form-hint, and a
-   .address-form-row holding the .address-input and a .button-primary. */
-.address-form-label {
-  font-size: var(--text-wordmark);
-  font-weight: 700;
-  letter-spacing: -0.01em;
-}
-
-.address-form-hint {
-  color: var(--color-ink-muted);
-  font-size: var(--text-small);
-}
-
-.address-form-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.625rem;
-  max-inline-size: var(--width-narrow);
-}
-
-.address-input {
-  background-color: var(--color-field);
-  border: 1px solid var(--color-control-border);
-  border-radius: var(--radius-pill);
-  color: var(--color-ink);
-  flex: 1 1 18rem;
-  font-family: var(--font-mono);
-  font-size: var(--text-small);
-  min-block-size: var(--target-primary);
-  min-inline-size: 0;
-  padding-block: var(--space-s);
-  padding-inline: 1.125rem;
-}
-
 /* Notices and messages. */
 
 .notice {
@@ -343,7 +313,7 @@ main > :where(p, ul, div) {
   padding-inline: var(--space-m);
 }
 
-/* The alert's icon is drawn here, so it adds nothing a screen reader would read. */
+/* The alert's icon is drawn here, not in the markup. */
 .alert {
   align-items: flex-start;
   background-color: var(--color-alert);
@@ -357,16 +327,21 @@ main > :where(p, ul, div) {
   padding-inline: 1.25rem;
 }
 
+/* The "!" is text with an empty alternative, so a screen reader skips it, and forced colors keep
+   it and the circle, which they would not do for a drawn background. */
 .alert::before {
-  background:
-    linear-gradient(var(--color-danger), var(--color-danger)) 50% 0.25rem / 2px 0.5rem no-repeat,
-    linear-gradient(var(--color-danger), var(--color-danger)) 50% 0.8125rem / 2px 2px no-repeat;
   block-size: 1.375rem;
   border: 2px solid var(--color-danger);
   border-radius: 50%;
-  content: "";
+  color: var(--color-danger);
+  content: "!" / "";
+  display: grid;
   flex: none;
+  font-size: var(--text-xsmall);
+  font-weight: 700;
   inline-size: 1.375rem;
+  line-height: 1;
+  place-items: center;
 }
 
 /* The live region stays in the page when it is empty, so only its message is drawn. */
@@ -395,7 +370,8 @@ main > :where(p, ul, div) {
   padding: 0;
 }
 
-/* A flex item draws no list marker, and keeping list-style lets WebKit keep the list's role. */
+/* Each item's own `display: flex` replaces `list-item`, so it draws no marker, and the list
+   needs no `list-style: none`. */
 .cards > li {
   background-color: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -445,11 +421,14 @@ main > :where(p, ul, div) {
 
 /* The delete dialog, which delete-dialog.js builds. */
 
+/* The dialog is inside <main>, so `margin: auto` restores the centering that the margins between
+   main's children would otherwise replace. */
 .delete-dialog {
   background-color: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-panel);
   color: var(--color-ink);
+  margin: auto;
   max-inline-size: min(30rem, 100% - 2 * var(--gutter));
   padding: var(--space-l);
 }
@@ -482,4 +461,19 @@ main > :where(p, ul, div) {
 
 .delete-dialog::backdrop {
   background-color: var(--color-backdrop);
+}
+
+/* Forced colors, such as Windows' contrast themes, replace the palette with system colors. */
+@media (forced-colors: active) {
+  /* A transparent border would be drawn in the system's text color, so the links have none, and
+     only the current page is outlined and underlined. */
+  .nav-link {
+    border-style: none;
+  }
+
+  .nav-link[aria-current="page"] {
+    border-style: solid;
+    text-decoration: underline;
+    text-decoration-thickness: 0.125em;
+  }
 }
