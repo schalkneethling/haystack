@@ -1,0 +1,150 @@
+/*
+ * Haystack's design tokens ("Night field"), shared by the pages the Worker renders and by the
+ * extension's popup, which imports this file into its build. See "Design" in
+ * plans/haystack-v1-implementation-plan.md. The dark palette is the default, and the one
+ * `prefers-color-scheme: light` block below swaps it, so every color a stylesheet uses must be
+ * one of these properties.
+ *
+ * The fonts are self-hosted, because the CSP allows fonts from this origin only. They are the
+ * Latin subsets of the variable fonts from Fontsource 5.3.0. A character outside the subset falls
+ * back to the next font in the stack.
+ */
+
+/*! Space Grotesk: Copyright 2020 The Space Grotesk Project Authors (https://github.com/floriankarsten/space-grotesk). SIL Open Font License 1.1 (fonts/space-grotesk-OFL.txt, https://openfontlicense.org). */
+@font-face {
+  font-display: swap;
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 300 700;
+  src: url("fonts/space-grotesk-latin-wght-normal.woff2") format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/*! JetBrains Mono: Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono). SIL Open Font License 1.1 (fonts/jetbrains-mono-OFL.txt, https://openfontlicense.org). */
+@font-face {
+  font-display: swap;
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 100 800;
+  src: url("fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+:root {
+  color-scheme: light dark;
+
+  /* Surfaces, from the page's background up to a control's own fill. */
+  --color-ground: #121417;
+  --color-surface: #1c1f24;
+  --color-raised: #23272d;
+  --color-border: #343a42;
+
+  /* Draws the boundary that identifies a field or a secondary button, so it keeps at least 3:1
+     against ground, surface and raised. */
+  --color-control-border: #6b7178;
+  --color-field: var(--color-ground);
+
+  /* Text. */
+  --color-ink: #ece8df;
+  --color-ink-secondary: #cfcac0;
+  --color-ink-muted: #a9a49a;
+
+  /* Links, addresses and the focus ring. */
+  --color-accent: #e9c46a;
+  --color-accent-hover: #f4dc9c;
+  --color-focus: var(--color-accent);
+
+  /* The primary button keeps the straw fill in both schemes. Its border is what tells it apart
+     from a light background, where straw alone is under 3:1. */
+  --color-primary: #e9c46a;
+  --color-primary-hover: #f4dc9c;
+  --color-primary-border: var(--color-primary);
+  --color-on-primary: #121417;
+
+  /* Deleting, errors and alerts. The danger border outlines the Delete buttons on cards, at
+     3:1 or more against the surface they sit on. */
+  --color-danger: #ff8a7a;
+  --color-danger-border: #b5625a;
+  --color-on-danger: #121417;
+  --color-alert: #3a2321;
+  --color-alert-border: #6b3b35;
+  --color-alert-ink: #ffd2cb;
+  --color-backdrop: rgb(8 9 11 / 72%);
+
+  /* Type. The fallbacks keep the layout when the fonts have not loaded. */
+  --font-sans: "Space Grotesk", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --text-body: 1.0625rem;
+  --text-small: 0.9375rem;
+  --text-xsmall: 0.875rem;
+  --text-address-small: 0.8125rem;
+  --text-card-title: 1.1875rem;
+  --text-wordmark: 1.25rem;
+  --text-h1: 2.5rem;
+  --leading-body: 1.55;
+  --leading-heading: 1.3;
+  --leading-h1: 1.1;
+
+  /* Space. */
+  --space-3xs: 0.25rem;
+  --space-2xs: 0.375rem;
+  --space-xs: 0.5rem;
+  --space-s: 0.75rem;
+  --space-m: 1rem;
+  --space-l: 1.5rem;
+  --space-xl: 1.75rem;
+  --space-2xl: 2rem;
+  --space-3xl: 4rem;
+
+  /* Shapes. */
+  --radius-field: 0.625rem;
+  --radius-card: 0.875rem;
+  --radius-panel: 1rem;
+  --radius-pill: 999px;
+
+  /* Target sizes: 44 px for controls, 48 px for the primary button, and 40 px for the header's
+     and the cards' smaller buttons, which still clears WCAG 2.5.8's 24 px. */
+  --target-control: 2.75rem;
+  --target-primary: 3rem;
+  --target-small: 2.5rem;
+
+  /* Focus. */
+  --focus-width: 3px;
+  --focus-offset: 3px;
+
+  /* Content widths: form pages, and the saved links grid. */
+  --width-narrow: 46rem;
+  --width-wide: 72rem;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --color-ground: #f6f4ef;
+    --color-surface: #fff;
+    --color-raised: #efece5;
+    --color-border: #d9d4c9;
+    --color-control-border: #8a857b;
+    --color-field: var(--color-surface);
+    --color-ink: #1a1c1f;
+    --color-ink-secondary: #3d3a34;
+    --color-ink-muted: #5c5850;
+
+    /* Straw fails as text on light backgrounds, so links, addresses and the focus ring are
+       ochre. */
+    --color-accent: #7a5a00;
+    --color-accent-hover: #5c4400;
+    --color-primary-border: #7a5a00;
+    --color-on-primary: #1a1c1f;
+    --color-danger: #b42318;
+    --color-danger-border: var(--color-danger);
+    --color-on-danger: #fff;
+    --color-alert: #fdf0ee;
+    --color-alert-border: #f0c2bb;
+    --color-alert-ink: #8a1a12;
+    --color-backdrop: rgb(26 28 31 / 45%);
+  }
+}

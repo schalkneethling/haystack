@@ -14,14 +14,15 @@ function confirmationPage(bookmarkId: string, title: string, url: string): Respo
     "Delete this link?",
     html`<h1>Delete this link?</h1>
       <p><strong>Title:</strong> ${title}</p>
-      <p><strong>Address:</strong> ${url}</p>
+      <p><strong>Address:</strong> <span class="address">${url}</span></p>
       <p>Deleting is permanent. You can save the link again later.</p>
       <form method="post" action="${deleteAction(bookmarkId)}">
         <input type="hidden" name="confirm" value="yes">
-        <button type="submit">Delete</button>
+        <button class="button button-danger" type="submit">Delete</button>
       </form>
       <p><a href="/#bookmark-${bookmarkId}">Keep it and go back to your saved links</a></p>`,
     200,
+    { signedIn: true },
   );
 }
 
@@ -34,6 +35,7 @@ function notSavedPage(): Response {
       <p>It may have been deleted already.</p>
       <p><a href="/">Go to your saved links</a></p>`,
     404,
+    { signedIn: true },
   );
 }
 

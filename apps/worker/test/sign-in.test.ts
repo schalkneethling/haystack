@@ -365,7 +365,7 @@ describe("signing in from a signed-out save link", () => {
     });
     expect(form.status).toBe(200);
     const markup = await form.text();
-    expect(markup).toContain('<form method="post" action="/save">');
+    expect(markup).toContain('<form class="panel" method="post" action="/save">');
     expect(markup.includes('name="canonical_url"')).toBe("canonical_url" in expected);
     expect(markup).not.toContain("secret-value");
   });

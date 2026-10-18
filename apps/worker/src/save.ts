@@ -56,7 +56,11 @@ function capturedFields(parameters: URLSearchParams): Record<string, string> {
   return fields;
 }
 
-function invalidPage(invalidFields: readonly CaptureField[]): Response {
+// The save pages a signed-in user reaches. The invalid and refusal pages are also shown before
+// sign-in, so they take the signed-in state from the caller.
+const SIGNED_IN = { signedIn: true } as const;
+
+function invalidPage(invalidFields: readonly CaptureField[], signedIn: boolean): Response {
   return htmlResponse(
     "This link can't be saved",
     html`<h1>This link can't be saved</h1>
@@ -65,16 +69,18 @@ function invalidPage(invalidFields: readonly CaptureField[]): Response {
         ${invalidFields.map((field) => html`<li>${FIELD_LABELS[field]}: ${FIELD_RULES[field]}</li>`)}
       </ul>`,
     400,
+    { signedIn },
   );
 }
 
-function sensitivePage(reason: SensitiveUrlReason): Response {
+function sensitivePage(reason: SensitiveUrlReason, signedIn: boolean): Response {
   return htmlResponse(
     "This link can't be saved",
     html`<h1>This link can't be saved</h1>
       <p>${SENSITIVE_URL_EXPLANATIONS[reason]}</p>
       ${SENSITIVE_NOTICE}`,
     400,
+    { signedIn },
   );
 }
 
@@ -91,6 +97,7 @@ async function alreadySavedPage(db: Db, userId: string, existing: ListPosition):
     html`<h1>You already saved this link</h1>
       ${where}`,
     200,
+    SIGNED_IN,
   );
 }
 
@@ -142,14 +149,14 @@ function formPage(payload: CapturePayload, url: string, state: FormState): Respo
   const error =
     state.invalid === undefined
       ? ""
-      : html`<div role="alert"><p id="save-error">${CONFIRMED_ERRORS[state.invalid]}</p></div>`;
+      : html`<div class="alert" role="alert"><p id="save-error">${CONFIRMED_ERRORS[state.invalid]}</p></div>`;
   return htmlResponse(
     state.invalid === undefined ? "Save a link" : "Check the form",
     html`<h1>Save a link</h1>${error}
-      <form method="post" action="/save">
-        <p><strong>Address:</strong> <span id="save-address">${url}</span></p>
+      <form class="panel" method="post" action="/save">
+        <p class="address-field"><strong>Address:</strong> <span id="save-address" class="address">${url}</span></p>
         ${SENSITIVE_NOTICE}
-        <p>
+        <p class="field">
           <label for="confirmed-title">Title</label>
           <input
             id="confirmed-title"
@@ -160,7 +167,7 @@ function formPage(payload: CapturePayload, url: string, state: FormState): Respo
             value="${state.title}"${errorAttributes(state, "title")}
           >
         </p>
-        <p>
+        <p class="field">
           <label for="confirmed-description">Description</label>
           <textarea
             id="confirmed-description"
@@ -171,10 +178,11 @@ function formPage(payload: CapturePayload, url: string, state: FormState): Respo
         </p>
         ${hiddenInputs(payload, url)}
         <p>
-          <button type="submit" aria-describedby="save-address sensitive-notice">Save</button>
+          <button class="button button-primary" type="submit" aria-describedby="save-address sensitive-notice">Save</button>
         </p>
       </form>`,
     state.invalid === undefined ? 200 : 400,
+    SIGNED_IN,
   );
 }
 
@@ -193,19 +201,20 @@ async function existingBookmark(
 /**
  * Validates the captured fields and refuses a sensitive address. Returns the page that ends the
  * request, or the validated payload. Neither check depends on who is signed in, so a signed-out
- * GET /save gets the same page.
+ * GET /save gets the same page. `signedIn` only decides the page's header.
  */
 function screenCapture(
   captured: Record<string, string>,
+  signedIn: boolean,
 ): { page: Response } | { payload: CapturePayload } {
   const validation = validateCapturePayload(captured);
   if (!validation.ok) {
-    return { page: invalidPage(validation.invalidFields) };
+    return { page: invalidPage(validation.invalidFields, signedIn) };
   }
   // On the URL as submitted, before tracking parameters are removed (plan, "Save flow").
   const reason = detectSensitiveUrl(new URL(validation.payload.url));
   if (reason !== undefined) {
-    return { page: sensitivePage(reason) };
+    return { page: sensitivePage(reason, signedIn) };
   }
   return { payload: validation.payload };
 }
@@ -215,7 +224,7 @@ function screenCapture(
  * then show the form.
  */
 export async function showSaveForm(request: Request, db: Db, userId: string): Promise<Response> {
-  const screened = screenCapture(capturedFields(new URL(request.url).searchParams));
+  const screened = screenCapture(capturedFields(new URL(request.url).searchParams), true);
   if ("page" in screened) {
     return screened.page;
   }
@@ -242,7 +251,7 @@ export async function showSaveForm(request: Request, db: Db, userId: string): Pr
  * URLSearchParams from the validated payload, so a link from the extension comes back unchanged.
  */
 export function signedOutSave(url: URL): { page: Response } | { returnTo: string } {
-  const screened = screenCapture(capturedFields(url.searchParams));
+  const screened = screenCapture(capturedFields(url.searchParams), false);
   if ("page" in screened) {
     return screened;
   }
@@ -256,6 +265,7 @@ function savedPage(bookmarkId: string): Response {
     html`<h1>Saved</h1>
       <p><a href="/#bookmark-${bookmarkId}">See it in your saved links</a></p>`,
     200,
+    SIGNED_IN,
   );
 }
 
@@ -294,6 +304,7 @@ function notAFormPage(): Response {
     html`<h1>This link can't be saved</h1>
       <p>Save links from the form on the save page.</p>`,
     400,
+    SIGNED_IN,
   );
 }
 
@@ -317,7 +328,7 @@ export async function saveBookmark(request: Request, db: Db, userId: string): Pr
       captured[name] = normalizeLineBreaks(value);
     }
   }
-  const screened = screenCapture(captured);
+  const screened = screenCapture(captured, true);
   if ("page" in screened) {
     return screened.page;
   }

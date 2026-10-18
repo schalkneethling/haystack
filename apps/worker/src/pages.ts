@@ -1,8 +1,11 @@
 // Pages that every phase shares: sign-in outcomes and "not found". None of them interpolates
-// user data; later pages use the same `html` helper for anything that does.
+// user data; later pages use the same `html` helper for anything that does. The sign-in outcomes
+// are shown to someone who is not signed in, so their header has the wordmark only.
 import { AUTH_FLOW_LIFETIME_MS } from "./auth/auth-flows.ts";
 import { html } from "./html.ts";
 import { htmlResponse } from "./page.ts";
+
+const SIGNED_OUT = { signedIn: false } as const;
 
 const signInAgain = html`<p><a href="/auth/sign-in">Sign in again</a></p>`;
 
@@ -16,6 +19,7 @@ export function signInLinkExpiredPage(): Response {
       </p>
       ${signInAgain}`,
     400,
+    SIGNED_OUT,
   );
 }
 
@@ -26,6 +30,7 @@ export function signInFailedPage(): Response {
       <p>Google could not confirm your sign-in.</p>
       ${signInAgain}`,
     400,
+    SIGNED_OUT,
   );
 }
 
@@ -36,6 +41,7 @@ export function accountNotAllowedPage(): Response {
       <p>Haystack is invite-only. Sign in with an account that has access.</p>
       <p><a href="/auth/sign-in?select_account">Sign in with a different account</a></p>`,
     403,
+    SIGNED_OUT,
   );
 }
 
@@ -45,14 +51,20 @@ export function signedOutPage(): Response {
     html`<h1>You are signed out of Haystack</h1>
       ${signInAgain}`,
     200,
+    SIGNED_OUT,
   );
 }
 
-export function notFoundPage(): Response {
+/**
+ * `signedIn` is whether the router knows the visitor is signed in. Only then does the header
+ * show the navigation and Sign out.
+ */
+export function notFoundPage(signedIn: boolean): Response {
   return htmlResponse(
     "Page not found",
     html`<h1>Page not found</h1>
       <p><a href="/">Go to Haystack</a></p>`,
     404,
+    { signedIn },
   );
 }

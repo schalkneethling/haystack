@@ -169,7 +169,8 @@ async function handleAuthRoute(
   if (path === "/auth/callback" && request.method === "GET") {
     return callback(request, env, db);
   }
-  return notFoundPage();
+  // /auth/* routes never look up a session, so this page has the signed-out header.
+  return notFoundPage(false);
 }
 
 // Routes that need a session. Each phase adds its own.
@@ -192,7 +193,7 @@ async function handleAppRoute(
   if (deleteId !== undefined) {
     return deleteBookmark(request, db, session.user.id, deleteId);
   }
-  return notFoundPage();
+  return notFoundPage(true);
 }
 
 // Where sign-in returns to, or the page to show instead of signing in. A signed-out GET or HEAD

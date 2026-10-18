@@ -1,0 +1,485 @@
+/*
+ * The stylesheet for every page the Worker renders. It uses only the tokens in tokens.css, which
+ * each page links first. See "Design" in plans/haystack-v1-implementation-plan.md.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  --gutter: clamp(var(--space-m), 5vi, var(--space-l));
+  --page-width: var(--width-narrow);
+
+  background-color: var(--color-ground);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+  margin: 0;
+  overflow-wrap: break-word;
+}
+
+/* The saved links page is wider, so its grid has room for several columns. */
+.layout-wide {
+  --page-width: var(--width-wide);
+}
+
+h1,
+h2,
+p,
+ul,
+ol {
+  margin: 0;
+}
+
+h1 {
+  font-size: var(--text-h1);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: var(--leading-h1);
+}
+
+h2 {
+  line-height: var(--leading-heading);
+}
+
+a {
+  color: var(--color-accent);
+  text-underline-offset: 0.15em;
+}
+
+a:hover {
+  color: var(--color-accent-hover);
+}
+
+:focus-visible {
+  outline: var(--focus-width) solid var(--color-focus);
+  outline-offset: var(--focus-offset);
+}
+
+/* Layout. The header and the main content share one width, so they line up. */
+
+.site-header-inner,
+main {
+  inline-size: min(100% - 2 * var(--gutter), var(--page-width));
+  margin-inline: auto;
+}
+
+.site-header-inner {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-s);
+  justify-content: space-between;
+  padding-block: 1.25rem;
+}
+
+main {
+  padding-block: var(--space-2xl) var(--space-3xl);
+}
+
+/* Block margins, not a flex gap, so an empty element such as the list's status region takes no
+   space: its margins collapse with the next element's. */
+main > * + * {
+  margin-block-start: var(--space-l);
+}
+
+/* Text directly in the page keeps a readable line length on the wide page too. */
+main > :where(p, ul, div) {
+  max-inline-size: var(--width-narrow);
+}
+
+/* The header. */
+
+.wordmark {
+  align-items: center;
+  color: var(--color-ink);
+  display: inline-flex;
+  font-size: var(--text-wordmark);
+  font-weight: 700;
+  gap: 0.625rem;
+  letter-spacing: -0.02em;
+  min-block-size: var(--target-small);
+  text-decoration: none;
+}
+
+.wordmark:hover {
+  color: var(--color-ink);
+}
+
+.wordmark-dot {
+  background-color: var(--color-primary);
+  block-size: 0.75rem;
+  border-radius: 50%;
+  inline-size: 0.75rem;
+}
+
+.site-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.nav-link {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  color: var(--color-ink);
+  display: inline-flex;
+  font-size: 1rem;
+  min-block-size: var(--target-small);
+  padding-inline: 0.875rem;
+}
+
+.nav-link:hover {
+  color: var(--color-accent);
+}
+
+.nav-link[aria-current="page"] {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary-border);
+  color: var(--color-on-primary);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.nav-link[aria-current="page"]:hover {
+  background-color: var(--color-primary-hover);
+}
+
+/* Buttons. Every button is a pill. The plain one is secondary. */
+
+.button {
+  align-items: center;
+  background-color: var(--color-raised);
+  border: 1px solid var(--color-control-border);
+  border-radius: var(--radius-pill);
+  color: var(--color-ink);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  justify-content: center;
+  min-block-size: var(--target-control);
+  padding-block: var(--space-xs);
+  padding-inline: var(--space-l);
+}
+
+.button:hover {
+  background-color: var(--color-border);
+}
+
+.button-primary {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary-border);
+  color: var(--color-on-primary);
+  font-weight: 700;
+  min-block-size: var(--target-primary);
+  padding-inline: var(--space-xl);
+}
+
+.button-primary:hover {
+  background-color: var(--color-primary-hover);
+}
+
+.button-danger,
+.button-danger:hover {
+  background-color: var(--color-danger);
+  border-color: var(--color-danger);
+  color: var(--color-on-danger);
+  font-weight: 700;
+}
+
+.button-danger-outline {
+  background-color: transparent;
+  border-color: var(--color-danger-border);
+  color: var(--color-danger);
+}
+
+.button-danger-outline:hover {
+  background-color: var(--color-danger);
+  border-color: var(--color-danger);
+  color: var(--color-on-danger);
+}
+
+.button-small {
+  font-size: var(--text-small);
+  min-block-size: var(--target-small);
+  padding-inline: var(--space-m);
+}
+
+/* The dialog's buttons while a delete runs. They stay focusable (delete-dialog.js). */
+.button[aria-disabled="true"] {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a,
+  .button {
+    transition:
+      background-color 120ms ease,
+      color 120ms ease;
+  }
+}
+
+/* Forms. */
+
+.panel {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-l);
+  padding: clamp(var(--space-m), 5vi, var(--space-xl));
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.field label {
+  font-weight: 600;
+}
+
+.field input,
+.field textarea {
+  background-color: var(--color-field);
+  border: 1px solid var(--color-control-border);
+  border-radius: var(--radius-field);
+  color: var(--color-ink);
+  font: inherit;
+  inline-size: 100%;
+  min-block-size: var(--target-primary);
+  padding-block: var(--space-s);
+  padding-inline: 0.875rem;
+}
+
+.field textarea {
+  /* A field the reader resizes still fits the form. */
+  max-inline-size: 100%;
+}
+
+/* An inset shadow doubles the border without moving the text. */
+.field [aria-invalid="true"] {
+  border-color: var(--color-danger);
+  box-shadow: inset 0 0 0 1px var(--color-danger);
+}
+
+/* "Address:" above the address, which the form shows as read-only text. */
+.address-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+}
+
+.address-field strong {
+  color: var(--color-ink-muted);
+  font-size: var(--text-xsmall);
+  font-weight: 500;
+}
+
+/* A saved address can be one long word, so it breaks anywhere rather than scroll (#33). */
+.address {
+  color: var(--color-accent);
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  overflow-wrap: anywhere;
+}
+
+/* Reserved for the address form at the top of the saved links page (#97), so that issue adds
+   only markup: a .panel form with a .address-form-label, a .address-form-hint, and a
+   .address-form-row holding the .address-input and a .button-primary. */
+.address-form-label {
+  font-size: var(--text-wordmark);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.address-form-hint {
+  color: var(--color-ink-muted);
+  font-size: var(--text-small);
+}
+
+.address-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.625rem;
+  max-inline-size: var(--width-narrow);
+}
+
+.address-input {
+  background-color: var(--color-field);
+  border: 1px solid var(--color-control-border);
+  border-radius: var(--radius-pill);
+  color: var(--color-ink);
+  flex: 1 1 18rem;
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  min-block-size: var(--target-primary);
+  min-inline-size: 0;
+  padding-block: var(--space-s);
+  padding-inline: 1.125rem;
+}
+
+/* Notices and messages. */
+
+.notice {
+  color: var(--color-ink-muted);
+  font-size: var(--text-small);
+}
+
+.panel .notice {
+  background-color: var(--color-raised);
+  border-radius: var(--radius-field);
+  color: var(--color-ink-secondary);
+  padding-block: 0.875rem;
+  padding-inline: var(--space-m);
+}
+
+/* The alert's icon is drawn here, so it adds nothing a screen reader would read. */
+.alert {
+  align-items: flex-start;
+  background-color: var(--color-alert);
+  border: 1px solid var(--color-alert-border);
+  border-radius: var(--radius-card);
+  color: var(--color-alert-ink);
+  display: flex;
+  font-weight: 600;
+  gap: var(--space-s);
+  padding-block: var(--space-m);
+  padding-inline: 1.25rem;
+}
+
+.alert::before {
+  background:
+    linear-gradient(var(--color-danger), var(--color-danger)) 50% 0.25rem / 2px 0.5rem no-repeat,
+    linear-gradient(var(--color-danger), var(--color-danger)) 50% 0.8125rem / 2px 2px no-repeat;
+  block-size: 1.375rem;
+  border: 2px solid var(--color-danger);
+  border-radius: 50%;
+  content: "";
+  flex: none;
+  inline-size: 1.375rem;
+}
+
+/* The live region stays in the page when it is empty, so only its message is drawn. */
+.status > p {
+  background-color: var(--color-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-field);
+  padding-block: var(--space-s);
+  padding-inline: var(--space-m);
+}
+
+.empty-state {
+  background-color: var(--color-surface);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-card);
+  color: var(--color-ink-secondary);
+  padding: var(--space-l);
+}
+
+/* The saved links grid. */
+
+.cards {
+  display: grid;
+  gap: var(--space-m);
+  grid-template-columns: repeat(auto-fill, minmax(min(18rem, 100%), 1fr));
+  padding: 0;
+}
+
+/* A flex item draws no list marker, and keeping list-style lets WebKit keep the list's role. */
+.cards > li {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  min-inline-size: 0;
+  padding: 1.25rem;
+}
+
+.cards h2 {
+  font-size: var(--text-card-title);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.cards h2 a {
+  color: var(--color-ink);
+}
+
+.cards h2 a:hover {
+  color: var(--color-accent);
+}
+
+.card-date {
+  color: var(--color-ink-muted);
+  font-size: var(--text-xsmall);
+}
+
+.cards .address {
+  font-size: var(--text-address-small);
+}
+
+.card-description {
+  color: var(--color-ink-secondary);
+  font-size: var(--text-small);
+  margin-block-start: var(--space-3xs);
+}
+
+/* Pinned to the bottom, so the Delete buttons of a row line up. */
+.cards form {
+  margin-block-start: auto;
+  padding-block-start: var(--space-s);
+}
+
+/* The delete dialog, which delete-dialog.js builds. */
+
+.delete-dialog {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  color: var(--color-ink);
+  max-inline-size: min(30rem, 100% - 2 * var(--gutter));
+  padding: var(--space-l);
+}
+
+.delete-dialog[open] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-s);
+}
+
+.delete-dialog > :not(button) {
+  flex-basis: 100%;
+}
+
+.delete-dialog h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.delete-dialog-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.delete-dialog-notice {
+  color: var(--color-ink-secondary);
+  margin-block-end: var(--space-xs);
+}
+
+.delete-dialog::backdrop {
+  background-color: var(--color-backdrop);
+}

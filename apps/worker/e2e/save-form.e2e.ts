@@ -49,8 +49,16 @@ test.describe("other /save pages have no axe violations", () => {
 
 test("the save form can be completed with the keyboard alone", async ({ page }) => {
   await page.goto(saveUrl(fields));
-  await page.keyboard.press("Tab");
-  await expect(page.getByLabel("Title")).toBeFocused();
+  // The header's three stops come first: the wordmark, the navigation and Sign out.
+  for (const control of [
+    page.getByRole("link", { name: "Haystack", exact: true }),
+    page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Saved links" }),
+    page.getByRole("button", { name: "Sign out" }),
+    page.getByLabel("Title"),
+  ]) {
+    await page.keyboard.press("Tab");
+    await expect(control).toBeFocused();
+  }
   await page.keyboard.press("ControlOrMeta+A");
   await page.keyboard.type("Typed title");
   await page.keyboard.press("Tab");
