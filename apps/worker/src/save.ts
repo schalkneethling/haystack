@@ -15,10 +15,11 @@ import {
   withoutSensitiveCanonicalUrl,
 } from "@haystack/schemas";
 import { and, eq } from "drizzle-orm";
+import { addressFormPage, type AddressFormState } from "./address-form.ts";
 import type { Db } from "./db/client.ts";
 import { bookmarks } from "./db/schema.ts";
 import { html } from "./html.ts";
-import { SENSITIVE_NOTICE } from "./notices.ts";
+import { fieldError, SENSITIVE_NOTICE } from "./notices.ts";
 import { htmlResponse } from "./page.ts";
 import { isInRecentSaves, RECENT_SAVES_LIMIT, type ListPosition } from "./recent-saves.ts";
 
@@ -34,8 +35,9 @@ const FIELD_LABELS: Record<CaptureField, string> = {
 
 // What a valid value looks like, shown next to each invalid field.
 const TEXT_RULE = "it is too long";
+const URL_RULE = `a complete https:// link, without spaces and at most ${CAPTURE_CAPS.url.toLocaleString("en")} characters long`;
 const FIELD_RULES: Record<CaptureField, string> = {
-  url: `Haystack saves only secure pages, so it must be a complete https:// link, without spaces and at most ${CAPTURE_CAPS.url.toLocaleString("en")} characters long`,
+  url: `Haystack saves only secure pages, so it must be ${URL_RULE}`,
   canonical_url: `it must be a complete http:// or https:// link, without spaces and at most ${CAPTURE_CAPS.canonical_url.toLocaleString("en")} characters long`,
   title: TEXT_RULE,
   description: TEXT_RULE,
@@ -43,6 +45,13 @@ const FIELD_RULES: Record<CaptureField, string> = {
   og_description: TEXT_RULE,
   og_site_name: TEXT_RULE,
 };
+
+// The address form's errors for an address that fails validation. The rule is the one the
+// validation page gives for the address.
+const ADDRESS_ERRORS = {
+  missing: "Enter the address of a page, starting with https://.",
+  invalid: `Haystack saves only secure pages, so the address must be ${URL_RULE}.`,
+} as const;
 
 /** The captured fields from the query string. A repeated key uses its first value. */
 function capturedFields(parameters: URLSearchParams): Record<string, string> {
@@ -56,8 +65,8 @@ function capturedFields(parameters: URLSearchParams): Record<string, string> {
   return fields;
 }
 
-// The save pages a signed-in user reaches. The invalid and refusal pages are also shown before
-// sign-in, so they take the signed-in state from the caller.
+// The save pages a signed-in user reaches. The validation page and the address form are also
+// shown before sign-in, so they take the signed-in state from the caller.
 const SIGNED_IN = { signedIn: true } as const;
 
 function invalidPage(invalidFields: readonly CaptureField[], signedIn: boolean): Response {
@@ -73,14 +82,15 @@ function invalidPage(invalidFields: readonly CaptureField[], signedIn: boolean):
   );
 }
 
-function sensitivePage(reason: SensitiveUrlReason, signedIn: boolean): Response {
+// Only POST /save shows this page. GET /save shows the address form with the same reason.
+function sensitivePage(reason: SensitiveUrlReason): Response {
   return htmlResponse(
     "This link can't be saved",
     html`<h1>This link can't be saved</h1>
       <p>${SENSITIVE_URL_EXPLANATIONS[reason]}</p>
       ${SENSITIVE_NOTICE}`,
     400,
-    { signedIn },
+    SIGNED_IN,
   );
 }
 
@@ -143,13 +153,8 @@ function errorAttributes(state: FormState, field: ConfirmedField) {
 }
 
 function formPage(payload: CapturePayload, url: string, state: FormState): Response {
-  // The alert is on a wrapper, and the field's aria-describedby points at the plain paragraph
-  // inside it. VoiceOver in WebKit does not read a description from an element that has a
-  // live-region role itself. See "Save flow" in plans/haystack-v1-implementation-plan.md.
   const error =
-    state.invalid === undefined
-      ? ""
-      : html`<div class="alert" role="alert"><p id="save-error">${CONFIRMED_ERRORS[state.invalid]}</p></div>`;
+    state.invalid === undefined ? "" : fieldError("save-error", CONFIRMED_ERRORS[state.invalid]);
   return htmlResponse(
     state.invalid === undefined ? "Save a link" : "Check the form",
     html`<h1>Save a link</h1>${error}
@@ -198,33 +203,98 @@ async function existingBookmark(
     .get();
 }
 
+/** Why the checks reject a link: fields that fail validation, or a flagged page address. */
+type Rejection =
+  | { readonly invalidFields: readonly CaptureField[] }
+  | { readonly sensitive: SensitiveUrlReason };
+
 /**
- * Validates the captured fields and refuses a sensitive address. Returns the page that ends the
- * request, or the validated payload. Neither check depends on who is signed in, so a signed-out
- * GET /save gets the same page. `signedIn` only decides the page's header.
+ * Validates the captured fields and refuses a sensitive address. Neither check depends on who is
+ * signed in, so a signed-out GET /save is screened the same way.
  */
 function screenCapture(
   captured: Record<string, string>,
-  signedIn: boolean,
-): { page: Response } | { payload: CapturePayload } {
+): { rejection: Rejection } | { payload: CapturePayload } {
   const validation = validateCapturePayload(captured);
   if (!validation.ok) {
-    return { page: invalidPage(validation.invalidFields, signedIn) };
+    return { rejection: { invalidFields: validation.invalidFields } };
   }
   // On the URL as submitted, before tracking parameters are removed (plan, "Save flow").
   const reason = detectSensitiveUrl(new URL(validation.payload.url));
   if (reason !== undefined) {
-    return { page: sensitivePage(reason, signedIn) };
+    return { rejection: { sensitive: reason } };
   }
   return { payload: validation.payload };
 }
 
 /**
- * GET /save: validate, refuse sensitive URLs, drop a sensitive canonical URL, find duplicates,
- * then show the form.
+ * The address form for an address that fails validation. The typed value goes back in the
+ * field, unless it parses as a URL that the sensitive URL check flags. `detectSensitiveUrl`
+ * otherwise runs only on a valid address, so an `http:` link with `?access_token=…` would be
+ * echoed. That one gets the refusal's reason instead, which the user needs to hear first.
+ */
+function rejectedAddress(typed: string): AddressFormState {
+  const parsed = URL.parse(typed.trim());
+  const reason = parsed === null ? undefined : detectSensitiveUrl(parsed);
+  if (reason !== undefined) {
+    return { value: "", error: SENSITIVE_URL_EXPLANATIONS[reason] };
+  }
+  return typed.trim() === ""
+    ? { value: "", error: ADDRESS_ERRORS.missing }
+    : { value: typed, error: ADDRESS_ERRORS.invalid };
+}
+
+/**
+ * The page GET /save shows for a link the checks reject, whether it came from the address form,
+ * a hand-built link or the extension. A rejected address gets the address form again, with the
+ * reason, so the user can correct it there, and a flagged address is never put back in the
+ * field. A link whose address passes but whose other fields fail gets the validation page,
+ * because the address form has no field for them. Only a hand-built link can reach that page,
+ * because the extension leaves out a field that fails validation.
+ */
+function rejectedLinkPage(
+  captured: Record<string, string>,
+  rejection: Rejection,
+  signedIn: boolean,
+): Response {
+  if ("sensitive" in rejection) {
+    return addressFormPage(
+      { value: "", error: SENSITIVE_URL_EXPLANATIONS[rejection.sensitive] },
+      signedIn,
+    );
+  }
+  if (rejection.invalidFields.includes("url")) {
+    return addressFormPage(rejectedAddress(captured.url ?? ""), signedIn);
+  }
+  return invalidPage(rejection.invalidFields, signedIn);
+}
+
+/** Screens a GET /save link. Returns the page that ends the request, or the validated payload. */
+function screenSaveLink(
+  captured: Record<string, string>,
+  signedIn: boolean,
+): { page: Response } | { payload: CapturePayload } {
+  const screened = screenCapture(captured);
+  return "rejection" in screened
+    ? { page: rejectedLinkPage(captured, screened.rejection, signedIn) }
+    : screened;
+}
+
+// A link with no captured field, such as a bare /save, carries nothing to screen or to save.
+function hasCapturedFields(captured: Record<string, string>): boolean {
+  return Object.keys(captured).length > 0;
+}
+
+/**
+ * GET /save: without a captured field, the address form. Otherwise validate, refuse sensitive
+ * URLs, drop a sensitive canonical URL, find duplicates, then show the form.
  */
 export async function showSaveForm(request: Request, db: Db, userId: string): Promise<Response> {
-  const screened = screenCapture(capturedFields(new URL(request.url).searchParams), true);
+  const captured = capturedFields(new URL(request.url).searchParams);
+  if (!hasCapturedFields(captured)) {
+    return addressFormPage({ value: "" }, true);
+  }
+  const screened = screenSaveLink(captured, true);
   if ("page" in screened) {
     return screened.page;
   }
@@ -243,15 +313,22 @@ export async function showSaveForm(request: Request, db: Db, userId: string): Pr
  * query to return to after it. Sign-in stores the return target in auth_flows, and a URL that
  * carries a secret is never stored (plan, decision 18), so a link that enters through /save is
  * screened before the redirect, and /auth/sign-in screens a save link it is given the same way.
- * An invalid or sensitive link gets its page now, because signing in would not change it.
+ * A rejected link gets its page now, because signing in would not change it.
  *
  * The return target is built from the validated payload, without a canonical URL the form
  * leaves out, so it holds only screened values: no unknown key, no second `url`, and no empty
  * field, which validation omits. The extension builds its save URL the same way, with
  * URLSearchParams from the validated payload, so a link from the extension comes back unchanged.
+ * A link with no captured field, such as a bare /save, returns to the bare path, which shows the
+ * address form after sign-in. It holds no value at all, so it stores nothing that could be a
+ * secret.
  */
 export function signedOutSave(url: URL): { page: Response } | { returnTo: string } {
-  const screened = screenCapture(capturedFields(url.searchParams), false);
+  const captured = capturedFields(url.searchParams);
+  if (!hasCapturedFields(captured)) {
+    return { returnTo: url.pathname };
+  }
+  const screened = screenSaveLink(captured, false);
   if ("page" in screened) {
     return screened;
   }
@@ -328,9 +405,14 @@ export async function saveBookmark(request: Request, db: Db, userId: string): Pr
       captured[name] = normalizeLineBreaks(value);
     }
   }
-  const screened = screenCapture(captured, true);
-  if ("page" in screened) {
-    return screened.page;
+  // The form's own hidden inputs always pass, so a rejection means a tampered or hand-built
+  // submission, which gets the validation or refusal page rather than the address form.
+  const screened = screenCapture(captured);
+  if ("rejection" in screened) {
+    const { rejection } = screened;
+    return "sensitive" in rejection
+      ? sensitivePage(rejection.sensitive)
+      : invalidPage(rejection.invalidFields, true);
   }
   // Hidden inputs can be tampered with, so this runs again, and the bookmark is stored without it.
   const payload = withoutSensitiveCanonicalUrl(screened.payload);

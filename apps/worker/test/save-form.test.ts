@@ -161,22 +161,40 @@ describe("GET /save without a session", () => {
   });
 
   // Signing in cannot make an invalid link valid. An invalid link is not screened for secrets,
-  // so storing it as a return target could store one.
+  // so storing it as a return target could store one. An invalid address gets the address form
+  // (#97), and a link whose other fields fail gets the validation page.
   it.each([
     ["an http: URL", saveUrl({ url: "http://example.com/?access_token=secret-value" })],
     [
       "a title over its cap",
       saveUrl({ url: "https://example.com/?access_token=secret-value", title: "a".repeat(201) }),
     ],
-    ["no query at all", "/save"],
-  ])("shows the validation page for %s, without a redirect", async (_, path) => {
+  ])("shows the page a signed-in user sees for %s, without a redirect", async (_, path) => {
     const before = await rowCounts();
     const signedOut = await getPath(path);
     expect(signedOut.status).toBe(400);
     expect(signedOut.headers.get("location")).toBeNull();
+    const markup = await signedOut.text();
+    expect(markup).not.toContain("secret-value");
     const signedIn = await (await getPath(path, owner.cookie)).text();
-    expect(mainContent(await signedOut.text())).toBe(mainContent(signedIn));
+    expect(mainContent(markup)).toBe(mainContent(signedIn));
     expect(await rowCounts()).toEqual(before);
+  });
+
+  // A link with no captured field carries nothing that could be a secret, and after sign-in it
+  // shows the address form (#97). Before #97 a bare /save showed the validation page instead.
+  it.each([
+    ["no query at all", "/save"],
+    ["only an unknown key", "/save?note=secret-value"],
+  ])("sends a link with %s to sign-in, returning to /save", async (_, path) => {
+    const response = await getPath(path);
+    expect(response.status).toBe(302);
+    const location = response.headers.get("location") ?? "";
+    expect(location).toBe("/auth/sign-in?return_to=%2Fsave");
+
+    expect((await getPath(location)).status).toBe(302);
+    const { results } = await (await db()).prepare("SELECT return_to FROM auth_flows").all();
+    expect(results).toEqual([{ return_to: "/save" }]);
   });
 
   // The return target is built from the validated payload, without a canonical URL the form
@@ -321,14 +339,25 @@ describe("GET /save", () => {
     await expectValidHtml(markup);
   });
 
+  // An address that fails gets the address form again (#97), which address-form.test.ts covers
+  // in full. These were validation pages before #97.
   it.each([
     ["a javascript: URL", { url: "javascript:alert(1)" }],
     ["a data: URL", { url: "data:text/html,hi" }],
     ["an http: URL", { url: "http://example.com/" }],
     ["no URL", { title: "x" }],
-    ["a title over its cap", { url: "https://example.com/", title: "a".repeat(201) }],
-  ])("shows a validation page for %s", async (_, fields) => {
+  ])("shows the address form again for %s", async (_, fields) => {
     const response = await getSave(fields);
+    expect(response.status).toBe(400);
+    const markup = await response.text();
+    // The title is the first thing a screen reader announces when the page opens.
+    expect(markup).toContain("<title>Check the address - Haystack</title>");
+    expect(markup).toContain('<h1><label for="save-url">Save a link</label></h1>');
+    await expectValidHtml(markup);
+  });
+
+  it("shows a validation page for a title over its cap", async () => {
+    const response = await getSave({ url: "https://example.com/", title: "a".repeat(201) });
     expect(response.status).toBe(400);
     const markup = await response.text();
     // The title is the first thing a screen reader announces when the page opens.
@@ -341,7 +370,7 @@ describe("GET /save", () => {
     const before = await rowCounts();
     const markup = await (await getSave({ url: "http://example.com/" })).text();
     expect(markup).toContain(
-      "<li>The address of the page: Haystack saves only secure pages, so it must be a complete https:// link, without spaces and at most 2,048 characters long</li>",
+      '<p id="save-url-error">Haystack saves only secure pages, so the address must be a complete https:// link, without spaces and at most 2,048 characters long.</p>',
     );
     expect(await rowCounts()).toEqual(before);
   });
@@ -366,7 +395,8 @@ describe("GET /save", () => {
     const response = await getSave({ url });
     expect(response.status).toBe(400);
     const markup = await response.text();
-    expect(markup).toContain("<title>This link can&#39;t be saved - Haystack</title>");
+    // The address form again (#97), where this was the refusal page before.
+    expect(markup).toContain("<title>Check the address - Haystack</title>");
     expect(markup).toContain(explanation);
     expect(markup).not.toContain("secret-value");
     await expectValidHtml(markup);

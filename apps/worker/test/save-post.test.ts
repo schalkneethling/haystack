@@ -236,6 +236,10 @@ describe("POST /save", () => {
     });
     expect(response.status).toBe(400);
     const markup = await response.text();
+    // A POST keeps the refusal page. Only GET /save shows the address form (#97), because the
+    // form's own hidden inputs always pass the checks.
+    expect(markup).toContain("<h1>This link can't be saved</h1>");
+    expect(markup).not.toContain('id="save-url"');
     expect(markup).not.toContain("secret-value");
     await expectValidHtml(markup);
     expect(await bookmarks()).toHaveLength(0);
