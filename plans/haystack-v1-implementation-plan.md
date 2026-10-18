@@ -874,7 +874,7 @@ No endpoint accepts a `user_id` from the client. Pages never send `Referrer-Poli
 
 ## Secrets and configuration
 
-`.env.schema` declares every variable for varlock, with sensitive values resolved from 1Password. varlock resolves a schema from the directory where it runs. The root `.env.schema` holds shared items (`APP_ENV`), and `apps/worker/.env.schema` imports it with `@import(../../)` and declares the Worker's own variables and the 1Password plugin. The root `varlock load` in `quality` therefore needs no 1Password access, and CI needs no secrets. varlock and 1Password are used for local development only, and the 1Password desktop app authenticates (`allowAppAuth=true`, account `my.1password.com`). Deployed Workers read secrets set in Cloudflare, and CI needs no secrets. See #16 for the deploy procedure.
+`.env.schema` declares every variable for varlock, with sensitive values resolved from 1Password. varlock resolves a schema from the directory where it runs. The root `.env.schema` holds shared items (`APP_ENV`), and `apps/worker/.env.schema` imports it with `@import(../../)` and declares the Worker's own variables and the 1Password plugin. The root `varlock load` in `quality` therefore needs no 1Password access, and CI needs no secrets. varlock and 1Password are used for local development only, and the 1Password desktop app authenticates (`allowAppAuth=true`, account `my.1password.com`). Deployed Workers read secrets set in Cloudflare, and CI needs no secrets. "Deploys" below describes the deploy procedure.
 
 Local development goes through `varlock-wrangler`: `vp run dev` in `apps/worker` runs `varlock-wrangler dev`. varlock passes the resolved values to Wrangler through a named pipe (`--env-file` pointing at a FIFO), so secret values appear neither on disk nor in process arguments. This was verified in #8. Every item in `apps/worker/.env.schema` is sensitive unless it is marked `@public`, so varlock masks it in its output. Wrangler then loads them into its own `process.env`, so the local `workerd` processes inherit the secret in their environment, which only the same user can read. Removing that copy is suggested upstream in cloudflare/workers-sdk discussion #16197. `apps/worker/vite.config.ts` keeps the plain `cloudflare()` plugin and not varlock's Vite wrapper. The wrapper resolves every variable when the Vite configuration loads, so every build, including the build test in CI, would need 1Password. _Decided 2026-10-13 (#43, resolving #15): local development stays on `varlock-wrangler dev`. Static assets are plain, unbundled files in `apps/web/public`, with no build step. `apps/worker/wrangler.jsonc` sets `assets.directory` to that folder, which `wrangler dev` and the test harness (and so the Playwright fixtures) read. `vp build` ignores that field and copies Vite's `publicDir` instead, so `apps/worker/vite.config.ts` names the same folder, and the build test checks that the dialog script is in the output. A request for an existing file is served without running the Worker, so the Worker's headers do not apply: `apps/web/public/_headers` adds `nosniff` (the CSP stays on the HTML, where it has effect). The asset server sends `Cache-Control: public, max-age=0, must-revalidate` with an ETag, which is right for unhashed file names. `vp check` type-checks the scripts through `apps/web/tsconfig.json` (`checkJs`). A `vp dev` move would need the Vite plugin's experimental `_headers` support, so it is not planned._
 
@@ -910,6 +910,42 @@ The Worker reads flags through a binding, declared as follows (field names check
 ```
 
 One configuration module reads every flag once per request, or once per sweep run, and passes the values on. No other code calls the binding. Each flag's default value is a constant in that module, so the defaults are reviewed in code. The typed getters return the default for a missing flag, a flag that cannot be evaluated, or a type mismatch, and they throw for an empty or non-string key and for any other error (see Q13). The module therefore uses constant, non-empty keys, and it catches any error from the binding and uses the defaults, so a Flagship outage means the Worker runs with those defaults. The defaults are the safe values: both questions, the Score signal, batched mode, and the sweep enabled with a small batch size.
+
+### Deploys
+
+**The deploy command is `vp run deploy` in `apps/worker`, which runs `vp build && wrangler deploy` (#16).** The Cloudflare Vite plugin writes the built Worker and its Wrangler configuration to `dist/haystack/`, and writes `.wrangler/deploy/config.json`, which points at that configuration. Plain `wrangler deploy` follows the pointer and reports "Using redirected Wrangler configuration". Building in the same command means a deploy never uploads an old build. Git ignores both folders. `vp run deploy --dry-run` builds and checks everything without uploading, because the script passes the flag on to Wrangler.
+
+**Never run `varlock-wrangler deploy`.** varlock's Wrangler wrapper resolves `apps/worker/.env.schema` and hands every sensitive value to Wrangler through `--secrets-file`, so it would upload the local development secrets to the deployed Worker (`handleDeploy` in `@varlock/cloudflare-integration` 1.6.1). Plain `wrangler deploy` uploads a secret only when it is given `--secrets-file`. It reads `.env`, `.dev.vars` and `process.env` only for local development (`getVarsForDev` in Wrangler 4.149.0). varlock is for `vp run dev` only.
+
+**Secrets are set in Cloudflare with `wrangler secret put <NAME>`, one at a time, or in the Cloudflare dashboard.** The command has no option for the value. In a terminal it asks with a masked prompt, and otherwise it reads the value from standard input. Never put a value on the command line, where shell history and the process list keep it. Piping it from 1Password means it is never typed, copied to the clipboard or written to disk. Run this from `apps/worker`, with the reference that `apps/worker/.env.schema` uses for the secret. Wrangler trims the trailing newline that `op read` prints.
+
+```sh
+op read "<reference from apps/worker/.env.schema>" | vp exec wrangler secret put GOOGLE_CLIENT_SECRET
+```
+
+**The first deploy needs the secret set before the Worker exists.** Because of `secrets.required`, a deploy fails when a listed secret is not set. For a Worker that does not exist yet, Wrangler stops before uploading anything, and its message suggests `wrangler deploy --secrets-file`. Don't follow that suggestion, because it means writing the secret to a file. Run `wrangler secret put` first instead. When no Worker has the configured name, it asks whether to create one, which it also does without asking when it has no terminal, as in the pipe above. It then creates a placeholder Worker whose fetch handler does nothing, and adds the secret to it. The first `vp run deploy` replaces the placeholder. On the first deploy, run `vp run deploy` once before setting the secret, to confirm that it fails and uploads nothing. That is the check #16 asks for.
+
+**A secret added later** (Milestone 2 adds three) is set with `wrangler secret put` before deploying the change that adds it to `secrets.required`. For a Worker that already exists, Cloudflare rejects a deploy that is missing a listed secret, and Wrangler reports the missing names.
+
+**The order for each deploy:**
+
+1. `main` passes `quality`.
+2. Take the export and apply the migrations remotely (see "Data model"). Migrations go first, because every migration stays compatible with the Worker version that is already deployed.
+3. Run `vp run deploy`.
+
+**Production shares the local development Google OAuth client.** _Decided 2026-10-18 (#16)._ Haystack has one user, so one client keeps the Google setup in one place:
+
+- The production redirect URI, `https://<worker>.<subdomain>.workers.dev/auth/callback`, is added to the client next to `http://localhost:5173/auth/callback`.
+- `GOOGLE_CLIENT_ID` stays a single value in `vars`.
+- Cloudflare holds the same secret as the 1Password item.
+
+The cost is that production and local development share one secret. The development copy passes through the local Wrangler processes' environment (see above), so a leak there is a leak of the production secret too. If that happens:
+
+1. Rotate the secret in Google Cloud Console.
+2. Update the 1Password item.
+3. Set the new value with `wrangler secret put`.
+
+A separate production client becomes worth having if anyone else runs a development copy.
 
 ## Dependency updates
 
@@ -1066,7 +1102,7 @@ Acceptance: in Chrome (automated) and Firefox (manual check), the save form open
 
 #### Phase 6: Capture deploy
 
-Deploy to a `workers.dev` subdomain with `wrangler deploy`, after setting the secrets in Cloudflare (#16), apply the migrations remotely, register the Google OAuth redirect URI for that origin, build the extension against the production origin, and run the Playwright suite against production. Read "Backups and restore" under "Data model" before the first real bookmark is saved, and take the first export before the first remote migration.
+Deploy to a `workers.dev` subdomain with `vp run deploy`, following "Deploys" under "Secrets and configuration": confirm that a deploy fails while the secret is missing, set the secret in Cloudflare, apply the migrations remotely, and add the production redirect URI to the shared Google OAuth client. Then build the extension against the production origin, and run the Playwright suite against production. Read "Backups and restore" under "Data model" before the first real bookmark is saved, and take the first export before the first remote migration.
 
 Daily use in Firefox needs a signed extension, because release builds of Firefox install unsigned extensions only temporarily. Sign it through addons.mozilla.org as an unlisted (self-distributed) add-on. An unlisted add-on is not published, so Q6 does not block it, but confirm that the name can change later. When installing the signed add-on, record what Firefox asks about data collection, and check that it names the two kinds the manifest declares (browsing activity and website content). The manual check in #71 loaded the add-on temporarily, and no prompt appeared. In Chrome, loading the unpacked extension in developer mode is enough for v1.
 
