@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "varlock-wrangler dev",
+    "deploy": "vp build && wrangler deploy",
     "types": "wrangler types --strict-vars=false",
     "types:check": "wrangler types --strict-vars=false --check",
     "db:generate": "drizzle-kit generate",
