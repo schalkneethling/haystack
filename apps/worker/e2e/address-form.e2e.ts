@@ -6,7 +6,12 @@ import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
 import type { PageFixture } from "../test/page-fixture.ts";
 import { expect, test } from "./fixtures.ts";
-import { PENDING_MESSAGE, stopSubmissions, submissions } from "./stopped-submission.ts";
+import {
+  PENDING_MESSAGE,
+  RESET_MESSAGE,
+  stopSubmissions,
+  submissions,
+} from "./stopped-submission.ts";
 
 test.beforeEach(async ({ signIn }) => {
   await signIn();
@@ -166,9 +171,30 @@ test.describe("while the page is looked up", () => {
     const button = page.getByRole("button", { name: "Continue" });
     await expect(button).toBeFocused();
     await expect(button).not.toHaveAttribute("aria-disabled");
-    await expect(page.locator("#save-url-status")).toBeEmpty();
+    // The reset is announced, so a screen reader user knows the form is ready again.
+    await expect(page.locator("#save-url-status")).toHaveText(RESET_MESSAGE);
     await button.press("Enter");
     expect(await submissions(page)).toEqual(["sent", "sent"]);
+    await expect(page.locator("#save-url-status")).not.toHaveText(RESET_MESSAGE);
+  });
+
+  // Before sign-in the form asks for GET /save, which goes through sign-in and looks nothing up,
+  // so it gets no pending state and its page does not load the script.
+  test("the form shown before sign-in says nothing about a lookup", async ({ page, context }) => {
+    await context.clearCookies();
+    await page.goto(
+      `/save?${new URLSearchParams({ url: "http://pages.test/signed-out" }).toString()}`,
+    );
+    await expect(page).toHaveTitle("Check the address - Haystack");
+    await expect(page.locator('script[src="/assets/address-form.js"]')).toHaveCount(0);
+    // Even if the script were loaded, it would leave a form that does not post alone.
+    await page.addScriptTag({ url: "/assets/address-form.js", type: "module" });
+    await page.getByRole("textbox", { name: "Save a link" }).fill("https://pages.test/signed-out");
+    await page.getByRole("button", { name: "Continue" }).click();
+    expect(await submissions(page)).toEqual(["sent"]);
+    const button = page.getByRole("button", { name: "Continue" });
+    await expect(button).not.toHaveAttribute("aria-disabled");
+    await expect(page.locator("#save-url-status")).toBeEmpty();
   });
 
   // A browser can restore the page from its back-forward cache as it was left, still waiting.

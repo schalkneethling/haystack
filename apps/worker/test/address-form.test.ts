@@ -99,12 +99,17 @@ function expectAddressForm(markup: string, signedIn = true): void {
   );
   expect(markup).toContain(HINT);
   expect(markup).toContain('<button class="button button-primary" type="submit">Continue</button>');
-  // The live region the pending state is announced in is in the page from the start, empty, and
-  // the script that writes to it is loaded.
+  // The live region the pending state is announced in is in the page from the start, empty. Only
+  // the form that posts looks a page up, so only its page loads the script that writes to it.
   expect(markup).toContain(
     '<div id="save-url-status" class="status address-status" role="status"></div>',
   );
-  expect(markup).toContain('<script type="module" src="/assets/address-form.js"></script>');
+  const script = '<script type="module" src="/assets/address-form.js"></script>';
+  if (signedIn) {
+    expect(markup).toContain(script);
+  } else {
+    expect(markup).not.toContain(script);
+  }
   const field = addressField(markup);
   expect(field.get("name")).toBe("url");
   expect(field.get("type")).toBe("url");

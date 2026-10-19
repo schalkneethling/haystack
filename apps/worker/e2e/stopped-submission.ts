@@ -34,3 +34,7 @@ export function submissions(page: Page): Promise<Submission[]> {
 
 /** The status message that address-form.js writes while the page is looked up. */
 export const PENDING_MESSAGE = "Looking up the page. This can take a few seconds.";
+
+/** The status message that address-form.js writes when it makes a stopped form ready again. */
+export const RESET_MESSAGE =
+  "Looking up the page didn't finish. You can press Continue to try again.";

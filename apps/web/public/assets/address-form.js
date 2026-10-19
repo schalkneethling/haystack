@@ -2,7 +2,8 @@
 // Shows that the address form is waiting while the Worker looks the page up, which can take a
 // few seconds, and stops a second submission (#105; plan, "Save flow"). Without this script the
 // form still submits, and the browser shows its own loading state. The server renders the form,
-// the button and the empty status region this script writes to.
+// the button and the empty status region this script writes to. Only a form that posts looks a
+// page up: the form shown before sign-in asks for GET /save, so this leaves it alone.
 
 const PENDING_LABEL = "Looking up…";
 const PENDING_MESSAGE = "Looking up the page. This can take a few seconds.";
@@ -12,8 +13,11 @@ const PENDING_MESSAGE = "Looking up the page. This can take a few seconds.";
 const ANNOUNCE_DELAY_MS = 100;
 // The Worker answers within its 3 s lookup limit and the time to render. A form still waiting
 // after this long has had its request stopped, for example with the browser's Stop button, which
-// fires no event, so it is made ready again.
+// fires no event, so it is made ready again, and says so. The script cannot tell a page that is
+// slow from a request the user stopped, so the message says only that looking the page up did
+// not finish, and names the button that tries again, as a screen reader reads it.
 const RESET_AFTER_MS = 15_000;
+const RESET_MESSAGE = "Looking up the page didn't finish. You can press Continue to try again.";
 
 /**
  * @param {HTMLFormElement} form
@@ -27,6 +31,13 @@ function enhance(form, button, status) {
   let announceTimer;
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let resetTimer;
+
+  /** @param {string} text */
+  function say(text) {
+    const message = document.createElement("p");
+    message.textContent = text;
+    status.replaceChildren(message);
+  }
 
   /** @param {boolean} value */
   function setPending(value) {
@@ -42,12 +53,11 @@ function enhance(form, button, status) {
       return;
     }
     button.setAttribute("aria-disabled", "true");
-    announceTimer = setTimeout(() => {
-      const message = document.createElement("p");
-      message.textContent = PENDING_MESSAGE;
-      status.replaceChildren(message);
-    }, ANNOUNCE_DELAY_MS);
-    resetTimer = setTimeout(() => setPending(false), RESET_AFTER_MS);
+    announceTimer = setTimeout(() => say(PENDING_MESSAGE), ANNOUNCE_DELAY_MS);
+    resetTimer = setTimeout(() => {
+      setPending(false);
+      say(RESET_MESSAGE);
+    }, RESET_AFTER_MS);
   }
 
   // The browser submits the form as usual. This only marks it as waiting, or refuses a second
@@ -61,7 +71,8 @@ function enhance(form, button, status) {
   });
 
   // Going back to this page can restore it from the back-forward cache as it was left, still
-  // waiting, so it is made ready again.
+  // waiting, so it is made ready again. It says nothing then, because the user left the page
+  // after the lookup and came back by choice.
   window.addEventListener("pageshow", (event) => {
     if (event.persisted) {
       setPending(false);
@@ -69,7 +80,7 @@ function enhance(form, button, status) {
   });
 }
 
-const form = document.querySelector("form.address-form");
+const form = document.querySelector('form.address-form[method="post"]');
 const button = form?.querySelector('button[type="submit"]');
 const status = document.getElementById("save-url-status");
 if (form instanceof HTMLFormElement && button instanceof HTMLButtonElement && status !== null) {

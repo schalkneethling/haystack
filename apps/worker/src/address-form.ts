@@ -103,6 +103,7 @@ export function addressFormPage(state: AddressFormState, signedIn: boolean): Res
         ${SENSITIVE_NOTICE}
       </form>`,
     state.error === undefined ? 200 : 400,
-    { signedIn, scripts: [ADDRESS_FORM_SCRIPT] },
+    // Only the form that posts looks a page up, so only its page loads the pending state.
+    { signedIn, scripts: signedIn ? [ADDRESS_FORM_SCRIPT] : [] },
   );
 }
