@@ -340,7 +340,9 @@ export async function showSaveForm(request: Request, db: Db, userId: string): Pr
 export function signedOutSave(url: URL): { page: Response } | { returnTo: string } {
   const captured = capturedFields(url.searchParams);
   if (!hasCapturedFields(captured)) {
-    return { returnTo: url.pathname };
+    // Both callers pass a URL whose path is /save. The literal shows that nothing from the
+    // link's query or fragment is stored.
+    return { returnTo: "/save" };
   }
   const screened = screenSaveLink(captured, false);
   if ("page" in screened) {
