@@ -1,8 +1,14 @@
 // A Worker per Playwright worker process, started with Wrangler's test harness and migrated.
 // Tests navigate with relative paths: `baseURL` is that Worker's origin. The extension's browser
 // tests start the Worker through `startHaystackWorker`, which this package exports.
+//
+// `pages` is a local https server for the pages the address form looks up (#105), one per
+// Playwright worker process, started only by the tests that use it (test/page-fixture.ts says how
+// the Worker's fetch reaches it). Tests make no requests to the internet, so an address that
+// passes the checks must be one of its pages.
 import { type BrowserContext, test as base } from "@playwright/test";
 import { createTestHarness } from "wrangler";
+import { type PageFixture, startPageFixture } from "../test/page-fixture.ts";
 import { seedSignedInUser } from "../test/seed.ts";
 
 const SIGNED_IN_EMAIL = "e2e@example.com";
@@ -57,11 +63,23 @@ export async function startHaystackWorker(): Promise<HaystackWorker> {
       },
       signIn: async (context) => {
         const { cookie } = await seedSignedInUser(db, SIGNED_IN_EMAIL);
-        // The session travels as a request header. addCookies with an http: `url` clears
-        // Secure, which a __Host- cookie needs, so Chromium refuses it (a domain and path work,
-        // as the extension's tests show). Real cookie handling is covered by the sign-in flow,
-        // not by these page tests.
-        await context.setExtraHTTPHeaders({ cookie });
+        // The session is a real cookie, with the attributes the Worker sets. Playwright's extra
+        // HTTP headers were used before, but Chromium does not send them on the GET that follows
+        // a 303, which the address form's lookup ends with (#105). A __Host- cookie needs
+        // Secure, which addCookies sets only with a domain and path: from an http: `url` it
+        // would clear it. The extension's tests add theirs the same way.
+        const { name, value } = parseCookieHeader(cookie);
+        await context.addCookies([
+          {
+            name,
+            value,
+            domain: url.hostname,
+            path: "/",
+            secure: true,
+            httpOnly: true,
+            sameSite: "Lax",
+          },
+        ]);
       },
       query: async (sql, ...values) =>
         (
@@ -80,8 +98,21 @@ export async function startHaystackWorker(): Promise<HaystackWorker> {
 
 export const test = base.extend<
   { signIn: () => Promise<void>; query: HaystackWorker["query"] },
-  { haystackWorker: HaystackWorker }
+  { haystackWorker: HaystackWorker; pages: PageFixture }
 >({
+  pages: [
+    // Playwright reads fixture dependencies from this destructuring pattern, so it must be one.
+    // oxlint-disable-next-line no-empty-pattern
+    async ({}, use) => {
+      const fixture = await startPageFixture();
+      try {
+        await use(fixture);
+      } finally {
+        await fixture.close();
+      }
+    },
+    { scope: "worker" },
+  ],
   haystackWorker: [
     // Playwright reads fixture dependencies from this destructuring pattern, so it must be one.
     // oxlint-disable-next-line no-empty-pattern

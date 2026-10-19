@@ -3,6 +3,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
+import { listStatus } from "./list-status.ts";
 import { saveThroughForm } from "./save-through-form.ts";
 
 test.beforeEach(async ({ signIn }) => {
@@ -37,7 +38,7 @@ test("the dialog confirms, deletes, moves focus to the next item, and announces 
 
   await dialog.getByRole("button", { name: "Delete" }).click();
   await expect(dialog).toBeHidden();
-  await expect(page.getByRole("status")).toHaveText("Deleted “Middle confirm”.");
+  await expect(listStatus(page)).toHaveText("Deleted “Middle confirm”.");
   const items = page.getByRole("listitem");
   await expect(items).toHaveCount(2);
   // The next item down the list, which is the older one.
@@ -90,7 +91,7 @@ test("a second Enter after opening the dialog deletes nothing, and Tab reaches C
     "aria-disabled",
     "true",
   );
-  await expect(page.getByRole("status")).toBeEmpty();
+  await expect(listStatus(page)).toBeEmpty();
   expect(
     await query("SELECT id FROM bookmarks WHERE url = ?", "https://example.com/keyboard"),
   ).toHaveLength(1);
@@ -208,7 +209,7 @@ test("the status message is written after the dialog closes and focus moves to t
   const announcements = await recordAnnouncements(page);
   await page.getByRole("button", { name: "Delete Middle order" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
-  await expect(page.getByRole("status")).toHaveText("Deleted “Middle order”.");
+  await expect(listStatus(page)).toHaveText("Deleted “Middle order”.");
 
   expect(announcements).toHaveLength(1);
   expect(announcements[0]).toMatchObject({
@@ -227,7 +228,7 @@ test("after a failed delete, the status message is written once focus is back on
   const announcements = await recordAnnouncements(page);
   await page.getByRole("button", { name: "Delete Middle failed" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
-  await expect(page.getByRole("status")).toHaveText(
+  await expect(listStatus(page)).toHaveText(
     "Could not delete “Middle failed”. Reload the page and try again.",
   );
 
@@ -254,7 +255,7 @@ test("a bookmark already deleted elsewhere is removed and announced", async ({ p
     headers: { origin: new URL(page.url()).origin },
   });
   await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
-  await expect(page.getByRole("status")).toHaveText("“Elsewhere guide” was already deleted.");
+  await expect(listStatus(page)).toHaveText("“Elsewhere guide” was already deleted.");
   await expect(page.getByRole("button", { name: "Delete Elsewhere guide" })).toHaveCount(0);
 });
 
@@ -282,7 +283,7 @@ test("the dialog cannot be closed while the delete request runs", async ({ page,
 
   release();
   await expect(dialog).toBeHidden();
-  await expect(page.getByRole("status")).toHaveText("Deleted “In-flight guide”.");
+  await expect(listStatus(page)).toHaveText("Deleted “In-flight guide”.");
   const rows = await query(
     "SELECT id FROM bookmarks WHERE url = ?",
     "https://example.com/in-flight",
@@ -295,10 +296,10 @@ test("a delete after the session ended keeps the item and says why", async ({ pa
   await page.goto("/");
   const button = page.getByRole("button", { name: "Delete Signed-out guide" });
   await button.click();
-  // The fixture signs in by sending the session cookie with every request; stop sending it.
-  await context.setExtraHTTPHeaders({});
+  // The fixture signs in with a session cookie; remove it, as an ended session would.
+  await context.clearCookies();
   await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
-  await expect(page.getByRole("status")).toHaveText(
+  await expect(listStatus(page)).toHaveText(
     "Could not delete “Signed-out guide”, because you are signed out. Reload the page to sign in again.",
   );
   await expect(button).toBeVisible();

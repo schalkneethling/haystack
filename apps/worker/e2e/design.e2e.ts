@@ -6,6 +6,7 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
 import { INVALID_LINK, openRefusalPage } from "./rejected-save-pages.ts";
 import { saveThroughForm } from "./save-through-form.ts";
+import { PENDING_MESSAGE, stopSubmissions } from "./stopped-submission.ts";
 
 // One unbroken word, with no hyphen or slash a line could break at, so only `overflow-wrap` can
 // keep it inside the page (#33). The address is under the 2,048-character cap, and the title at
@@ -72,6 +73,20 @@ test.describe("at a 320 px viewport, nothing scrolls horizontally", () => {
     });
 
     // The rejected address is put back in the field, where it scrolls inside the field.
+    // The pending state (#105) puts its message under the row, and Continue's text changes.
+    test("the address form while the page is looked up", async ({ page, pages }) => {
+      await stopSubmissions(page);
+      for (const path of ["/", "/save"]) {
+        await page.goto(path);
+        await page
+          .getByRole("textbox", { name: "Save a link" })
+          .fill(pages.url(`/${"longpathwithoutabreak".repeat(20)}`));
+        await page.getByRole("button", { name: "Continue" }).click();
+        await expect(page.locator("#save-url-status")).toHaveText(PENDING_MESSAGE);
+        await expectNoHorizontalScroll(page);
+      }
+    });
+
     test("the address form after a rejected long address", async ({ page }) => {
       const url = LONG_URL.replace("https:", "http:");
       await page.goto(saveUrl({ url }));
@@ -200,6 +215,18 @@ for (const [colorScheme, ground] of [
         for (const url of ["http://example.com/axe", "https://example.com/?access_token=secret"]) {
           await page.goto(saveUrl({ url }));
           await expect(page).toHaveTitle("Check the address - Haystack");
+          await expectNoViolations(page);
+        }
+      });
+
+      // The pending state (#105), kept on the page (stopped-submission.ts), on both forms.
+      test("the address form while the page is looked up", async ({ page, pages }) => {
+        await stopSubmissions(page);
+        for (const path of ["/", "/save"]) {
+          await page.goto(path);
+          await page.getByRole("textbox", { name: "Save a link" }).fill(pages.url("/axe-pending"));
+          await page.getByRole("button", { name: "Continue" }).click();
+          await expect(page.locator("#save-url-status")).toHaveText(PENDING_MESSAGE);
           await expectNoViolations(page);
         }
       });

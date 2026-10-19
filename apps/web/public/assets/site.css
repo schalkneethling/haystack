@@ -211,8 +211,9 @@ main > :where(p, ul, div) {
   padding-inline: var(--space-m);
 }
 
-/* The dialog's buttons while a delete runs. They stay focusable (delete-dialog.js). The fill and
-   the border go quiet, and the text stays at 6:1 on the raised fill in both schemes. */
+/* A button while its action runs: the dialog's buttons during a delete (delete-dialog.js), and
+   Continue while the address form looks a page up (address-form.js). They stay focusable. The
+   fill and the border go quiet, and the text stays at 6:1 on the raised fill in both schemes. */
 .button[aria-disabled="true"],
 .button[aria-disabled="true"]:hover {
   background-color: var(--color-raised);
@@ -339,6 +340,14 @@ main > :where(p, ul, div) {
   min-inline-size: 0;
   padding-block: var(--space-s);
   padding-inline: 1.125rem;
+}
+
+/* While the page is looked up (#105, address-form.js), the status message appears under the row.
+   The status region is empty otherwise, and sits in a wrapper with the row, so it takes no space
+   and adds no gap. Continue takes the waiting style of `.button[aria-disabled="true"]`. */
+.address-status > p {
+  margin-block-start: var(--space-s);
+  max-inline-size: var(--width-narrow);
 }
 
 /* Notices and messages. */
