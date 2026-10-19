@@ -31,6 +31,8 @@ const LABEL = "Save a link";
 const FIELD_ID = "save-url";
 const HINT_ID = "save-url-hint";
 const ERROR_ID = "save-url-error";
+// The card's label, which also names its form.
+const TITLE_ID = "save-url-label";
 
 // The hint, the field and the button, which both forms share. The field is described by the
 // error first, then the hint, so the reason is heard first.
@@ -45,10 +47,14 @@ function controls({ value, error }: AddressFormState): SafeHtml {
         </div>`;
 }
 
-/** The form at the top of the saved links page, titled by its label, as the design shows it. */
+/**
+ * The form at the top of the saved links page, titled by its label, as the design shows it. It
+ * comes before the page's heading, so a screen reader user who moves by heading would pass it.
+ * Naming it after its label makes it a form landmark, "Save a link", which they can move to.
+ */
 export function addressFormCard(): SafeHtml {
-  return html`<form class="panel address-form" method="get" action="/save" novalidate>
-        <label class="address-form-title" for="${FIELD_ID}">${LABEL}</label>
+  return html`<form class="panel address-form" method="get" action="/save" novalidate aria-labelledby="${TITLE_ID}">
+        <label id="${TITLE_ID}" class="address-form-title" for="${FIELD_ID}">${LABEL}</label>
         ${controls({ value: "" })}
       </form>`;
 }
@@ -58,6 +64,10 @@ export function addressFormCard(): SafeHtml {
  * label, as in the GOV.UK Design System's question pages, and the page reads like the save form
  * that follows it. An error is shown as the save form shows its own: in an alert after the
  * heading, with the field pointing at it. Focus is not moved, as on the save form.
+ *
+ * This form is not named, so it is not a landmark. The heading comes first in `<main>` and is
+ * the field's label, so moving by heading or to the main landmark reaches the form, and a form
+ * landmark named "Save a link" right after the heading "Save a link" would only repeat it.
  */
 export function addressFormPage(state: AddressFormState, signedIn: boolean): Response {
   const error = state.error === undefined ? null : fieldError(ERROR_ID, state.error);

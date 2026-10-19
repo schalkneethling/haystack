@@ -16,7 +16,7 @@ async function tabToField(page: Page): Promise<void> {
     page.getByRole("link", { name: "Haystack", exact: true }),
     page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Saved links" }),
     page.getByRole("button", { name: "Sign out" }),
-    page.getByLabel("Save a link"),
+    page.getByRole("textbox", { name: "Save a link" }),
   ]) {
     await page.keyboard.press("Tab");
     await expect(control).toBeFocused();
@@ -34,6 +34,18 @@ async function expectSaveFormFor(page: Page, address: string): Promise<void> {
 async function expectFocusNotMoved(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
 }
+
+// On the saved links page the form comes before the heading, so it is a named form landmark. On
+// its own page the heading is its label, so the form is not named again.
+test("the form is a landmark named Save a link on the saved links page only", async ({ page }) => {
+  await page.goto("/");
+  const form = page.getByRole("form", { name: "Save a link" });
+  await expect(form).toBeVisible();
+  await expect(form.getByLabel("Save a link")).toBeVisible();
+  await page.goto("/save");
+  await expect(page.getByRole("heading", { level: 1, name: "Save a link" })).toBeVisible();
+  await expect(page.getByRole("form")).toHaveCount(0);
+});
 
 test("typing an address on the saved links page and pressing Enter opens the save form", async ({
   page,
@@ -74,7 +86,7 @@ test("a rejected address shows the error, tied to the field, and keeps the typed
 
   await expect(page).toHaveTitle("Check the address - Haystack");
   await expect(page.getByRole("alert")).toHaveText(ADDRESS_RULE);
-  const field = page.getByLabel("Save a link");
+  const field = page.getByRole("textbox", { name: "Save a link" });
   await expect(field).toHaveValue("example.com/no-scheme");
   await expect(field).toHaveAttribute("aria-invalid", "true");
   await expect(field).toHaveAccessibleDescription(`${ADDRESS_RULE} ${HINT}`);
@@ -97,7 +109,10 @@ test("an empty address asks for one", async ({ page }) => {
   await expect(page.getByRole("alert")).toHaveText(
     "Enter the address of a page, starting with https://.",
   );
-  await expect(page.getByLabel("Save a link")).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByRole("textbox", { name: "Save a link" })).toHaveAttribute(
+    "aria-invalid",
+    "true",
+  );
 });
 
 test("a flagged address shows the reason and is not put back in the field", async ({ page }) => {
@@ -110,7 +125,7 @@ test("a flagged address shows the reason and is not put back in the field", asyn
   const reason =
     "This link contains an access token, key, or password, so it could let anyone who has it act as you.";
   await expect(page.getByRole("alert")).toHaveText(reason);
-  const field = page.getByLabel("Save a link");
+  const field = page.getByRole("textbox", { name: "Save a link" });
   await expect(field).toHaveValue("");
   await expect(field).toHaveAttribute("aria-invalid", "true");
   await expect(field).toHaveAccessibleDescription(`${reason} ${HINT}`);

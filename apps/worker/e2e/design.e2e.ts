@@ -67,7 +67,7 @@ test.describe("at a 320 px viewport, nothing scrolls horizontally", () => {
 
     test("the saved links page with the address form", async ({ page }) => {
       await page.goto("/");
-      await expect(page.getByLabel("Save a link")).toBeVisible();
+      await expect(page.getByRole("textbox", { name: "Save a link" })).toBeVisible();
       await expectNoHorizontalScroll(page);
     });
 
@@ -75,7 +75,7 @@ test.describe("at a 320 px viewport, nothing scrolls horizontally", () => {
     test("the address form after a rejected long address", async ({ page }) => {
       const url = LONG_URL.replace("https:", "http:");
       await page.goto(saveUrl({ url }));
-      await expect(page.getByLabel("Save a link")).toHaveValue(url);
+      await expect(page.getByRole("textbox", { name: "Save a link" })).toHaveValue(url);
       await expectNoHorizontalScroll(page);
     });
 
@@ -190,7 +190,7 @@ for (const [colorScheme, ground] of [
 
       test("the address form on a bare /save", async ({ page }) => {
         await page.goto("/save");
-        await expect(page.getByLabel("Save a link")).toBeVisible();
+        await expect(page.getByRole("textbox", { name: "Save a link" })).toBeVisible();
         await expectNoViolations(page);
       });
 
@@ -300,7 +300,7 @@ for (const [width, beside] of [
     }) => {
       await signIn();
       await page.goto("/");
-      const field = await page.getByLabel("Save a link").boundingBox();
+      const field = await page.getByRole("textbox", { name: "Save a link" }).boundingBox();
       const button = await page.getByRole("button", { name: "Continue" }).boundingBox();
       if (field === null || button === null) {
         throw new Error("The address form is not drawn");
