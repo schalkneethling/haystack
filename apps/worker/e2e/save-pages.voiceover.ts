@@ -170,7 +170,7 @@ test("a rejected address announces the page, then the error, then the field as i
 }) => {
   await page.goto("/save");
   // The browser's own checks are off, so an http: address reaches the server's.
-  await page.getByLabel("Save a link").fill("http://example.com/voiceover-address");
+  await page.getByLabel("Save a link").fill("http://example.com/voiceoveraddress");
   await voiceOver.navigateToWebContent();
 
   // The user presses Continue with VoiceOver, so the page that loads is a result of their action.
@@ -207,6 +207,7 @@ test("a rejected address announces the page, then the error, then the field as i
   expect(field).toMatch(/\binvalid data\b/i);
   // The error is the field's description, so the user hears it without moving away from the field.
   expect(field).toMatch(/haystack saves only secure pages/i);
-  // The typed address was kept, so the user can correct it.
-  expect(field).toMatch(/voiceover-address/i);
+  // The typed address was kept, so the user can correct it. The matched part has no punctuation,
+  // because how VoiceOver reads punctuation in an address depends on its verbosity setting.
+  expect(field).toMatch(/voiceoveraddress/i);
 });
