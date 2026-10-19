@@ -68,7 +68,9 @@ function redirectUri(request: Request): string {
 // The return target a sign-in stores. A save link is screened here as a signed-out /save is,
 // because a URL that carries a secret is never stored (plan, decision 18), and a hand-built
 // /auth/sign-in link never passes through /save. A save link that would get a page instead of
-// the form falls back to `/`, as a target off this origin does (plan, "Return targets").
+// the form falls back to `/`, as a target off this origin does. A save link with no captured
+// field, such as a bare /save, holds no value, so it is stored as `/save`, which shows the
+// address form (plan, "Return targets").
 function storedReturnTarget(request: Request, value: string | null): string {
   const target = safeReturnTarget(value);
   const url = new URL(target, request.url);

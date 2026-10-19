@@ -1,6 +1,7 @@
 // The recent saves list at `/` (plan, Phase 4). Milestone 3 replaces it with the search page.
 import { isHttpsUrl } from "@haystack/schemas";
 import { and, count, desc, eq, gt, or } from "drizzle-orm";
+import { addressFormCard } from "./address-form.ts";
 import type { Db } from "./db/client.ts";
 import { bookmarks } from "./db/schema.ts";
 import { html, type SafeHtml } from "./html.ts";
@@ -142,7 +143,9 @@ export async function showRecentSaves(
   const saves = rows.slice(0, RECENT_SAVES_LIMIT);
   return htmlResponse(
     outcome === null ? "Saved links" : `${outcome.title} - Saved links`,
-    html`<h1 id="list-heading">Saved links</h1>
+    // The address form comes first, above the heading, as the design shows it.
+    html`${addressFormCard()}
+      <h1 id="list-heading">Saved links</h1>
       <div id="list-status" class="status" role="status">${outcome?.message}</div>
       ${SENSITIVE_NOTICE}
       ${list(saves, rows.length > RECENT_SAVES_LIMIT)}`,

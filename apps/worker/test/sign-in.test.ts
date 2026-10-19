@@ -371,6 +371,38 @@ describe("signing in from a signed-out save link", () => {
   });
 });
 
+// A bare /save is the address form (#97). Signed out, it sends the user to sign in, and they
+// land on the form afterwards.
+describe("signing in from a signed-out bare /save", () => {
+  it("returns to the address form", async () => {
+    const toSignIn = await server.fetch("/save", {
+      headers: { accept: "text/html" },
+      redirect: "manual",
+    });
+    expect(toSignIn.status).toBe(302);
+    const location = new URL(toSignIn.headers.get("location") ?? "", workerOrigin);
+    expect(location.pathname).toBe("/auth/sign-in");
+    const returnTo = location.searchParams.get("return_to") ?? "";
+    expect(returnTo).toBe("/save");
+
+    const start = await startSignIn(returnTo);
+    const { results } = await (await db()).prepare("SELECT return_to FROM auth_flows").all();
+    expect(results).toEqual([{ return_to: "/save" }]);
+    const signedIn = await callBack(start);
+    expect(signedIn.headers.get("location")).toBe("/save");
+
+    const cookie = (signedIn.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+    const form = await server.fetch("/save", {
+      headers: { accept: "text/html", cookie },
+      redirect: "manual",
+    });
+    expect(form.status).toBe(200);
+    const markup = await form.text();
+    expect(markup).toContain('<h1><label for="save-url">Save a link</label></h1>');
+    expect(markup).toMatch(/<input id="save-url"[^>]* name="url" type="url"/);
+  });
+});
+
 // A hand-built sign-in link skips the check on /save, so sign-in screens a save link itself
 // before it stores it (plan, "Return targets").
 describe("a save link given to sign-in directly", () => {
@@ -409,10 +441,15 @@ describe("a save link given to sign-in directly", () => {
     },
   );
 
-  it("stores / for a bare /save", async () => {
-    await startSignIn("/save");
-    expect(await storedReturnTargets()).toEqual([{ return_to: "/" }]);
-  });
+  // A link with no captured field holds no value, so it is stored as the bare path, which shows
+  // the address form (#97). Before #97 a bare /save got the validation page, so it fell back to /.
+  it.each(["/save", "/save?", "/save?note=secret-value", "/save#access_token=secret-value"])(
+    "stores /save for %j, which carries no captured field",
+    async (returnTo) => {
+      await startSignIn(returnTo);
+      expect(await storedReturnTargets()).toEqual([{ return_to: "/save" }]);
+    },
+  );
 
   it.each([
     [
