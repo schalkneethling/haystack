@@ -246,6 +246,53 @@ describe("an address the checks reject", () => {
     await expectValidHtml(markup);
   });
 
+  // An invalid value is checked for a secret before it goes back in the field: as typed, with
+  // https:// added, and as a query string. A value that parses in neither way is not put back.
+  const CREDENTIAL_REASON =
+    "This link contains an access token, key, or password, so it could let anyone who has it act as you.";
+  it.each([
+    ["an address without a scheme", "example.com/cb?access_token=secret-value", CREDENTIAL_REASON],
+    // With https:// added, the typed scheme becomes the host, and the rest parses as a path and
+    // a query, where the check finds the token.
+    ["a host with a space", "https://exa mple.com/?access_token=secret-value", CREDENTIAL_REASON],
+    [
+      "a port out of range",
+      "https://example.com:99999/?access_token=secret-value",
+      CREDENTIAL_REASON,
+    ],
+    // Parses in no reading, so the check cannot vouch for it.
+    [
+      "a value that is not a URL in any reading",
+      "[example/?access_token=secret-value",
+      ADDRESS_RULE,
+    ],
+    [
+      "an address without a scheme or host",
+      "//example.com/?access_token=secret-value",
+      CREDENTIAL_REASON,
+    ],
+    ["a credential parameter on its own", "access_token=secret-value", CREDENTIAL_REASON],
+    [
+      "embedded credentials without a scheme",
+      "user:secret-value@example.com/",
+      "This link contains a user name or password, so anyone who has it could sign in with them.",
+    ],
+  ])("does not put back %s that carries a secret", async (_, url, error) => {
+    const response = await get(saveUrl({ url }));
+    expect(response.status).toBe(400);
+    const markup = await response.text();
+    expectError(markup, error);
+    expect(addressField(markup).has("value")).toBe(false);
+    expect(markup).not.toContain("secret-value");
+    await expectValidHtml(markup);
+  });
+
+  it("puts back a clean address without a scheme, so the user can add it", async () => {
+    const markup = await (await get(saveUrl({ url: "example.com/page?q=1#part" }))).text();
+    expectError(markup, ADDRESS_RULE);
+    expect(addressField(markup).get("value")).toBe("example.com/page?q=1#part");
+  });
+
   // GET /save is one route, so a link from the extension or by hand gets the same page.
   it.each([
     ["a flagged address", "https://example.com/cb?access_token=secret-value"],

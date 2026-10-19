@@ -18,8 +18,9 @@ import { htmlResponse } from "./page.ts";
 /** What the form shows. */
 export interface AddressFormState {
   /**
-   * The address to put back in the field, as typed. Never an address the sensitive URL check
-   * flags (plan, "Sensitive URLs").
+   * The address to put back in the field, as typed. Only a value that parses as a URL and that
+   * the sensitive URL check does not flag in any reading of it (`rejectedAddress` in save.ts),
+   * because the refusal never shows the link (plan, "Sensitive URLs").
    */
   readonly value: string;
   /** Why the address was rejected. */

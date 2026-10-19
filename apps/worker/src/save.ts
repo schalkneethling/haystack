@@ -227,21 +227,35 @@ function screenCapture(
   return { payload: validation.payload };
 }
 
+// A placeholder origin for reading a typed value as a query string.
+const QUERY_READING_ORIGIN = "https://haystack.invalid/?";
+
 /**
- * The address form for an address that fails validation. The typed value goes back in the
- * field, unless it parses as a URL that the sensitive URL check flags. `detectSensitiveUrl`
- * otherwise runs only on a valid address, so an `http:` link with `?access_token=…` would be
- * echoed. That one gets the refusal's reason instead, which the user needs to hear first.
+ * The address form for an address that fails validation. `detectSensitiveUrl` runs only on a
+ * valid address, so a rejected one could still carry a secret, such as `example.com/?api_key=…`
+ * without a scheme. The typed value therefore goes back in the field only when it parses as a
+ * URL, as typed or with `https://` added, and the sensitive URL check flags none of three
+ * readings of it: as typed, with `https://` added, and as a query string, which catches
+ * `access_token=…` typed on its own. A flagged value gets the refusal's reason, which the user
+ * needs to hear first. A value that parses in neither way gets the rule, with an empty field,
+ * because the check cannot vouch for it.
  */
 function rejectedAddress(typed: string): AddressFormState {
-  const parsed = URL.parse(typed.trim());
-  const reason = parsed === null ? undefined : detectSensitiveUrl(parsed);
-  if (reason !== undefined) {
-    return { value: "", error: SENSITIVE_URL_EXPLANATIONS[reason] };
+  const trimmed = typed.trim();
+  if (trimmed === "") {
+    return { value: "", error: ADDRESS_ERRORS.missing };
   }
-  return typed.trim() === ""
-    ? { value: "", error: ADDRESS_ERRORS.missing }
-    : { value: typed, error: ADDRESS_ERRORS.invalid };
+  const asUrl = [URL.parse(trimmed), URL.parse(`https://${trimmed}`)].filter(
+    (url): url is URL => url !== null,
+  );
+  const asQuery = URL.parse(`${QUERY_READING_ORIGIN}${trimmed}`);
+  for (const reading of asQuery === null ? asUrl : [...asUrl, asQuery]) {
+    const reason = detectSensitiveUrl(reading);
+    if (reason !== undefined) {
+      return { value: "", error: SENSITIVE_URL_EXPLANATIONS[reason] };
+    }
+  }
+  return { value: asUrl.length > 0 ? typed : "", error: ADDRESS_ERRORS.invalid };
 }
 
 /**
