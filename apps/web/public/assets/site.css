@@ -332,6 +332,7 @@ main > :where(p, ul, div) {
   border-radius: var(--radius-pill);
   color: var(--color-ink);
   flex: 1 1 18rem;
+  font: inherit;
   font-family: var(--font-mono);
   font-size: var(--text-small);
   min-block-size: var(--target-primary);
