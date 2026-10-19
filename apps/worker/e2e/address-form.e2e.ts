@@ -170,6 +170,25 @@ test.describe("while the page is looked up", () => {
     await button.press("Enter");
     expect(await submissions(page)).toEqual(["sent", "sent"]);
   });
+
+  // A browser can restore the page from its back-forward cache as it was left, still waiting.
+  // Playwright's Chromium does not show whether it used the cache, so the event the browser fires
+  // for a restored page is dispatched here.
+  test("the form is ready again when the page is restored from the back-forward cache", async ({
+    page,
+    pages,
+  }) => {
+    await page.goto("/save");
+    await page.getByLabel("Save a link").fill(pages.url("/restored"));
+    await page.getByRole("button", { name: "Continue" }).click();
+    await expectPending(page);
+    await page.evaluate(() =>
+      window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })),
+    );
+    const button = page.getByRole("button", { name: "Continue" });
+    await expect(button).not.toHaveAttribute("aria-disabled");
+    await expect(page.locator("#save-url-status")).toBeEmpty();
+  });
 });
 
 test("going back to the form after the save form opened finds it ready", async ({

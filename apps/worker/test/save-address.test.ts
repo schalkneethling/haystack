@@ -218,15 +218,21 @@ describe("a page that says what it is", () => {
 });
 
 describe("the read stops early", () => {
-  // A response that never ends: the prefix, then the filler again and again, as fast as the
-  // connection takes it, until the test stops it.
+  // A response that never ends: the prefix, then the filler again and again until the test stops
+  // it. `fast` sends the filler as fast as the connection takes it. Otherwise one small piece of
+  // it goes every 50 ms, so reading to the byte limit would take far longer than the time limit.
   let open: ServerResponse[] = [];
-  function endless(path: string, prefix: string, filler: string): void {
-    const chunk = Buffer.from(filler.repeat(Math.ceil(16_384 / filler.length)));
+  function endless(path: string, prefix: string, filler: string, fast: boolean): void {
     fixture.route(path, (_, response) => {
       open.push(response);
       response.writeHead(200, { "content-type": "text/html" });
       response.write(prefix);
+      if (!fast) {
+        const timer = setInterval(() => response.write(filler), 50);
+        response.on("close", () => clearInterval(timer));
+        return;
+      }
+      const chunk = Buffer.from(filler.repeat(Math.ceil(16_384 / filler.length)));
       const pump = () => {
         while (!response.destroyed) {
           if (!response.write(chunk)) {
@@ -249,30 +255,53 @@ describe("the read stops early", () => {
     }
   }
 
-  // A Worker that read the whole page would never answer, or would answer at the time limit
-  // with the address alone. So getting the title back, before the time limit, means the read
-  // stopped.
-  it("at </head>, so the page's body is never read", async () => {
+  // A Worker that read the whole page would never answer, or would answer at the time limit with
+  // the address alone. Getting the title back well before the time limit means that the read
+  // stopped where the test says, because the page trickles on after that point. The tag after
+  // that point, which a read that went on would find, shows that nothing after it is taken.
+  it("at </head>", async () => {
     endless(
       "/endless-body",
-      `<head><title>Endless body</title></head><body><meta property="og:description" content="after the head">`,
+      `<head><title>Endless body</title></head><meta property="og:description" content="after the head">`,
       "<p>more body text</p>",
+      false,
     );
     const started = performance.now();
     const response = await postAddress(fixture.url("/endless-body"));
     stopAll();
-    expect(performance.now() - started).toBeLessThan(LOOKUP_TIMEOUT_MS);
+    expect(performance.now() - started).toBeLessThan(LOOKUP_TIMEOUT_MS / 2);
     expect(savedLinkFields(response)).toEqual({
       url: fixture.url("/endless-body"),
       title: "Endless body",
     });
   });
 
+  it("at <body>, when the page has no </head>", async () => {
+    endless(
+      "/no-head-end",
+      '<title>No head end</title><meta name="description" content="Before the body"><body><meta property="og:description" content="in the body">',
+      "<p>more body text</p>",
+      false,
+    );
+    const started = performance.now();
+    const response = await postAddress(fixture.url("/no-head-end"));
+    stopAll();
+    expect(performance.now() - started).toBeLessThan(LOOKUP_TIMEOUT_MS / 2);
+    expect(savedLinkFields(response)).toEqual({
+      url: fixture.url("/no-head-end"),
+      title: "No head end",
+      description: "Before the body",
+    });
+  });
+
+  // The head never ends, and it arrives as fast as the Worker reads it, so only the byte limit
+  // can stop the read before the time limit.
   it("at the byte limit, when the head never ends", async () => {
     endless(
       "/endless-head",
       "<head><title>Endless head</title>",
       '<meta name="filler" content="a value that goes on">',
+      true,
     );
     const started = performance.now();
     const response = await postAddress(fixture.url("/endless-head"));
@@ -281,21 +310,6 @@ describe("the read stops early", () => {
     expect(savedLinkFields(response)).toEqual({
       url: fixture.url("/endless-head"),
       title: "Endless head",
-    });
-  });
-
-  it("at <body>, when the page has no </head>", async () => {
-    endless(
-      "/no-head-end",
-      '<title>No head end</title><meta name="description" content="Before the body"><body>',
-      "<p>more body text</p>",
-    );
-    const response = await postAddress(fixture.url("/no-head-end"));
-    stopAll();
-    expect(savedLinkFields(response)).toEqual({
-      url: fixture.url("/no-head-end"),
-      title: "No head end",
-      description: "Before the body",
     });
   });
 });
