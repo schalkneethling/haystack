@@ -71,7 +71,12 @@ async function pagePayload(
  * reason, and nothing is fetched. A passing address is looked up, and the browser is sent to the
  * save form with what the page says about itself, or with the address alone when the lookup
  * gives nothing. An address that is already saved is not looked up, because the save form shows
- * the existing bookmark instead.
+ * the existing bookmark instead. Neither is one of Haystack's own addresses: Cloudflare refuses
+ * a Worker's request to its own workers.dev address, and under `wrangler dev` the Worker would
+ * request itself and start a sign-in. The hosts are compared, not the origins, because an address
+ * on Haystack's own host is Haystack's whatever its scheme, and a request can reach the Worker as
+ * http behind a proxy, as it does in the test harness. A redirect to Haystack's own address is
+ * left to Cloudflare.
  */
 export async function saveAddress(request: Request, db: Db, userId: string): Promise<Response> {
   const captured = await submittedFields(request);
@@ -84,7 +89,10 @@ export async function saveAddress(request: Request, db: Db, userId: string): Pro
   const addressAlone = saveUrlWithinBudget(origin, { url });
   // The page is fetched without tracking parameters, as it will be saved.
   const fetchedUrl = stripTrackingParameters(url);
-  if ((await existingBookmark(db, userId, normalizeUrl(fetchedUrl))) !== undefined) {
+  if (
+    new URL(fetchedUrl).host === new URL(request.url).host ||
+    (await existingBookmark(db, userId, normalizeUrl(fetchedUrl))) !== undefined
+  ) {
     return seeOther(addressAlone);
   }
   const payload = await pagePayload(url, fetchedUrl, origin);

@@ -1,13 +1,17 @@
 // POST /save/address (#105): the address form's Continue screens the address, looks the page up,
 // and redirects to the save form with what the page says about itself, or with the address alone.
-// Every page comes from a local https fixture (page-fixture.ts), which also shows what the page's
-// server saw. See "Save flow" in plans/haystack-v1-implementation-plan.md.
-import type { ServerResponse } from "node:http";
-import { createServer } from "node:net";
+// Every page is answered by the page fixture (page-fixture.ts), which also shows what the page's
+// server would see, and fails a test that makes a request it did not plan for. See "Save flow" in
+// plans/haystack-v1-implementation-plan.md.
 import { normalizeUrl, SAVE_URL_BUDGET } from "@haystack/schemas";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
+import { HttpResponse } from "msw";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
 import { createTestHarness } from "wrangler";
-import { LOOKUP_TIMEOUT_MS } from "../src/page-lookup.ts";
+import {
+  LOOKUP_ELEMENT_BUDGET,
+  LOOKUP_READ_LIMIT_BYTES,
+  LOOKUP_TIMEOUT_MS,
+} from "../src/page-lookup.ts";
 import { type PageFixture, startPageFixture } from "./page-fixture.ts";
 import { seedBookmark, seedSignedInUser, type SeededUser } from "./seed.ts";
 import { expectValidHtml } from "./validate-html.ts";
@@ -17,7 +21,7 @@ let server: ReturnType<typeof createTestHarness>;
 let origin: string;
 
 beforeAll(async () => {
-  fixture = await startPageFixture();
+  fixture = startPageFixture();
   server = createTestHarness({
     workers: [
       {
@@ -32,7 +36,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await server.close();
-  await fixture.close();
+  fixture.close();
 });
 
 async function db() {
@@ -53,9 +57,15 @@ beforeEach(async () => {
   server.clearLogs();
 });
 
+// A request that no test planned for would otherwise only make the Worker fall back.
+afterEach(() => {
+  expect(fixture.unplanned).toEqual([]);
+});
+
 function postAddress(
   url: string | null,
   headers: Record<string, string | null> = {},
+  target = "/save/address",
 ): Promise<Response> {
   const sent: Record<string, string> = {};
   for (const [name, value] of Object.entries({ origin, cookie: owner.cookie, ...headers })) {
@@ -63,7 +73,7 @@ function postAddress(
       sent[name] = value;
     }
   }
-  return server.fetch("/save/address", {
+  return server.fetch(target, {
     method: "POST",
     headers: sent,
     body: new URLSearchParams(url === null ? {} : { url }),
@@ -72,10 +82,10 @@ function postAddress(
 }
 
 /** The fields of the save link a 303 sends the browser to. */
-function savedLinkFields(response: Response): Record<string, string> {
+function savedLinkFields(response: Response, worker = origin): Record<string, string> {
   expect(response.status).toBe(303);
   const location = new URL(response.headers.get("location") ?? "");
-  expect(location.origin + location.pathname).toBe(`${origin}/save`);
+  expect(location.origin + location.pathname).toBe(`${worker}/save`);
   return Object.fromEntries(location.searchParams);
 }
 
@@ -85,6 +95,73 @@ function lookupLogs(): string[] {
     .map((log) => log.message)
     .filter((message) => message.startsWith("Page lookup"));
 }
+
+const encoder = new TextEncoder();
+
+function html(
+  body: ConstructorParameters<typeof Response>[0],
+  headers: Record<string, string> = {},
+): Response {
+  return new HttpResponse(body, { headers: { "content-type": "text/html", ...headers } });
+}
+
+/** Resolves after `ms`. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+interface Endless {
+  readonly body: ReadableStream<Uint8Array>;
+  /** Ends the body. The Worker's cancel does not reach this side (page-fixture.ts says why). */
+  stop(): void;
+}
+
+/**
+ * A body that never ends on its own: `first`, then `filler` again and again until `stop`. With
+ * `everyMs`, one piece of filler goes every `everyMs`, so reading on to the byte limit would take
+ * far longer than the time limit. Without it, the filler goes as fast as it is read, in 16 KiB
+ * pieces. With `everyMs: Infinity`, nothing follows `first`: the page stalls.
+ */
+function endless(first: string, filler: string, everyMs?: number): Endless {
+  let stopped = false;
+  let wake: () => void = () => {};
+  const piece = encoder.encode(
+    everyMs === undefined ? filler.repeat(Math.ceil(16_384 / filler.length)) : filler,
+  );
+  let sentFirst = false;
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (!sentFirst) {
+        sentFirst = true;
+        controller.enqueue(encoder.encode(first));
+        return;
+      }
+      if (everyMs === Infinity) {
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+        });
+      } else {
+        // Yields to the event loop even when there is no wait, so a fast body cannot starve it.
+        await sleep(everyMs ?? 0);
+      }
+      if (stopped) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(piece);
+    },
+  });
+  return {
+    body,
+    stop: () => {
+      stopped = true;
+      wake();
+    },
+  };
+}
+
+// A page that never answers.
+const NEVER: Promise<Response> = new Promise(() => {});
 
 const FULL_PAGE = `<!doctype html>
 <html lang="en">
@@ -153,6 +230,39 @@ describe("a page that says what it is", () => {
     });
   });
 
+  it("keeps a canonical link to another host", async () => {
+    fixture.page(
+      "/syndicated",
+      `<head><title>Syndicated</title><link rel="canonical" href="https://www.other.test/original"></head>`,
+    );
+    expect(savedLinkFields(await postAddress(fixture.url("/syndicated")))).toEqual({
+      url: fixture.url("/syndicated"),
+      canonical_url: "https://www.other.test/original",
+      title: "Syndicated",
+    });
+    // The canonical link is evidence, not a page to fetch.
+    expect(fixture.requests.map((request) => request.url)).toEqual([fixture.url("/syndicated")]);
+  });
+
+  it("reads a page in the charset its content type names", async () => {
+    fixture.route("/latin-1", () =>
+      html(
+        new Uint8Array([
+          ...encoder.encode("<head><title>Caf"),
+          0xe9,
+          ...encoder.encode("</title></head>"),
+        ]),
+        {
+          "content-type": "text/html; charset=windows-1252",
+        },
+      ),
+    );
+    expect(savedLinkFields(await postAddress(fixture.url("/latin-1")))).toEqual({
+      url: fixture.url("/latin-1"),
+      title: "Café",
+    });
+  });
+
   it("cuts long values to their caps, as the extension does", async () => {
     fixture.page(
       "/long",
@@ -177,18 +287,19 @@ describe("a page that says what it is", () => {
     fixture.page("/headers", FULL_PAGE);
     await postAddress(fixture.url("/headers"), { authorization: "Bearer from-the-browser" });
     const [request] = fixture.requests;
-    expect(request?.headers["user-agent"]).toBe(`Haystack (+${origin})`);
-    expect(request?.headers.accept).toBe("text/html");
-    expect(request?.headers.cookie).toBeUndefined();
-    expect(request?.headers.authorization).toBeUndefined();
-    expect(JSON.stringify(request?.headers)).not.toContain(owner.cookie.split("=")[1]);
+    expect(request?.headers.get("user-agent")).toBe(`Haystack (+${origin})`);
+    expect(request?.headers.get("accept")).toBe("text/html");
+    expect(request?.headers.get("cookie")).toBeNull();
+    expect(request?.headers.get("authorization")).toBeNull();
+    const session = owner.cookie.split("=")[1] ?? "";
+    expect(JSON.stringify([...(request?.headers.entries() ?? [])])).not.toContain(session);
   });
 
   it("drops a canonical URL that carries a secret, as GET /save does, and keeps the rest", async () => {
     fixture.page(
       "/share",
       `<head><title>Shared page</title>
-        <link rel="canonical" href="https://docs.example/d/1?access_token=secret-value"></head>`,
+        <link rel="canonical" href="https://docs.test/d/1?access_token=secret-value"></head>`,
     );
     const response = await postAddress(fixture.url("/share"));
     expect(savedLinkFields(response)).toEqual({ url: fixture.url("/share"), title: "Shared page" });
@@ -218,57 +329,20 @@ describe("a page that says what it is", () => {
 });
 
 describe("the read stops early", () => {
-  // A response that never ends: the prefix, then the filler again and again until the test stops
-  // it. `fast` sends the filler as fast as the connection takes it. Otherwise one small piece of
-  // it goes every 50 ms, so reading to the byte limit would take far longer than the time limit.
-  let open: ServerResponse[] = [];
-  function endless(path: string, prefix: string, filler: string, fast: boolean): void {
-    fixture.route(path, (_, response) => {
-      open.push(response);
-      response.writeHead(200, { "content-type": "text/html" });
-      response.write(prefix);
-      if (!fast) {
-        const timer = setInterval(() => response.write(filler), 50);
-        response.on("close", () => clearInterval(timer));
-        return;
-      }
-      const chunk = Buffer.from(filler.repeat(Math.ceil(16_384 / filler.length)));
-      const pump = () => {
-        while (!response.destroyed) {
-          if (!response.write(chunk)) {
-            response.once("drain", pump);
-            return;
-          }
-        }
-      };
-      pump();
-    });
-  }
-
-  beforeEach(() => {
-    open = [];
-  });
-
-  function stopAll(): void {
-    for (const response of open) {
-      response.destroy();
-    }
-  }
-
   // A Worker that read the whole page would never answer, or would answer at the time limit with
   // the address alone. Getting the title back well before the time limit means that the read
   // stopped where the test says, because the page trickles on after that point. The tag after
   // that point, which a read that went on would find, shows that nothing after it is taken.
   it("at </head>", async () => {
-    endless(
-      "/endless-body",
+    const page = endless(
       `<head><title>Endless body</title></head><meta property="og:description" content="after the head">`,
       "<p>more body text</p>",
-      false,
+      50,
     );
+    fixture.route("/endless-body", () => html(page.body));
     const started = performance.now();
     const response = await postAddress(fixture.url("/endless-body"));
-    stopAll();
+    page.stop();
     expect(performance.now() - started).toBeLessThan(LOOKUP_TIMEOUT_MS / 2);
     expect(savedLinkFields(response)).toEqual({
       url: fixture.url("/endless-body"),
@@ -277,15 +351,15 @@ describe("the read stops early", () => {
   });
 
   it("at <body>, when the page has no </head>", async () => {
-    endless(
-      "/no-head-end",
+    const page = endless(
       '<title>No head end</title><meta name="description" content="Before the body"><body><meta property="og:description" content="in the body">',
       "<p>more body text</p>",
-      false,
+      50,
     );
+    fixture.route("/no-head-end", () => html(page.body));
     const started = performance.now();
     const response = await postAddress(fixture.url("/no-head-end"));
-    stopAll();
+    page.stop();
     expect(performance.now() - started).toBeLessThan(LOOKUP_TIMEOUT_MS / 2);
     expect(savedLinkFields(response)).toEqual({
       url: fixture.url("/no-head-end"),
@@ -295,36 +369,71 @@ describe("the read stops early", () => {
   });
 
   // The head never ends, and it arrives as fast as the Worker reads it, so only the byte limit
-  // can stop the read before the time limit.
+  // can stop the read before the time limit. The filler is a comment, so that the element budget
+  // below is not what stops it.
   it("at the byte limit, when the head never ends", async () => {
-    endless(
-      "/endless-head",
-      "<head><title>Endless head</title>",
-      '<meta name="filler" content="a value that goes on">',
-      true,
-    );
+    const page = endless("<head><title>Endless head</title>", "<!-- a comment that goes on -->");
+    fixture.route("/endless-head", () => html(page.body));
     const started = performance.now();
     const response = await postAddress(fixture.url("/endless-head"));
-    stopAll();
+    page.stop();
     expect(performance.now() - started).toBeLessThan(LOOKUP_TIMEOUT_MS);
     expect(savedLinkFields(response)).toEqual({
       url: fixture.url("/endless-head"),
       title: "Endless head",
     });
   });
-});
 
-// A port on this machine that nothing listens on.
-async function closedPort(): Promise<number> {
-  const probe = createServer();
-  await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
-  const address = probe.address();
-  await new Promise((resolve) => probe.close(resolve));
-  if (address === null || typeof address === "string") {
-    throw new Error("The probe has no port");
-  }
-  return address.port;
-}
+  // Each tag the reader wants costs CPU time in JavaScript, so it takes LOOKUP_ELEMENT_BUDGET of
+  // them at most. What it read before that is kept, and nothing after it is read.
+  it("after the element budget, keeping what it read before", async () => {
+    const repeated = Array.from(
+      { length: LOOKUP_ELEMENT_BUDGET + 50 },
+      (_, index) => `<meta property="og:site_name" content="Site ${index}">`,
+    ).join("");
+    fixture.page("/many-tags", `<head>${repeated}<title>After the budget</title></head>`);
+    expect(savedLinkFields(await postAddress(fixture.url("/many-tags")))).toEqual({
+      url: fixture.url("/many-tags"),
+      og_site_name: "Site 0",
+    });
+  });
+
+  it("not because of tags it does not want, which never count against the budget", async () => {
+    const preloads = '<link rel="preload" href="/font.woff2" as="font">'.repeat(
+      LOOKUP_ELEMENT_BUDGET * 2,
+    );
+    fixture.page("/many-preloads", `<head>${preloads}<title>After the preloads</title></head>`);
+    expect(savedLinkFields(await postAddress(fixture.url("/many-preloads")))).toEqual({
+      url: fixture.url("/many-preloads"),
+      title: "After the preloads",
+    });
+  });
+
+  // A page made of nothing but a tag the reader wants, up to the byte limit, is the most work a
+  // page can ask of it. Its lookup takes no longer than a tiny page's, give or take a margin that
+  // is far smaller than what the same page costs without the budget.
+  it("so a page full of the tags it wants is looked up as fast as a tiny page", async () => {
+    const tag = '<meta name="description" content="x">';
+    const filled = tag.repeat(Math.ceil(LOOKUP_READ_LIMIT_BYTES / tag.length));
+    fixture.page("/full-of-tags", `<head>${filled}<title>T</title></head>`);
+    fixture.page("/tiny", "<head><title>Tiny</title></head>");
+    // The fastest of a few runs, so a moment of load on the machine does not count.
+    async function fastest(path: string): Promise<number> {
+      const times: number[] = [];
+      for (let run = 0; run < 3; run += 1) {
+        const started = performance.now();
+        expect((await postAddress(fixture.url(path))).status).toBe(303);
+        times.push(performance.now() - started);
+      }
+      return Math.min(...times);
+    }
+    const tiny = await fastest("/tiny");
+    const full = await fastest("/full-of-tags");
+    // Measured on a loaded machine: about 4 ms slower with the budget, and about 90 ms slower
+    // without it, so 50 ms tells the two apart with room for load either way.
+    expect(full - tiny).toBeLessThan(50);
+  });
+});
 
 describe("a lookup that gives nothing redirects with the address alone", () => {
   // Each fallback logs a fixed code, and never the address or anything from the page.
@@ -335,14 +444,12 @@ describe("a lookup that gives nothing redirects with the address alone", () => {
       expect(logs).toEqual([`Page lookup gave no metadata: ${code}`]);
     }
     const everything = JSON.stringify(server.getLogs());
-    expect(everything).not.toContain("127.0.0.1");
+    expect(everything).not.toContain("pages.test");
     expect(everything).not.toContain("page-marker");
   }
 
   it("when the page does not answer within the time limit", async () => {
-    fixture.route("/slow?page-marker", () => {
-      // Never answers. Closing the fixture ends the connection.
-    });
+    fixture.route("/slow?page-marker", () => NEVER);
     const started = performance.now();
     const response = await postAddress(fixture.url("/slow?page-marker"));
     const elapsed = performance.now() - started;
@@ -352,29 +459,32 @@ describe("a lookup that gives nothing redirects with the address alone", () => {
   });
 
   it("when the page stops sending before its head ends", async () => {
-    fixture.route("/stalls", (_, response) => {
-      response.writeHead(200, { "content-type": "text/html" });
-      response.write("<html><head><title>page-marker</title>");
-    });
+    const page = endless("<html><head><title>page-marker</title>", "", Infinity);
+    fixture.route("/stalls", () => html(page.body));
     const started = performance.now();
     const response = await postAddress(fixture.url("/stalls"));
+    page.stop();
     expectAddressAlone(response, fixture.url("/stalls"), "timeout");
     expect(performance.now() - started).toBeLessThan(LOOKUP_TIMEOUT_MS + 2000);
   });
 
   // In the test harness, Node makes the request (page-fixture.ts), and a request it cannot make
-  // reaches the Worker as a 500 response rather than an error, so the logged code is not checked.
+  // reaches the Worker as a 500 response rather than an error, so the logged code is "status".
   it("when the page cannot be reached", async () => {
-    const url = `https://127.0.0.1:${await closedPort()}/page-marker`;
-    expectAddressAlone(await postAddress(url), url);
+    fixture.route("/unreachable", () => HttpResponse.error());
+    expectAddressAlone(await postAddress(fixture.url("/unreachable")), fixture.url("/unreachable"));
     expect(lookupLogs()).toHaveLength(1);
   });
 
   it.each([404, 410, 500, 503])("when the page answers %i", async (status) => {
-    fixture.route("/status", (_, response) => {
-      response.writeHead(status, { "content-type": "text/html" });
-      response.end("<head><title>page-marker</title></head>");
-    });
+    fixture.route(
+      "/status",
+      () =>
+        new HttpResponse("<head><title>page-marker</title></head>", {
+          status,
+          headers: { "content-type": "text/html" },
+        }),
+    );
     expectAddressAlone(await postAddress(fixture.url("/status")), fixture.url("/status"), "status");
   });
 
@@ -382,20 +492,36 @@ describe("a lookup that gives nothing redirects with the address alone", () => {
     ["JSON", "application/json"],
     ["plain text", "text/plain"],
     ["XHTML", "application/xhtml+xml"],
-    ["no content type", null],
   ])("when the page is %s", async (_, contentType) => {
-    fixture.route("/other", (__, response) => {
-      response.writeHead(200, contentType === null ? {} : { "content-type": contentType });
-      response.end("<head><title>page-marker</title></head>");
-    });
+    fixture.route("/other", () =>
+      html("<head><title>page-marker</title></head>", { "content-type": contentType }),
+    );
     expectAddressAlone(await postAddress(fixture.url("/other")), fixture.url("/other"), "not-html");
   });
 
+  it("when the page has no content type", async () => {
+    fixture.route("/untyped", () => {
+      const response = new HttpResponse("<head><title>page-marker</title></head>");
+      response.headers.delete("content-type");
+      return response;
+    });
+    expectAddressAlone(
+      await postAddress(fixture.url("/untyped")),
+      fixture.url("/untyped"),
+      "not-html",
+    );
+  });
+
   it.each([
-    ["no metadata", "<html><head></head><body>page-marker</body></html>"],
-    ["only blank values", '<head><title>  </title><meta name="description" content=" "></head>'],
-  ])("when the page has %s", async (_, page) => {
-    fixture.page("/bare", page);
+    ["no metadata", () => html("<html><head></head><body>page-marker</body></html>")],
+    [
+      "only blank values",
+      () => html('<head><title>  </title><meta name="description" content=" "></head>'),
+    ],
+    ["an empty body", () => html("")],
+    ["no body at all (204)", () => new HttpResponse(null, { status: 204 })],
+  ])("when the page has %s", async (_, resolver) => {
+    fixture.route("/bare", resolver);
     expectAddressAlone(
       await postAddress(fixture.url("/bare")),
       fixture.url("/bare"),
@@ -418,12 +544,63 @@ describe("a lookup that gives nothing redirects with the address alone", () => {
     );
   });
 
-  it("when the address is already saved, without looking it up", async () => {
-    const url = fixture.url("/saved");
-    fixture.page("/saved", FULL_PAGE);
-    await seedBookmark(await db(), owner.userId, url, normalizeUrl(url));
-    expect(savedLinkFields(await postAddress(url))).toEqual({ url });
+  // The rewriter decodes by the header's charset alone, so a page that declares another one only
+  // in its head would come out garbled ("Caf� au lait").
+  it.each([
+    ["<meta charset>", '<meta charset="windows-1252">'],
+    [
+      "<meta http-equiv>",
+      '<meta http-equiv="Content-Type" content="text/html; charset=ISO-8859-1">',
+    ],
+  ])("when the page declares a charset other than UTF-8 in %s only", async (_, declaration) => {
+    fixture.route("/legacy", () =>
+      html(
+        new Uint8Array([
+          ...encoder.encode(`<head>${declaration}<title>Caf`),
+          0xe9,
+          ...encoder.encode(" au lait page-marker</title></head>"),
+        ]),
+      ),
+    );
+    expectAddressAlone(
+      await postAddress(fixture.url("/legacy")),
+      fixture.url("/legacy"),
+      "charset",
+    );
+  });
+
+  it("when the address is already saved, whatever its host's case, without looking it up", async () => {
+    fixture.page("/Saved", FULL_PAGE);
+    await seedBookmark(
+      await db(),
+      owner.userId,
+      fixture.url("/Saved"),
+      normalizeUrl(fixture.url("/Saved")),
+    );
+    const typed = "https://PAGES.Test/Saved";
+    expect(savedLinkFields(await postAddress(typed))).toEqual({ url: typed });
     expect(fixture.requests).toHaveLength(0);
+  });
+
+  // The harness accepts an absolute address and gives the Worker its host, so the Worker runs at
+  // haystack.test here (the harness hands the request over as http, which is why the Worker
+  // compares hosts). A Haystack address is never fetched, and the fixture would show it if it were.
+  it("when the address is one of Haystack's own, without looking it up", async () => {
+    const haystack = "https://haystack.test";
+    fixture.page(`${haystack}/saved-links?page-marker`, FULL_PAGE);
+    const response = await postAddress(
+      `${haystack}/saved-links?page-marker`,
+      { origin: haystack },
+      `${haystack}/save/address`,
+    );
+    expect(response.status).toBe(303);
+    const location = new URL(response.headers.get("location") ?? "");
+    expect(location.pathname).toBe("/save");
+    expect(Object.fromEntries(location.searchParams)).toEqual({
+      url: `${haystack}/saved-links?page-marker`,
+    });
+    expect(fixture.requests).toHaveLength(0);
+    expect(lookupLogs()).toEqual([]);
   });
 });
 
@@ -432,8 +609,8 @@ const ADDRESS_RULE =
 
 describe("an address the checks reject", () => {
   it.each([
-    ["an http: address", "http://127.0.0.1/page", ADDRESS_RULE],
-    ["an address without a scheme", "127.0.0.1/page", ADDRESS_RULE],
+    ["an http: address", "http://pages.test/page", ADDRESS_RULE],
+    ["an address without a scheme", "pages.test/page", ADDRESS_RULE],
     ["an empty address", "", "Enter the address of a page, starting with https://."],
     ["no address at all", null, "Enter the address of a page, starting with https://."],
   ])(
@@ -460,7 +637,7 @@ describe("an address the checks reject", () => {
   });
 
   it("gets the same page as GET /save gives for that address", async () => {
-    const url = "http://127.0.0.1/page";
+    const url = "http://pages.test/page";
     const posted = await (await postAddress(url)).text();
     const got = await (
       await server.fetch(`/save?${new URLSearchParams({ url }).toString()}`, {
@@ -474,7 +651,7 @@ describe("an address the checks reject", () => {
 describe("only a signed-in POST from Haystack looks a page up", () => {
   it.each([
     ["signed out", { cookie: null }, 401],
-    ["from another origin", { origin: "https://evil.example" }, 403],
+    ["from another origin", { origin: "https://evil.test" }, 403],
     ["without an Origin header", { origin: null }, 403],
   ])("refuses a POST %s, and fetches nothing", async (_, headers, status) => {
     fixture.page("/page", FULL_PAGE);
@@ -503,5 +680,16 @@ describe("only a signed-in POST from Haystack looks a page up", () => {
     );
     expect(response.status).toBe(404);
     expect(fixture.requests).toHaveLength(0);
+  });
+});
+
+// A test that sends a request to an address it did not plan for fails, whatever the Worker does
+// with the failed request. This shows the check that afterEach makes.
+describe("the page fixture", () => {
+  it("records a request to an address outside .test as unplanned, and fails it", async () => {
+    const response = await postAddress("https://example.com/page-marker");
+    expect(savedLinkFields(response)).toEqual({ url: "https://example.com/page-marker" });
+    expect(fixture.unplanned).toEqual(["https://example.com/page-marker"]);
+    fixture.reset();
   });
 });

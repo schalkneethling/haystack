@@ -1,100 +1,118 @@
-// A local https server that stands in for the pages the address form looks up (#105), for the
-// integration, browser and VoiceOver tests. Tests make no requests to the internet, so every page
-// the Worker fetches comes from here.
+// The pages the address form looks up (#105), for the integration, browser and VoiceOver tests.
+// Tests make no requests to the internet, so every page the Worker fetches is answered here, by
+// Mock Service Worker (MSW) in the test's own process.
 //
-// Why https, and how the Worker's fetch trusts it: the address must be an https:// link, because
-// Haystack saves only https pages, and production validation is not loosened for tests. Wrangler's
-// test harness sends every outbound fetch from the Worker through `globalThis.fetch` in the Node
-// process that started the harness (the `outboundService` it sets in wrangler-dist/cli.js). So the
-// fetch is made by Node, and Node trusts the fixture's self-signed certificate, which this module
-// adds with `tls.setDefaultCACertificates`, for this process only. The certificate is made in
-// memory when the first fixture starts (test-certificate.ts), and is valid for a day.
+// Why that works: Wrangler's test harness sends every outbound fetch from the Worker through
+// `globalThis.fetch` in the Node process that started the harness (the `outboundService` it sets
+// in wrangler-dist/cli.js, which looks `globalThis.fetch` up on each call). MSW's `setupServer`
+// patches that function, so it answers the Worker's requests with the pages a test registers.
+// Their addresses are ordinary https:// addresses under the reserved `.test` domain, so the
+// Worker's validation is the production validation, and no name is ever looked up.
 //
-// Because Node makes the request, three things differ from production, and the tests do not rely
-// on them: Node follows redirects itself, so the Worker sees the final response under the first
-// URL; Node keeps reading a body after the Worker has stopped, so a test cannot tell from here
-// when the Worker stopped reading; and Node adds headers of its own, such as `accept-language`.
-import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
-import { createServer, type Server } from "node:https";
-import type { AddressInfo } from "node:net";
-import tls from "node:tls";
-import { makeTestCertificate, type TestCertificate } from "./test-certificate.ts";
+// Any other request is one no test planned for. MSW fails it (`onUnhandledFrame: "error"`), so
+// the Worker falls back to the address alone, and this module records its address in
+// `unplanned`, which the tests check, so the test fails rather than passing on the fallback. The
+// harness's own requests, such as the integration tests' `server.fetch`, do not go through the
+// functions MSW patches, so they are not affected. Playwright's request API does, when a browser
+// test calls the Worker from Node, so the browser tests' fixtures let exactly the Worker's own
+// origin through, with `allow`.
+//
+// Because Node makes the request, four things differ from production, and the tests do not rely
+// on them (the plan's "Testing strategy" lists them too): Node follows redirects itself, so the
+// Worker sees the final response under the first address; Node keeps reading a body after the
+// Worker has cancelled it, so a test cannot see the cancellation; a request Node cannot make
+// reaches the Worker as a 500 response rather than an error; and Node adds headers of its own,
+// such as `accept-language`.
+import { http, HttpResponse, passthrough } from "msw";
+import { setupServer } from "msw/node";
 
-/** A request the fixture received, as the page's server saw it. */
+/** The address the test pages are served at, unless a test names another `.test` address. */
+export const PAGES_ORIGIN = "https://pages.test";
+
+/** A request the fixture answered, as the page's server would see it. */
 export interface FixtureRequest {
+  /** The whole address. */
+  readonly url: string;
+  /** The path and query. */
   readonly path: string;
-  readonly headers: IncomingHttpHeaders;
+  readonly headers: Headers;
 }
 
-export type FixtureHandler = (request: IncomingMessage, response: ServerResponse) => void;
+export type FixtureResolver = (request: Request) => Response | Promise<Response>;
 
 export interface PageFixture {
-  /** The fixture's origin, an https:// address on 127.0.0.1. */
-  readonly origin: string;
-  /** The address of a path on the fixture. */
-  url(path: string): string;
-  /** Every request received since the fixture started or was last reset, in order. */
+  /** The address of a path, on PAGES_ORIGIN or on another `.test` origin. */
+  url(path: string, origin?: string): string;
+  /** Every request answered since the fixture started or was last reset, in order. */
   readonly requests: readonly FixtureRequest[];
-  /** Serves `path` with a handler. A path with no handler answers 404. */
-  route(path: string, handler: FixtureHandler): void;
-  /** Serves `path` as an HTML page. */
-  page(path: string, html: string): void;
+  /** Addresses requested that are not on a `.test` origin, which no test planned for. */
+  readonly unplanned: readonly string[];
+  /** Answers an address with a resolver. A `.test` address with none answers 404. */
+  route(url: string, resolver: FixtureResolver): void;
+  /** Serves an address as an HTML page. */
+  page(url: string, html: string): void;
+  /** Lets every request to `origin` through untouched: the Worker's own address. */
+  allow(origin: string): void;
   /** Forgets the routes and the requests. */
   reset(): void;
-  /** Stops the server, closing any response still open. */
-  close(): Promise<void>;
+  /** Stops answering, and restores `globalThis.fetch`. */
+  close(): void;
 }
 
-let certificate: TestCertificate | undefined;
+// Any https address on a host under `.test`.
+const TEST_ADDRESS = /^https:\/\/[^/?#]+\.test(?::\d+)?\//;
 
-// The fixture's certificate, made once per process and added to the certificates this process's
-// TLS clients trust, which the harness's fetches use.
-function trustedCertificate(): TestCertificate {
-  if (certificate === undefined) {
-    certificate = makeTestCertificate();
-    tls.setDefaultCACertificates([...tls.getCACertificates("default"), certificate.cert]);
-  }
-  return certificate;
+// A path is on PAGES_ORIGIN, and a whole address stays as it is. Both are serialized, so a key is
+// found whichever way it was written, as the URL parser would read it.
+function key(url: string): string {
+  return new URL(url, PAGES_ORIGIN).href;
 }
 
-/** Starts a page fixture on 127.0.0.1, on a free port. */
-export async function startPageFixture(): Promise<PageFixture> {
-  const routes = new Map<string, FixtureHandler>();
+/**
+ * Starts answering the Worker's requests in this process. Start it before the harness, and only
+ * one at a time, because it patches the process's `fetch`.
+ */
+export function startPageFixture(): PageFixture {
+  const routes = new Map<string, FixtureResolver>();
   const requests: FixtureRequest[] = [];
-  const server: Server = createServer(trustedCertificate(), (request, response) => {
-    const path = request.url ?? "/";
-    requests.push({ path, headers: request.headers });
-    const handler = routes.get(path);
-    if (handler === undefined) {
-      response.writeHead(404, { "content-type": "text/plain" });
-      response.end("Not found");
-      return;
-    }
-    handler(request, response);
+  const unplanned: string[] = [];
+  const mock = setupServer(
+    http.all(TEST_ADDRESS, ({ request }) => {
+      const url = new URL(request.url);
+      requests.push({ url: url.href, path: url.pathname + url.search, headers: request.headers });
+      const resolver = routes.get(url.href);
+      return resolver === undefined
+        ? new HttpResponse("Not found", { status: 404, headers: { "content-type": "text/plain" } })
+        : resolver(request);
+    }),
+  );
+  mock.events.on("request:unhandled", ({ request }) => {
+    unplanned.push(request.url);
   });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const origin = `https://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  mock.listen({ onUnhandledFrame: "error" });
   return {
-    origin,
-    url: (path) => `${origin}${path}`,
+    url: (path, origin = PAGES_ORIGIN) => new URL(path, origin).href,
     requests,
-    route: (path, handler) => {
-      routes.set(path, handler);
+    unplanned,
+    route: (url, resolver) => {
+      routes.set(key(url), resolver);
     },
-    page: (path, html) => {
-      routes.set(path, (_, response) => {
-        response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-        response.end(html);
-      });
+    page: (url, html) => {
+      routes.set(key(url), () =>
+        HttpResponse.html(html, { headers: { "content-type": "text/html; charset=utf-8" } }),
+      );
+    },
+    allow: (origin) => {
+      const escaped = new URL(origin).origin.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+      mock.use(http.all(new RegExp(`^${escaped}/`), () => passthrough()));
     },
     reset: () => {
       routes.clear();
       requests.length = 0;
+      unplanned.length = 0;
     },
-    close: () =>
-      new Promise((resolve) => {
-        server.closeAllConnections();
-        server.close(() => resolve());
-      }),
+    close: () => {
+      mock.close();
+    },
   };
 }
