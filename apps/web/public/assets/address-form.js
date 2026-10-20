@@ -56,7 +56,10 @@ function enhance(form, button, status) {
     announceTimer = setTimeout(() => say(PENDING_MESSAGE), ANNOUNCE_DELAY_MS);
     resetTimer = setTimeout(() => {
       setPending(false);
-      say(RESET_MESSAGE);
+      // Written after the same delay as the pending message, because the button's name has just
+      // changed back, and VoiceOver can miss a status message written while it announces another
+      // change (#56). It is the announce timer, so a new submission or a restored page clears it.
+      announceTimer = setTimeout(() => say(RESET_MESSAGE), ANNOUNCE_DELAY_MS);
     }, RESET_AFTER_MS);
   }
 

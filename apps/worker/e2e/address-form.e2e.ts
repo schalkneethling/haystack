@@ -171,7 +171,10 @@ test.describe("while the page is looked up", () => {
     const button = page.getByRole("button", { name: "Continue" });
     await expect(button).toBeFocused();
     await expect(button).not.toHaveAttribute("aria-disabled");
-    // The reset is announced, so a screen reader user knows the form is ready again.
+    // The reset is announced 100 ms after the button changes back, as the pending message is after
+    // a press, so a screen reader user hears that the form is ready again.
+    await expect(page.locator("#save-url-status")).toBeEmpty();
+    await page.clock.fastForward(100);
     await expect(page.locator("#save-url-status")).toHaveText(RESET_MESSAGE);
     await button.press("Enter");
     expect(await submissions(page)).toEqual(["sent", "sent"]);
