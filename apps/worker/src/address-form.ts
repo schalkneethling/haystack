@@ -7,8 +7,8 @@
 // the request carries no captured field, and both GET /save and POST /save/address show it again
 // with an error when the checks reject the address.
 //
-// The lookup can take a few seconds, so address-form.js shows that Continue is waiting and stops
-// a second submission. The form works without it.
+// The lookup can take a few seconds, so address-form.js sends the form with `fetch`, shows that
+// Continue is processing, and handles each answer in the page. The form works without it.
 //
 // The form has `novalidate`, and the field is not `required`. The browser's own check would
 // otherwise block the request with its own message, in its own bubble, before the server's error
@@ -38,12 +38,12 @@ const ERROR_ID = "save-url-error";
 // The card's label, which also names its form.
 const TITLE_ID = "save-url-label";
 
-// The status region, where address-form.js says that the page is being looked up. It is in the
-// page from the start, empty, because a screen reader announces a change to a live region that
-// already exists, as on the saved links page.
+// The status region, where address-form.js says that the page is being looked up, and how a
+// lookup ended. It is in the page from the start, empty, because a screen reader announces a
+// change to a live region that already exists, as on the saved links page.
 const STATUS_ID = "save-url-status";
 
-/** The script that shows the pending state, which every page with the posting form loads. */
+/** The script that sends the form with `fetch`, which every page with the posting form loads. */
 export const ADDRESS_FORM_SCRIPT = "/assets/address-form.js";
 
 // The hint, the field, the button and the status, which both forms share. The field is described
@@ -103,7 +103,7 @@ export function addressFormPage(state: AddressFormState, signedIn: boolean): Res
         ${SENSITIVE_NOTICE}
       </form>`,
     state.error === undefined ? 200 : 400,
-    // Only the form that posts looks a page up, so only its page loads the pending state.
+    // Only the form that posts looks a page up, so only its page loads the script.
     { signedIn, scripts: signedIn ? [ADDRESS_FORM_SCRIPT] : [] },
   );
 }

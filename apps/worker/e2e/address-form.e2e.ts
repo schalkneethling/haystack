@@ -1,17 +1,13 @@
 // The "Save a link" address form (#97): the keyboard path from the saved links page and from a
-// bare /save to the save form, filled in from the page the Worker looks up (#105), the pending
-// state while it does, and the error state when the checks reject an address. axe and reflow at
-// 320 px run in design.e2e.ts with the other pages.
-import AxeBuilder from "@axe-core/playwright";
+// bare /save to the save form, filled in from the page the Worker looks up (#105). With
+// JavaScript, address-form.js sends the form with `fetch` and handles each answer in the page;
+// without it, the browser posts the form and follows the 303. Each numbered test is one point of
+// the design, as the plan's "Testing strategy" lists them. axe and reflow at 320 px run in
+// design.e2e.ts with the other pages.
 import type { Page } from "@playwright/test";
 import type { PageFixture } from "../test/page-fixture.ts";
 import { expect, test } from "./fixtures.ts";
-import {
-  PENDING_MESSAGE,
-  RESET_MESSAGE,
-  stopSubmissions,
-  submissions,
-} from "./stopped-submission.ts";
+import { holdLookups, MESSAGES, PROCESSING_LABEL } from "./held-lookups.ts";
 
 test.beforeEach(async ({ signIn }) => {
   await signIn();
@@ -49,11 +45,37 @@ async function expectSaveFormFor(page: Page, address: string, title: string): Pr
   await expect(page.getByLabel("Description")).toHaveValue(`About ${title}.`);
 }
 
-// The page was loaded, not focused by script: nothing has focus, as on the save form after a
-// rejected title, so the first Tab goes to the header.
-async function expectFocusNotMoved(page: Page): Promise<void> {
-  expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+function field(page: Page) {
+  return page.getByRole("textbox", { name: "Save a link" });
 }
+
+function status(page: Page) {
+  return page.locator("#save-url-status");
+}
+
+/** Continue as it is when the form is ready: its own label, and never disabled. */
+async function expectReady(page: Page): Promise<void> {
+  const button = page.getByRole("button", { name: "Continue" });
+  await expect(button).toBeVisible();
+  await expect(button).not.toHaveAttribute("aria-disabled");
+  await expect(button).toBeEnabled();
+}
+
+/** Continue while a lookup runs: the processing label, still never disabled, and the message. */
+async function expectProcessing(page: Page): Promise<void> {
+  const button = page.getByRole("button", { name: PROCESSING_LABEL });
+  await expect(button).toBeVisible();
+  await expect(button).not.toHaveAttribute("aria-disabled");
+  await expect(button).toBeEnabled();
+  await expect(status(page)).toHaveRole("status");
+  await expect(status(page)).toHaveText(MESSAGES.processing);
+}
+
+const ADDRESS_RULE =
+  "Haystack saves only secure pages, so the address must be a complete https:// link, without spaces and at most 2,048 characters long.";
+const SECRET_REASON =
+  "This link contains an access token, key, or password, so it could let anyone who has it act as you.";
+const HINT = "Paste the address of a page. You confirm its title on the next step.";
 
 // On the saved links page the form comes before the heading, so it is a named form landmark. On
 // its own page the heading is its label, so the form is not named again.
@@ -77,7 +99,6 @@ test("typing an address on the saved links page and pressing Enter opens the sav
   await page.keyboard.type(address);
   await page.keyboard.press("Enter");
   await expectSaveFormFor(page, address, "Typed on the list");
-  // The lookup redirected to an ordinary save link, which carries what the page said.
   const query = new URL(page.url()).searchParams;
   expect(query.get("url")).toBe(address);
   expect(query.get("og_title")).toBe("Typed on the list");
@@ -96,215 +117,343 @@ test("pasting an address on a bare /save and pressing Enter opens the save form,
   await expectSaveFormFor(page, address, "Pasted");
 });
 
-test.describe("without JavaScript", () => {
+test.describe("1. without JavaScript", () => {
   test.use({ javaScriptEnabled: false });
 
-  test("the form still looks the page up and opens the save form", async ({ page, pages }) => {
+  test("the form posts, and the browser follows the 303 to the save form", async ({
+    page,
+    pages,
+  }) => {
     const address = pageAbout(pages, "/no-script", "No script");
     await page.goto("/save");
-    await page.getByLabel("Save a link").fill(address);
+    await field(page).fill(address);
+    const post = page.waitForRequest((request) => request.url().endsWith("/save/address"));
     await page.getByRole("button", { name: "Continue" }).click();
+    const request = await post;
+    expect(request.method()).toBe("POST");
+    expect(request.resourceType()).toBe("document");
     await expectSaveFormFor(page, address, "No script");
+  });
+
+  test("a rejected address gets the server's page with the same error as with JavaScript", async ({
+    page,
+  }) => {
+    await page.goto("/save");
+    await field(page).fill("pages.test/no-scheme");
+    await page.getByRole("button", { name: "Continue" }).click();
+    await expect(page).toHaveTitle("Check the address - Haystack");
+    await expect(page.getByRole("alert")).toHaveText(ADDRESS_RULE);
+    await expect(field(page)).toHaveAccessibleDescription(`${ADDRESS_RULE} ${HINT}`);
+    await expect(field(page)).toHaveValue("pages.test/no-scheme");
   });
 });
 
-// The pending state, kept on the page by stopping each submission after address-form.js has
-// handled it (stopped-submission.ts says how and why).
-test.describe("while the page is looked up", () => {
-  test.beforeEach(async ({ page }) => {
-    await stopSubmissions(page);
-  });
+test("2. with JavaScript, the form goes through fetch to the same route, which answers JSON", async ({
+  page,
+  pages,
+}) => {
+  const address = pageAbout(pages, "/with-script", "With script");
+  await page.goto("/save");
+  await field(page).fill(address);
+  const answer = page.waitForResponse((response) => response.url().endsWith("/save/address"));
+  await page.getByRole("button", { name: "Continue" }).click();
+  const response = await answer;
+  const request = response.request();
+  expect(request.method()).toBe("POST");
+  expect(request.resourceType()).toBe("fetch");
+  expect(await request.headerValue("accept")).toBe("application/json");
+  expect(new URLSearchParams(request.postData() ?? "").get("url")).toBe(address);
+  expect(response.headers()["content-type"]).toBe("application/json; charset=utf-8");
+  await expectSaveFormFor(page, address, "With script");
+});
 
-  async function expectPending(page: Page): Promise<void> {
-    const button = page.getByRole("button", { name: "Looking up…" });
-    await expect(button).toHaveAttribute("aria-disabled", "true");
-    await expect(page.locator("#save-url-status")).toHaveRole("status");
-    await expect(page.locator("#save-url-status")).toHaveText(PENDING_MESSAGE);
-  }
-
-  test("Continue says so, the status announces it, and focus stays in the field", async ({
+test.describe("while a lookup runs", () => {
+  test("3. Continue is never disabled: its label says Processing…, and focus stays on it", async ({
     page,
     pages,
   }) => {
+    const lookups = await holdLookups(page);
+    await page.goto("/save");
+    await tabToField(page);
+    await page.keyboard.type(pages.url("/processing"));
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Enter");
+    await lookups.next(1);
+    await expectProcessing(page);
+    await expect(page.getByRole("button", { name: PROCESSING_LABEL })).toBeFocused();
+  });
+
+  test("3. pressing Enter in the field keeps focus in the field", async ({ page, pages }) => {
+    const lookups = await holdLookups(page);
     await page.goto("/");
     await tabToField(page);
-    await page.keyboard.type(pages.url("/pending-field"));
+    await page.keyboard.type(pages.url("/processing-field"));
     await page.keyboard.press("Enter");
-
-    await expectPending(page);
-    await expect(page.getByRole("textbox", { name: "Save a link" })).toBeFocused();
-    // A second Enter is refused.
-    await page.keyboard.press("Enter");
-    expect(await submissions(page)).toEqual(["sent", "refused"]);
+    await lookups.next(1);
+    await expectProcessing(page);
+    await expect(field(page)).toBeFocused();
   });
 
-  test("Continue keeps focus when it was pressed, and cannot be pressed twice", async ({
+  test("4. a second press with the same address is ignored, and sends no second request", async ({
     page,
     pages,
   }) => {
+    const lookups = await holdLookups(page);
     await page.goto("/save");
-    await tabToField(page);
-    await page.keyboard.type(pages.url("/pending-button"));
-    await page.keyboard.press("Tab");
-    await expect(page.getByRole("button", { name: "Continue" })).toBeFocused();
-    await page.keyboard.press("Enter");
-
-    await expectPending(page);
-    const button = page.getByRole("button", { name: "Looking up…" });
-    await expect(button).toBeFocused();
-    await page.keyboard.press("Enter");
-    await page.keyboard.press("Space");
-    await expect(button).toBeFocused();
-    expect(await submissions(page)).toEqual(["sent", "refused", "refused"]);
+    await field(page).fill(pages.url("/same"));
+    await field(page).press("Enter");
+    await lookups.next(1);
+    await page.getByRole("button", { name: PROCESSING_LABEL }).click();
+    await field(page).press("Enter");
+    await expectProcessing(page);
+    expect(lookups.all).toHaveLength(1);
+    expect(lookups.all[0]?.aborted()).toBe(false);
   });
 
-  test("the form is ready again if the request never comes back", async ({ page, pages }) => {
-    await page.clock.install();
+  test("5. a press with a changed address aborts the request in flight and sends a new one, and the late answer is ignored", async ({
+    page,
+    pages,
+  }) => {
+    const second = pageAbout(pages, "/changed", "Changed");
+    const lookups = await holdLookups(page);
     await page.goto("/save");
-    await page.getByLabel("Save a link").fill(pages.url("/stopped"));
-    await page.getByRole("button", { name: "Continue" }).click();
-    await page.clock.fastForward(100);
-    await expectPending(page);
-
-    // address-form.js waits 15 s, well past the Worker's 3 s limit.
-    await page.clock.fastForward(15_000);
-    const button = page.getByRole("button", { name: "Continue" });
-    await expect(button).toBeFocused();
-    await expect(button).not.toHaveAttribute("aria-disabled");
-    // The reset is announced 100 ms after the button changes back, as the pending message is after
-    // a press, so a screen reader user hears that the form is ready again.
-    await expect(page.locator("#save-url-status")).toBeEmpty();
-    await page.clock.fastForward(100);
-    await expect(page.locator("#save-url-status")).toHaveText(RESET_MESSAGE);
-    await button.press("Enter");
-    expect(await submissions(page)).toEqual(["sent", "sent"]);
-    await expect(page.locator("#save-url-status")).not.toHaveText(RESET_MESSAGE);
+    await field(page).fill(pages.url("/first"));
+    await field(page).press("Enter");
+    const first = await lookups.next(1);
+    await field(page).fill(second);
+    await field(page).press("Enter");
+    const replacement = await lookups.next(2);
+    expect(replacement.address).toBe(second);
+    await expect.poll(() => first.aborted()).toBe(true);
+    // The first request's answer, had it come, says nothing: the form waits for the second.
+    await first.answer(400, { error: "A late answer", keepValue: false });
+    await expectProcessing(page);
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await replacement.release();
+    await expectSaveFormFor(page, second, "Changed");
   });
 
-  // Before sign-in the form asks for GET /save, which goes through sign-in and looks nothing up,
-  // so it gets no pending state and its page does not load the script.
-  test("the form shown before sign-in says nothing about a lookup", async ({ page, signOut }) => {
-    await signOut();
-    await page.goto(
-      `/save?${new URLSearchParams({ url: "http://pages.test/signed-out" }).toString()}`,
-    );
-    await expect(page).toHaveTitle("Check the address - Haystack");
-    await expect(page.locator('script[src="/assets/address-form.js"]')).toHaveCount(0);
-    // Even if the script were loaded, it would leave a form that does not post alone.
-    await page.addScriptTag({ url: "/assets/address-form.js", type: "module" });
-    await page.getByRole("textbox", { name: "Save a link" }).fill("https://pages.test/signed-out");
-    await page.getByRole("button", { name: "Continue" }).click();
-    expect(await submissions(page)).toEqual(["sent"]);
-    const button = page.getByRole("button", { name: "Continue" });
-    await expect(button).not.toHaveAttribute("aria-disabled");
-    await expect(page.locator("#save-url-status")).toBeEmpty();
-  });
-
-  // A browser can restore the page from its back-forward cache as it was left, still waiting.
+  // A browser can restore the page from its back-forward cache as it was left, still processing.
   // Playwright's Chromium does not show whether it used the cache, so the event the browser fires
   // for a restored page is dispatched here.
-  test("the form is ready again when the page is restored from the back-forward cache", async ({
+  test("9. a page restored from the back-forward cache is ready, not processing", async ({
     page,
     pages,
   }) => {
+    const lookups = await holdLookups(page);
     await page.goto("/save");
-    await page.getByLabel("Save a link").fill(pages.url("/restored"));
-    await page.getByRole("button", { name: "Continue" }).click();
-    await expectPending(page);
+    await field(page).fill(pages.url("/restored"));
+    await field(page).press("Enter");
+    await lookups.next(1);
+    await expectProcessing(page);
     await page.evaluate(() =>
       window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })),
     );
-    const button = page.getByRole("button", { name: "Continue" });
-    await expect(button).not.toHaveAttribute("aria-disabled");
-    await expect(page.locator("#save-url-status")).toBeEmpty();
+    await expectReady(page);
+    await expect(status(page)).toBeEmpty();
   });
 });
 
-test("going back to the form after the save form opened finds it ready", async ({
+test("6. on success, the browser goes to the save link with its fields", async ({
+  page,
+  pages,
+}) => {
+  const address = pageAbout(pages, "/success", "Success");
+  await page.goto("/");
+  await field(page).fill(address);
+  await field(page).press("Enter");
+  await page.waitForURL((url) => url.pathname === "/save" && url.searchParams.has("og_title"));
+  const query = new URL(page.url()).searchParams;
+  expect(Object.fromEntries(query)).toEqual({
+    url: address,
+    title: "Success - Example",
+    description: "About Success.",
+    og_title: "Success",
+  });
+  await expectSaveFormFor(page, address, "Success");
+});
+
+test.describe("6. a save link that is not this origin's save form is not followed", () => {
+  for (const [kind, saveLink] of [
+    ["on another origin", "https://evil.test/save?url=https%3A%2F%2Fpages.test%2F"],
+    ["on another path", "/elsewhere?url=https%3A%2F%2Fpages.test%2F"],
+  ] as const) {
+    test(`a link ${kind}`, async ({ page, pages }) => {
+      const lookups = await holdLookups(page);
+      await page.goto("/save");
+      await field(page).fill(pages.url("/odd-link"));
+      await field(page).press("Enter");
+      await (await lookups.next(1)).answer(200, { saveLink });
+      await expect(status(page)).toHaveText(MESSAGES.unexpected);
+      expect(new URL(page.url()).pathname).toBe("/save");
+      await expectReady(page);
+    });
+  }
+});
+
+test.describe("7. a rejected address", () => {
+  test("shows the server's error markup, and the field gets focus, reading the error, then the hint", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await field(page).fill("pages.test/no-scheme");
+    await page.getByRole("button", { name: "Continue" }).click();
+    await expect(field(page)).toBeFocused();
+    await expect(page.getByRole("alert")).toHaveText(ADDRESS_RULE);
+    await expect(page.locator(".alert[role=alert] > p#save-url-error")).toHaveText(ADDRESS_RULE);
+    await expect(field(page)).toHaveAttribute("aria-invalid", "true");
+    await expect(field(page)).toHaveAttribute("aria-describedby", "save-url-error save-url-hint");
+    await expect(field(page)).toHaveAccessibleDescription(`${ADDRESS_RULE} ${HINT}`);
+    // The typed value stays, so it can be corrected.
+    await expect(field(page)).toHaveValue("pages.test/no-scheme");
+    await expectReady(page);
+    expect(new URL(page.url()).pathname).toBe("/");
+  });
+
+  test("that carries a secret is not put back in the field", async ({ page, pages }) => {
+    await page.goto("/save");
+    await field(page).fill(pages.url("/cb?access_token=secret-value"));
+    await field(page).press("Enter");
+    await expect(page.getByRole("alert")).toHaveText(SECRET_REASON);
+    await expect(field(page)).toBeFocused();
+    await expect(field(page)).toHaveValue("");
+    await expect(field(page)).toHaveAccessibleDescription(`${SECRET_REASON} ${HINT}`);
+    expect(await page.locator("body").innerHTML()).not.toContain("secret-value");
+    expect(pages.requests.filter((request) => request.path.startsWith("/cb"))).toHaveLength(0);
+  });
+
+  test("is corrected in place: the error goes when the corrected address is sent", async ({
+    page,
+    pages,
+  }) => {
+    const address = pageAbout(pages, "/corrected", "Corrected");
+    await page.goto("/save");
+    await field(page).fill(address.replace("https://", ""));
+    await field(page).press("Enter");
+    await expect(page.getByRole("alert")).toHaveText(ADDRESS_RULE);
+    await page.keyboard.press("Home");
+    await page.keyboard.type("https://");
+    await page.keyboard.press("Enter");
+    await expectSaveFormFor(page, address, "Corrected");
+  });
+
+  test("on a page that already shows the server's error replaces it, rather than adding one", async ({
+    page,
+  }) => {
+    await page.goto(`/save?${new URLSearchParams({ url: "http://pages.test/a" }).toString()}`);
+    await expect(page.getByRole("alert")).toHaveText(ADDRESS_RULE);
+    await field(page).fill("");
+    await field(page).press("Enter");
+    await expect(page.getByRole("alert")).toHaveText(
+      "Enter the address of a page, starting with https://.",
+    );
+    await expect(page.getByRole("alert")).toHaveCount(1);
+  });
+});
+
+test.describe("8. a lookup that fails leaves the form ready to try again", () => {
+  async function expectTryAgain(
+    page: Page,
+    lookups: Awaited<ReturnType<typeof holdLookups>>,
+  ): Promise<void> {
+    await expectReady(page);
+    await field(page).press("Enter");
+    await lookups.next(2);
+    await expectProcessing(page);
+  }
+
+  test("a timeout after 10 s says so", async ({ page, pages }) => {
+    await page.clock.install();
+    const lookups = await holdLookups(page);
+    await page.goto("/save");
+    await field(page).fill(pages.url("/never"));
+    await field(page).press("Enter");
+    await lookups.next(1);
+    await page.clock.fastForward(9_000);
+    await expectProcessing(page);
+    await page.clock.fastForward(1_200);
+    await expect(status(page)).toHaveText(MESSAGES.timeout);
+    await expect.poll(() => lookups.all[0]?.aborted()).toBe(true);
+    // The clock is the test's, so the processing message waits for it to move on.
+    await expectReady(page);
+    await field(page).press("Enter");
+    await lookups.next(2);
+    await page.clock.fastForward(100);
+    await expectProcessing(page);
+  });
+
+  test("a network error says so", async ({ page, pages }) => {
+    const lookups = await holdLookups(page);
+    await page.goto("/save");
+    await field(page).fill(pages.url("/unreachable"));
+    await field(page).press("Enter");
+    await (await lookups.next(1)).fail();
+    await expect(status(page)).toHaveText(MESSAGES.network);
+    await expectTryAgain(page, lookups);
+  });
+
+  test("401, signed out, says so, with a link to sign in again", async ({ page, pages }) => {
+    const lookups = await holdLookups(page);
+    await page.goto("/save");
+    await field(page).fill(pages.url("/signed-out"));
+    await field(page).press("Enter");
+    await (await lookups.next(1)).answer(401);
+    await expect(status(page)).toHaveText(MESSAGES.signedOut);
+    await expect(status(page).getByRole("link", { name: "Sign in again" })).toHaveAttribute(
+      "href",
+      "/auth/sign-in?return_to=%2Fsave",
+    );
+    await expectTryAgain(page, lookups);
+  });
+
+  test("any other answer says something went wrong", async ({ page, pages }) => {
+    const lookups = await holdLookups(page);
+    await page.goto("/save");
+    await field(page).fill(pages.url("/odd"));
+    await field(page).press("Enter");
+    await (await lookups.next(1)).answer(500);
+    await expect(status(page)).toHaveText(MESSAGES.unexpected);
+    await expectTryAgain(page, lookups);
+  });
+});
+
+test("9. going back from the save form brings back a form that is ready, not processing", async ({
   page,
   pages,
 }) => {
   const address = pageAbout(pages, "/back", "Back again");
   await page.goto("/save");
-  await page.getByLabel("Save a link").fill(address);
-  await page.getByRole("button", { name: "Continue" }).click();
+  await field(page).fill(address);
+  await field(page).press("Enter");
   await expectSaveFormFor(page, address, "Back again");
   await page.goBack();
-  const button = page.getByRole("button", { name: "Continue" });
-  await expect(button).toBeVisible();
-  await expect(button).not.toHaveAttribute("aria-disabled");
-  await expect(page.locator("#save-url-status")).toBeEmpty();
+  await expectReady(page);
+  await expect(status(page)).toBeEmpty();
 });
 
-const ADDRESS_RULE =
-  "Haystack saves only secure pages, so the address must be a complete https:// link, without spaces and at most 2,048 characters long.";
-const HINT = "Paste the address of a page. You confirm its title on the next step.";
-
-test("a rejected address shows the error, tied to the field, and keeps the typed value", async ({
+// Before sign-in the form asks for GET /save, which goes through sign-in and looks nothing up, so
+// its page does not load the script, and even with the script added, the form is left alone.
+test("the form shown before sign-in asks for GET /save, without the script", async ({
   page,
-  pages,
+  signOut,
 }) => {
-  const address = pageAbout(pages, "/no-scheme", "No scheme");
-  const withoutScheme = address.replace("https://", "");
-  await page.goto("/");
-  await tabToField(page);
-  // The browser's own checks are off, so a link without https:// reaches the server's.
-  await page.keyboard.type(withoutScheme);
-  await page.keyboard.press("Enter");
-
-  await expect(page).toHaveTitle("Check the address - Haystack");
-  await expect(page.getByRole("alert")).toHaveText(ADDRESS_RULE);
-  const field = page.getByRole("textbox", { name: "Save a link" });
-  await expect(field).toHaveValue(withoutScheme);
-  await expect(field).toHaveAttribute("aria-invalid", "true");
-  await expect(field).toHaveAccessibleDescription(`${ADDRESS_RULE} ${HINT}`);
-  await expectFocusNotMoved(page);
-  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
-  // A rejected address is never looked up.
-  expect(pages.requests.filter((request) => request.path === "/no-scheme")).toHaveLength(0);
-
-  // Correcting the value is enough: the user does not retype it.
-  await tabToField(page);
-  await page.keyboard.press("Home");
-  await page.keyboard.type("https://");
-  await page.keyboard.press("Enter");
-  await expectSaveFormFor(page, address, "No scheme");
-});
-
-test("an empty address asks for one", async ({ page }) => {
-  await page.goto("/save");
-  await tabToField(page);
-  await page.keyboard.press("Enter");
-  await expect(page).toHaveTitle("Check the address - Haystack");
-  await expect(page.getByRole("alert")).toHaveText(
-    "Enter the address of a page, starting with https://.",
+  await signOut();
+  await page.goto(
+    `/save?${new URLSearchParams({ url: "http://pages.test/signed-out" }).toString()}`,
   );
-  await expect(page.getByRole("textbox", { name: "Save a link" })).toHaveAttribute(
-    "aria-invalid",
-    "true",
-  );
-});
-
-test("a flagged address shows the reason and is not put back in the field", async ({
-  page,
-  pages,
-}) => {
-  await page.goto("/");
-  await tabToField(page);
-  await page.keyboard.type(pages.url("/cb?access_token=secret-value"));
-  await page.keyboard.press("Enter");
-
   await expect(page).toHaveTitle("Check the address - Haystack");
-  const reason =
-    "This link contains an access token, key, or password, so it could let anyone who has it act as you.";
-  await expect(page.getByRole("alert")).toHaveText(reason);
-  const field = page.getByRole("textbox", { name: "Save a link" });
-  await expect(field).toHaveValue("");
-  await expect(field).toHaveAttribute("aria-invalid", "true");
-  await expect(field).toHaveAccessibleDescription(`${reason} ${HINT}`);
-  await expectFocusNotMoved(page);
-  // The link was posted, so it is not in the address bar either, and it was never looked up.
-  expect(await page.locator("body").innerHTML()).not.toContain("secret-value");
-  expect(page.url()).not.toContain("secret-value");
-  expect(pages.requests.filter((request) => request.path.startsWith("/cb"))).toHaveLength(0);
+  await expect(page.locator('script[src="/assets/address-form.js"]')).toHaveCount(0);
+  await page.addScriptTag({ url: "/assets/address-form.js", type: "module" });
+  // GET /save would send a browser with no session on to sign-in, so the navigation is answered
+  // here, to show where the form went.
+  await page.route(
+    (url) => url.pathname === "/save",
+    (route) => route.fulfill({ contentType: "text/plain", body: "GET /save" }),
+  );
+  await field(page).fill("https://pages.test/signed-out");
+  const navigation = page.waitForRequest((request) => request.url().includes("/save?url="));
+  await page.getByRole("button", { name: "Continue" }).click();
+  const request = await navigation;
+  expect(request.method()).toBe("GET");
+  expect(request.resourceType()).toBe("document");
 });

@@ -6,7 +6,7 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
 import { INVALID_LINK, openRefusalPage } from "./rejected-save-pages.ts";
 import { saveThroughForm } from "./save-through-form.ts";
-import { PENDING_MESSAGE, stopSubmissions } from "./stopped-submission.ts";
+import { ADDRESS_FORM_STATES, bringAddressFormTo, holdLookups } from "./held-lookups.ts";
 
 // One unbroken word, with no hyphen or slash a line could break at, so only `overflow-wrap` can
 // keep it inside the page (#33). The address is under the 2,048-character cap, and the title at
@@ -73,19 +73,22 @@ test.describe("at a 320 px viewport, nothing scrolls horizontally", () => {
     });
 
     // The rejected address is put back in the field, where it scrolls inside the field.
-    // The pending state (#105) puts its message under the row, and Continue's text changes.
-    test("the address form while the page is looked up", async ({ page, pages }) => {
-      await stopSubmissions(page);
-      for (const path of ["/", "/save"]) {
-        await page.goto(path);
-        await page
-          .getByRole("textbox", { name: "Save a link" })
-          .fill(pages.url(`/${"longpathwithoutabreak".repeat(20)}`));
-        await page.getByRole("button", { name: "Continue" }).click();
-        await expect(page.locator("#save-url-status")).toHaveText(PENDING_MESSAGE);
-        await expectNoHorizontalScroll(page);
-      }
-    });
+    // Each state the address form's script leaves the form in (#105), on both forms: a message
+    // under the row, a changed label on Continue, or the error above the field.
+    for (const state of ADDRESS_FORM_STATES) {
+      test(`the address form showing ${state}`, async ({ page, pages }) => {
+        if (state === "a timeout") {
+          await page.clock.install();
+        }
+        const lookups = await holdLookups(page);
+        for (const [index, path] of ["/", "/save"].entries()) {
+          await page.goto(path);
+          const address = pages.url(`/${"longpathwithoutabreak".repeat(20)}`);
+          await bringAddressFormTo(page, lookups, index, state, address);
+          await expectNoHorizontalScroll(page);
+        }
+      });
+    }
 
     test("the address form after a rejected long address", async ({ page }) => {
       const url = LONG_URL.replace("https:", "http:");
@@ -219,17 +222,20 @@ for (const [colorScheme, ground] of [
         }
       });
 
-      // The pending state (#105), kept on the page (stopped-submission.ts), on both forms.
-      test("the address form while the page is looked up", async ({ page, pages }) => {
-        await stopSubmissions(page);
-        for (const path of ["/", "/save"]) {
-          await page.goto(path);
-          await page.getByRole("textbox", { name: "Save a link" }).fill(pages.url("/axe-pending"));
-          await page.getByRole("button", { name: "Continue" }).click();
-          await expect(page.locator("#save-url-status")).toHaveText(PENDING_MESSAGE);
-          await expectNoViolations(page);
-        }
-      });
+      // Each state the address form's script leaves the form in (#105), on both forms.
+      for (const state of ADDRESS_FORM_STATES) {
+        test(`the address form showing ${state}`, async ({ page, pages }) => {
+          if (state === "a timeout") {
+            await page.clock.install();
+          }
+          const lookups = await holdLookups(page);
+          for (const [index, path] of ["/", "/save"].entries()) {
+            await page.goto(path);
+            await bringAddressFormTo(page, lookups, index, state, pages.url("/axe-state"));
+            await expectNoViolations(page);
+          }
+        });
+      }
     });
   });
 }
