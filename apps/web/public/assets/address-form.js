@@ -10,8 +10,9 @@
 //   request in flight.
 // - The route answers JSON (`Accept: application/json`): the save link to go to, or a rejected
 //   address's error, which is shown as the server shows it, with focus on the field.
-// - A timeout, a network error, a signed-out session or any other answer is said in the form's
-//   status region, as the delete dialog says its outcomes, and the form is ready again.
+// - While the lookup runs, and when it fails (a timeout, a network error, a signed-out session or
+//   any other answer), a message in the form's status region takes focus, so a screen reader
+//   reads it, and the form is ready to try again.
 
 const FIELD_ID = "save-url";
 const HINT_ID = "save-url-hint";
@@ -21,11 +22,11 @@ const STATUS_ID = "save-url-status";
 const PROCESSING_LABEL = "Processing…";
 
 // What the status region says, and when. Each message is written ANNOUNCE_DELAY_MS after the
-// change that comes with it, such as the button's new label, because VoiceOver missed a status
-// message written in the same task as a change it was busy announcing (#56; plan, "Deleting
-// bookmarks"). 100 ms is the delay that was tested then. The delete dialog has since moved to
-// 500 ms after focus moves (#107); no focus moves here, and how the processing state is
-// announced is being measured on CI, so the delay and the messages are kept here, easy to change.
+// change that comes with it, such as the button's new label, and focused. On CI (Playwright's
+// WebKit on macOS 26), VoiceOver read a message focused 100 ms after the press every time, and
+// missed it every time as a polite status, as an alert, as an assertive live region, and when
+// focus left Continue and came back (plan, "The address form (#97)", has the runs). The delay
+// and the messages are kept here, so they are easy to change.
 const ANNOUNCE_DELAY_MS = 100;
 const MESSAGES = {
   processing: "Looking up the page. This can take a few seconds.",
@@ -110,18 +111,38 @@ function enhance(form, field, button, status) {
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let announceTimer;
 
+  // Whether the message may take focus: focus is still on the form, as it is after a press of
+  // Continue or of Enter in the field, or on nothing, as after a click in Safari, which does not
+  // focus a clicked button. A user who has moved elsewhere keeps their place, and the message is
+  // written without focus.
+  function mayTakeFocus() {
+    const active = document.activeElement;
+    return active === null || active === document.body || form.contains(active);
+  }
+
+  // Writes a message in the status region ANNOUNCE_DELAY_MS from now, replacing the one there,
+  // and focuses it, so a screen reader reads it (see MESSAGES). The message there until then
+  // stays, so focus does not fall to the page in between. The paragraph is focusable by script
+  // only (tabindex -1), and the region around it keeps its role, as in the variant measured.
   /** @param {(Node | string)[]} content */
   function announce(...content) {
     clearTimeout(announceTimer);
-    status.replaceChildren();
-    if (content.length === 0) {
-      return;
-    }
     announceTimer = setTimeout(() => {
+      const takeFocus = mayTakeFocus();
       const message = document.createElement("p");
       message.append(...content);
+      message.tabIndex = -1;
       status.replaceChildren(message);
+      if (takeFocus) {
+        message.focus();
+      }
     }, ANNOUNCE_DELAY_MS);
+  }
+
+  // Clears the status region at once, with no message to say.
+  function clearMessage() {
+    clearTimeout(announceTimer);
+    status.replaceChildren();
   }
 
   // The page's title without an error, to go back to when the error is cleared. A page that the
@@ -169,10 +190,16 @@ function enhance(form, field, button, status) {
     field.setAttribute("aria-describedby", `${ERROR_ID} ${HINT_ID}`);
   }
 
-  /** @param {boolean} processing */
-  function setProcessing(processing) {
-    button.textContent = processing ? PROCESSING_LABEL : idleLabel;
-    announce(...(processing ? [MESSAGES.processing] : []));
+  // Continue's label, and the processing message while a lookup runs.
+  function startProcessing() {
+    button.textContent = PROCESSING_LABEL;
+    announce(MESSAGES.processing);
+  }
+
+  // The form as it is before a lookup: Continue's own label, and no message.
+  function reset() {
+    button.textContent = idleLabel;
+    clearMessage();
   }
 
   /** @param {Outcome} outcome */
@@ -182,8 +209,8 @@ function enhance(form, field, button, status) {
       window.location.assign(outcome.link);
       return;
     }
-    setProcessing(false);
     if (outcome.kind === "rejected") {
+      reset();
       if (!outcome.keepValue) {
         field.value = "";
       }
@@ -191,6 +218,9 @@ function enhance(form, field, button, status) {
       field.focus();
       return;
     }
+    // A failure's message replaces the processing message, which keeps focus until then, and
+    // says what to do next.
+    button.textContent = idleLabel;
     if (outcome.kind === "signedOut") {
       const link = document.createElement("a");
       link.href = `/auth/sign-in?return_to=${encodeURIComponent(window.location.pathname)}`;
@@ -207,7 +237,7 @@ function enhance(form, field, button, status) {
     const request = { address, controller };
     inFlight = request;
     showError(null);
-    setProcessing(true);
+    startProcessing();
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
@@ -254,7 +284,7 @@ function enhance(form, field, button, status) {
     if (event.persisted) {
       inFlight?.controller.abort();
       inFlight = null;
-      setProcessing(false);
+      reset();
     }
   });
 }

@@ -49,6 +49,11 @@ function field(page: Page) {
   return page.getByRole("textbox", { name: "Save a link" });
 }
 
+/** The message in the status region, which the script focuses. */
+function message(page: Page) {
+  return page.locator("#save-url-status > p");
+}
+
 function status(page: Page) {
   return page.locator("#save-url-status");
 }
@@ -168,7 +173,7 @@ test("2. with JavaScript, the form goes through fetch to the same route, which a
 });
 
 test.describe("while a lookup runs", () => {
-  test("3. Continue is never disabled: its label says Processing…, and focus stays on it", async ({
+  test("3. Continue is never disabled: its label says Processing…, and the processing message takes focus", async ({
     page,
     pages,
   }) => {
@@ -180,10 +185,16 @@ test.describe("while a lookup runs", () => {
     await page.keyboard.press("Enter");
     await lookups.next(1);
     await expectProcessing(page);
-    await expect(page.getByRole("button", { name: PROCESSING_LABEL })).toBeFocused();
+    await expect(message(page)).toBeFocused();
+    // The site's focus ring, from the tokens.
+    await expect(message(page)).toHaveCSS("outline-style", "solid");
+    await expect(message(page)).toHaveCSS("outline-width", "3px");
   });
 
-  test("3. pressing Enter in the field keeps focus in the field", async ({ page, pages }) => {
+  test("3. pressing Enter in the field moves focus to the processing message too", async ({
+    page,
+    pages,
+  }) => {
     const lookups = await holdLookups(page);
     await page.goto("/");
     await tabToField(page);
@@ -191,7 +202,25 @@ test.describe("while a lookup runs", () => {
     await page.keyboard.press("Enter");
     await lookups.next(1);
     await expectProcessing(page);
-    await expect(field(page)).toBeFocused();
+    await expect(message(page)).toBeFocused();
+  });
+
+  // A user who moves elsewhere before the message is written keeps their place.
+  test("3. the processing message does not take focus from a user who moved away first", async ({
+    page,
+    pages,
+  }) => {
+    await page.clock.install();
+    const lookups = await holdLookups(page);
+    await page.goto("/save");
+    await field(page).fill(pages.url("/moved-away"));
+    await field(page).press("Enter");
+    await lookups.next(1);
+    const elsewhere = page.getByRole("link", { name: "Saved links" });
+    await elsewhere.focus();
+    await page.clock.fastForward(100);
+    await expectProcessing(page);
+    await expect(elsewhere).toBeFocused();
   });
 
   test("4. a second press with the same address is ignored, and sends no second request", async ({
@@ -203,14 +232,19 @@ test.describe("while a lookup runs", () => {
     await field(page).fill(pages.url("/same"));
     await field(page).press("Enter");
     await lookups.next(1);
+    await expect(message(page)).toBeFocused();
+    // Enter from the field, which the keyboard reaches back from the message, and a click.
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Shift+Tab");
+    await expect(field(page)).toBeFocused();
+    await page.keyboard.press("Enter");
     await page.getByRole("button", { name: PROCESSING_LABEL }).click();
-    await field(page).press("Enter");
     await expectProcessing(page);
     expect(lookups.all).toHaveLength(1);
     expect(lookups.all[0]?.aborted()).toBe(false);
   });
 
-  test("5. a press with a changed address aborts the request in flight and sends a new one, and the late answer is ignored", async ({
+  test("5. a click with a changed address aborts the request in flight and sends a new one, and the late answer is ignored", async ({
     page,
     pages,
   }) => {
@@ -221,7 +255,7 @@ test.describe("while a lookup runs", () => {
     await field(page).press("Enter");
     const first = await lookups.next(1);
     await field(page).fill(second);
-    await field(page).press("Enter");
+    await page.getByRole("button", { name: PROCESSING_LABEL }).click();
     const replacement = await lookups.next(2);
     expect(replacement.address).toBe(second);
     await expect.poll(() => first.aborted()).toBe(true);
@@ -233,10 +267,34 @@ test.describe("while a lookup runs", () => {
     await expectSaveFormFor(page, second, "Changed");
   });
 
+  test("5. moving back from the message to the field, changing the address and pressing Enter sends the new address", async ({
+    page,
+    pages,
+  }) => {
+    const second = pageAbout(pages, "/changed-by-keyboard", "Changed by keyboard");
+    const lookups = await holdLookups(page);
+    await page.goto("/save");
+    await field(page).fill(pages.url("/first-by-keyboard"));
+    await field(page).press("Enter");
+    const first = await lookups.next(1);
+    await expect(message(page)).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Shift+Tab");
+    await expect(field(page)).toBeFocused();
+    await page.keyboard.press("ControlOrMeta+A");
+    await page.keyboard.insertText(second);
+    await page.keyboard.press("Enter");
+    const replacement = await lookups.next(2);
+    expect(replacement.address).toBe(second);
+    await expect.poll(() => first.aborted()).toBe(true);
+    await replacement.release();
+    await expectSaveFormFor(page, second, "Changed by keyboard");
+  });
+
   // A browser can restore the page from its back-forward cache as it was left, still processing.
   // Playwright's Chromium does not show whether it used the cache, so the event the browser fires
   // for a restored page is dispatched here.
-  test("9. a page restored from the back-forward cache is ready, not processing", async ({
+  test("9. a page restored from the back-forward cache is ready, its message gone and nothing focused", async ({
     page,
     pages,
   }) => {
@@ -251,6 +309,7 @@ test.describe("while a lookup runs", () => {
     );
     await expectReady(page);
     await expect(status(page)).toBeEmpty();
+    expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
   });
 });
 
@@ -285,6 +344,8 @@ test.describe("6. a save link that is not this origin's save form is not followe
       await field(page).press("Enter");
       await (await lookups.next(1)).answer(200, { saveLink });
       await expect(status(page)).toHaveText(MESSAGES.unexpected);
+      // The failure message replaces the processing message, and takes its focus.
+      await expect(message(page)).toBeFocused();
       expect(new URL(page.url()).pathname).toBe("/save");
       await expectReady(page);
     });
@@ -396,6 +457,8 @@ test.describe("8. a lookup that fails leaves the form ready to try again", () =>
     await expectProcessing(page);
     await page.clock.fastForward(1_200);
     await expect(status(page)).toHaveText(MESSAGES.timeout);
+    // The failure message replaces the processing message, and takes its focus.
+    await expect(message(page)).toBeFocused();
     await expect.poll(() => lookups.all[0]?.aborted()).toBe(true);
     // The clock is the test's, so the processing message waits for it to move on.
     await expectReady(page);
@@ -405,6 +468,29 @@ test.describe("8. a lookup that fails leaves the form ready to try again", () =>
     await expectProcessing(page);
   });
 
+  // The failure message waits 100 ms, as the processing message does. Until then the processing
+  // message stays, with focus, so focus never falls to the page in between.
+  test("the failure message replaces the processing message, which keeps focus until then", async ({
+    page,
+    pages,
+  }) => {
+    await page.clock.install();
+    const lookups = await holdLookups(page);
+    await page.goto("/save");
+    await field(page).fill(pages.url("/replaced"));
+    await field(page).press("Enter");
+    const lookup = await lookups.next(1);
+    await page.clock.fastForward(100);
+    await expect(message(page)).toBeFocused();
+    await lookup.fail();
+    await expectReady(page);
+    await expect(message(page)).toHaveText(MESSAGES.processing);
+    await expect(message(page)).toBeFocused();
+    await page.clock.fastForward(100);
+    await expect(message(page)).toHaveText(MESSAGES.network);
+    await expect(message(page)).toBeFocused();
+  });
+
   test("a network error says so", async ({ page, pages }) => {
     const lookups = await holdLookups(page);
     await page.goto("/save");
@@ -412,6 +498,8 @@ test.describe("8. a lookup that fails leaves the form ready to try again", () =>
     await field(page).press("Enter");
     await (await lookups.next(1)).fail();
     await expect(status(page)).toHaveText(MESSAGES.network);
+    // The failure message replaces the processing message, and takes its focus.
+    await expect(message(page)).toBeFocused();
     await expectTryAgain(page, lookups);
   });
 
@@ -422,6 +510,8 @@ test.describe("8. a lookup that fails leaves the form ready to try again", () =>
     await field(page).press("Enter");
     await (await lookups.next(1)).answer(401);
     await expect(status(page)).toHaveText(MESSAGES.signedOut);
+    // The failure message replaces the processing message, and takes its focus.
+    await expect(message(page)).toBeFocused();
     await expect(status(page).getByRole("link", { name: "Sign in again" })).toHaveAttribute(
       "href",
       "/auth/sign-in?return_to=%2Fsave",
@@ -436,6 +526,8 @@ test.describe("8. a lookup that fails leaves the form ready to try again", () =>
     await field(page).press("Enter");
     await (await lookups.next(1)).answer(500);
     await expect(status(page)).toHaveText(MESSAGES.unexpected);
+    // The failure message replaces the processing message, and takes its focus.
+    await expect(message(page)).toBeFocused();
     await expectTryAgain(page, lookups);
   });
 });

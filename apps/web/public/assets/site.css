@@ -405,6 +405,15 @@ main > :where(p, ul, div) {
   padding-inline: var(--space-m);
 }
 
+/* address-form.js moves focus to its message, so a screen reader reads it (#105). The ring is the
+   site's focus ring, drawn whenever the message has focus, also after a click, because the
+   script, not the user, put focus there. An outline survives forced colors, which give it a
+   system color. */
+.address-status > p:focus {
+  outline: var(--focus-width) solid var(--color-focus);
+  outline-offset: var(--focus-offset);
+}
+
 .empty-state {
   background-color: var(--color-surface);
   border: 1px dashed var(--color-border);

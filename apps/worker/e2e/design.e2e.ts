@@ -356,6 +356,17 @@ test.describe("in forced colors", () => {
     await signIn();
   });
 
+  // The address form's script focuses its message (#105). An outline survives forced colors.
+  test("the address form's focused message keeps its focus ring", async ({ page, pages }) => {
+    const lookups = await holdLookups(page);
+    await page.goto("/save");
+    await bringAddressFormTo(page, lookups, 0, "processing", pages.url("/forced-colors-focus"));
+    const message = page.locator("#save-url-status > p");
+    await expect(message).toBeFocused();
+    await expect(message).toHaveCSS("outline-style", "solid");
+    await expect(message).toHaveCSS("outline-width", "3px");
+  });
+
   test("only the current page's link is outlined and underlined", async ({ page }) => {
     const savedLinks = page
       .getByRole("navigation", { name: "Main" })
