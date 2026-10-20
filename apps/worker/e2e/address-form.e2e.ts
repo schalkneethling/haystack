@@ -244,6 +244,51 @@ test.describe("while a lookup runs", () => {
     expect(lookups.all[0]?.aborted()).toBe(false);
   });
 
+  test("4. a press with the same address while its save form loads is ignored, and sends no second request", async ({
+    page,
+    pages,
+  }) => {
+    const lookups = await holdLookups(page);
+    // A 204 keeps the browser on this page, as a save form that is slow to load does.
+    let opened = 0;
+    await page.route(
+      (url) => url.pathname === "/save" && url.search !== "",
+      async (route) => {
+        opened += 1;
+        await route.fulfill({ status: 204 });
+      },
+    );
+    await page.goto("/save");
+    const address = pages.url("/leaving");
+    await field(page).fill(address);
+    await field(page).press("Enter");
+    await (
+      await lookups.next(1)
+    ).answer(200, { saveLink: `/save?${new URLSearchParams({ url: address }).toString()}` });
+    await expect.poll(() => opened).toBe(1);
+    // Playwright's locators and their assertions wait for a navigation to finish, and a 204 never
+    // does, so the presses go through the page's keyboard, and focus is read in the page: Enter
+    // on Continue, then Enter in the field.
+    const focused = () =>
+      page.evaluate(() => {
+        const active = document.activeElement;
+        if (active?.closest("#save-url-status")) {
+          return "message";
+        }
+        return active?.id === "save-url" ? "field" : (active?.textContent ?? "");
+      });
+    await expect.poll(focused).toBe("message");
+    await page.keyboard.press("Shift+Tab");
+    await expect.poll(focused).toBe(PROCESSING_LABEL);
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Shift+Tab");
+    await expect.poll(focused).toBe("field");
+    await page.keyboard.press("Enter");
+    // Long enough for a second request to reach the route if one were sent.
+    await page.waitForTimeout(200);
+    expect(lookups.all).toHaveLength(1);
+  });
+
   test("5. a click with a changed address aborts the request in flight and sends a new one, and the late answer is ignored", async ({
     page,
     pages,

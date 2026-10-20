@@ -117,6 +117,11 @@ function enhance(form, field, button, status) {
   const idleLabel = button.textContent ?? "";
   /** @type {{ address: string, controller: AbortController } | null} */
   let inFlight = null;
+  // The address whose save link the browser is opening. Until the save form loads, this page
+  // stays interactive, and the same address must not be looked up again: the lookup fetches
+  // someone else's page, which is why it runs once, on a POST.
+  /** @type {string | null} */
+  let leavingFor = null;
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let announceTimer;
   // Whether the current lookup's processing message has been written, so that the user has had
@@ -248,6 +253,7 @@ function enhance(form, field, button, status) {
   function settle(outcome, address) {
     if (outcome.kind === "go") {
       // The form stays as it is while the save form loads.
+      leavingFor = address;
       window.location.assign(outcome.link);
       return;
     }
@@ -282,6 +288,7 @@ function enhance(form, field, button, status) {
     const controller = new AbortController();
     const request = { address, controller };
     inFlight = request;
+    leavingFor = null;
     showError(null);
     startProcessing();
     let timedOut = false;
@@ -313,11 +320,12 @@ function enhance(form, field, button, status) {
   }
 
   // A press of Continue or Enter in the field submits the form. The browser's own submission is
-  // stopped, and the same address that is already being looked up is not sent again.
+  // stopped, and the same address that is already being looked up, or whose save form is
+  // loading, is not sent again.
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     const address = field.value;
-    if (inFlight?.address === address) {
+    if (inFlight?.address === address || leavingFor === address) {
       return;
     }
     inFlight?.controller.abort();
@@ -330,6 +338,7 @@ function enhance(form, field, button, status) {
     if (event.persisted) {
       inFlight?.controller.abort();
       inFlight = null;
+      leavingFor = null;
       reset();
     }
   });
