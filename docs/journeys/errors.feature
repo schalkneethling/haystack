@@ -32,7 +32,11 @@ Feature: Pages a person can reach by mistake
   @integration:apps/worker/test/auth.test.ts
   Scenario: An address that doesn't exist, while signed out
     Every page outside /auth/ needs a session, so Haystack asks me to sign in
-    before it says whether the page exists.
+    before it says whether the page exists. The integration test checks the
+    two halves apart: a page request without a session is sent to sign in with
+    its own address as the return target (tested with a save link), and an
+    address with no page shows "Page not found" once signed in. No test
+    follows /nowhere itself through sign-in and back.
 
     Given I am not signed in to Haystack
     When I open /nowhere
