@@ -709,6 +709,121 @@ describe("only a signed-in POST from Haystack looks a page up", () => {
   });
 });
 
+// The address form's script posts the same form to the same route with `fetch`, and asks for
+// JSON (address-form.js). The route's checks are the same; only the answer's form differs.
+describe("an answer in JSON, for the address form's script", () => {
+  const JSON_ACCEPT = { accept: "application/json" };
+
+  async function expectJsonAnswer(response: Response, status: number): Promise<unknown> {
+    expect(response.status).toBe(status);
+    expect(response.headers.get("location")).toBeNull();
+    // The HTML pages' security headers, and no-store, because the answer is one user's.
+    expect(response.headers.get("content-type")).toBe("application/json; charset=utf-8");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("referrer-policy")).toBe("strict-origin-when-cross-origin");
+    expect(response.headers.get("content-security-policy")).toContain("default-src 'none'");
+    return response.json();
+  }
+
+  function fieldsOfLink(answer: unknown): Record<string, string> {
+    const link = new URL((answer as { saveLink: string }).saveLink);
+    expect(link.origin + link.pathname).toBe(`${origin}/save`);
+    return Object.fromEntries(link.searchParams);
+  }
+
+  it("gives the save link with the page's fields, instead of redirecting to it", async () => {
+    fixture.page("/json", FULL_PAGE);
+    const answer = await expectJsonAnswer(
+      await postAddress(fixture.url("/json"), JSON_ACCEPT),
+      200,
+    );
+    expect(Object.keys(answer as object)).toEqual(["saveLink"]);
+    expect(fieldsOfLink(answer)).toEqual({
+      url: fixture.url("/json"),
+      canonical_url: fixture.url("/canonical"),
+      title: "Document title",
+      description: "Meta description",
+      og_title: "Sharing title",
+      og_description: "Sharing description",
+      og_site_name: "Example",
+    });
+  });
+
+  it("gives the save link with the address alone when the lookup gives nothing", async () => {
+    fixture.page("/json-bare", "<head></head>");
+    const answer = await expectJsonAnswer(
+      await postAddress(fixture.url("/json-bare"), JSON_ACCEPT),
+      200,
+    );
+    expect(fieldsOfLink(answer)).toEqual({ url: fixture.url("/json-bare") });
+    expect(lookupLogs()).toEqual(["Page lookup gave no metadata: no-metadata"]);
+  });
+
+  it("is given for any Accept that names application/json", async () => {
+    fixture.page("/json-accept", FULL_PAGE);
+    const response = await postAddress(fixture.url("/json-accept"), {
+      accept: "text/html, Application/JSON; q=0.9",
+    });
+    expect(fieldsOfLink(await expectJsonAnswer(response, 200)).title).toBe("Document title");
+  });
+
+  it.each([
+    ["an address without a scheme, which may stay", "pages.test/page", ADDRESS_RULE, true],
+    ["an http: address, which may stay", "http://pages.test/page", ADDRESS_RULE, true],
+    ["an empty address", "", "Enter the address of a page, starting with https://.", false],
+    [
+      "a flagged address, which must not stay",
+      "https://pages.test/cb?access_token=secret-value",
+      "This link contains an access token, key, or password, so it could let anyone who has it act as you.",
+      false,
+    ],
+    [
+      "a value that carries a secret but is not an address, which must not stay",
+      "access_token=secret-value",
+      "This link contains an access token, key, or password, so it could let anyone who has it act as you.",
+      false,
+    ],
+  ])("rejects %s (400) with its error, and fetches nothing", async (_, url, error, keepValue) => {
+    const response = await postAddress(url, JSON_ACCEPT);
+    const text = await response.clone().text();
+    expect(await expectJsonAnswer(response, 400)).toEqual({ error, keepValue });
+    expect(text).not.toContain("secret-value");
+    expect(fixture.requests).toHaveLength(0);
+  });
+
+  it("is refused with 401 when signed out, as every signed-out POST is, and fetches nothing", async () => {
+    fixture.page("/json-signed-out", FULL_PAGE);
+    const response = await postAddress(fixture.url("/json-signed-out"), {
+      ...JSON_ACCEPT,
+      cookie: null,
+    });
+    expect(response.status).toBe(401);
+    expect(fixture.requests).toHaveLength(0);
+  });
+
+  it.each([
+    ["from another origin", { origin: "https://evil.test" }],
+    ["without an Origin header", { origin: null }],
+  ])("is refused (403) for a POST %s, and fetches nothing", async (_, headers) => {
+    fixture.page("/json-origin", FULL_PAGE);
+    const response = await postAddress(fixture.url("/json-origin"), { ...JSON_ACCEPT, ...headers });
+    expect(response.status).toBe(403);
+    expect(fixture.requests).toHaveLength(0);
+  });
+
+  it("leaves the answer without JavaScript as it was: a 303 to the save link", async () => {
+    fixture.page("/no-json", FULL_PAGE);
+    const json = await expectJsonAnswer(
+      await postAddress(fixture.url("/no-json"), JSON_ACCEPT),
+      200,
+    );
+    const redirect = await postAddress(fixture.url("/no-json"), { accept: "text/html" });
+    expect(redirect.status).toBe(303);
+    expect(redirect.headers.get("location")).toBe((json as { saveLink: string }).saveLink);
+  });
+});
+
 // A test that sends a request to an address it did not plan for fails, whatever the Worker does
 // with the failed request. This shows the check that afterEach makes.
 describe("the page fixture", () => {

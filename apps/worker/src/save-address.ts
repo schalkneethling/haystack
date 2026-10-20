@@ -9,6 +9,12 @@
 // so the fetch runs only after the user's explicit action. The redirect keeps the save form an
 // ordinary GET page, so reloading it or going back to it never fetches again, and GET /save
 // itself never fetches.
+//
+// The form works without JavaScript: the browser posts it and follows the 303. Its script
+// (address-form.js) posts the same form data to this route with `fetch`, and asks for JSON with
+// `Accept: application/json`, so both paths share this route and its checks. A JSON answer
+// carries the save link instead of redirecting to it, and a rejected address gets the error and
+// whether the typed value may stay in the field, instead of the address form's page.
 import {
   type CapturePayload,
   capturedFieldsFromPage,
@@ -19,11 +25,25 @@ import {
   withoutSensitiveCanonicalUrl,
 } from "@haystack/schemas";
 import type { Db } from "./db/client.ts";
+import { jsonResponse } from "./page.ts";
 import { type LookupFailure, lookUpPage } from "./page-lookup.ts";
-import { existingBookmark, rejectedLinkPage, screenCapture } from "./save.ts";
+import { existingBookmark, rejectedAddressState, rejectedLinkPage, screenCapture } from "./save.ts";
 
 /** Why the save link carries the address alone, as a fixed code that is safe to log. */
 type Fallback = LookupFailure | "invalid" | "no-metadata";
+
+/** The JSON answer for a passing address: the save link to go to. */
+export interface SaveLinkAnswer {
+  readonly saveLink: string;
+}
+
+/** The JSON answer for a rejected address. */
+export interface RejectedAddressAnswer {
+  /** Why the address was rejected, as the address form's error says it. */
+  readonly error: string;
+  /** Whether the typed value may stay in the field. A sensitive value never may. */
+  readonly keepValue: boolean;
+}
 
 // Only the code is logged. The address and anything from the page are never logged, because an
 // address can be private and page content is untrusted.
@@ -31,8 +51,19 @@ function logFallback(reason: Fallback): void {
   console.warn("Page lookup gave no metadata:", reason);
 }
 
-function seeOther(location: string): Response {
-  return new Response(null, { status: 303, headers: { location } });
+// Whether the address form's script asked for JSON: a media type in `Accept` that is
+// application/json, whatever its parameters.
+function wantsJson(request: Request): boolean {
+  return (request.headers.get("accept") ?? "")
+    .split(",")
+    .some((type) => type.split(";")[0]?.trim().toLowerCase() === "application/json");
+}
+
+// The save link, as a 303 to it, or as JSON for the script.
+function goTo(request: Request, saveLink: string): Response {
+  return wantsJson(request)
+    ? jsonResponse({ saveLink } satisfies SaveLinkAnswer, 200)
+    : new Response(null, { status: 303, headers: { location: saveLink } });
 }
 
 // The submitted address, or nothing when the body has no `url` or is not a form.
@@ -82,6 +113,14 @@ export async function saveAddress(request: Request, db: Db, userId: string): Pro
   const captured = await submittedFields(request);
   const screened = screenCapture(captured);
   if ("rejection" in screened) {
+    // Only `url` is read from the body, so a rejection is always the address's.
+    const state = rejectedAddressState(captured, screened.rejection);
+    if (wantsJson(request) && state?.error !== undefined) {
+      return jsonResponse(
+        { error: state.error, keepValue: state.value !== "" } satisfies RejectedAddressAnswer,
+        400,
+      );
+    }
     return rejectedLinkPage(captured, screened.rejection, true);
   }
   const { url } = screened.payload;
@@ -93,12 +132,12 @@ export async function saveAddress(request: Request, db: Db, userId: string): Pro
     new URL(fetchedUrl).host === new URL(request.url).host ||
     (await existingBookmark(db, userId, normalizeUrl(fetchedUrl))) !== undefined
   ) {
-    return seeOther(addressAlone);
+    return goTo(request, addressAlone);
   }
   const payload = await pagePayload(url, fetchedUrl, origin);
   if (typeof payload === "string") {
     logFallback(payload);
-    return seeOther(addressAlone);
+    return goTo(request, addressAlone);
   }
-  return seeOther(saveUrlWithinBudget(origin, payload));
+  return goTo(request, saveUrlWithinBudget(origin, payload));
 }

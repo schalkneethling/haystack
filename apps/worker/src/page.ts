@@ -92,3 +92,16 @@ export function htmlResponse(
 ): Response {
   return new Response(page(title, content, options).toString(), { status, headers: HTML_HEADERS });
 }
+
+// The headers of a JSON answer to the site's own script: the HTML pages' security headers, and
+// no-store, because each answer belongs to one user and one request, and must not be reused.
+const JSON_HEADERS: Readonly<Record<string, string>> = {
+  ...HTML_HEADERS,
+  "content-type": "application/json; charset=utf-8",
+  "cache-control": "no-store",
+};
+
+/** A JSON answer to one of the site's own scripts. */
+export function jsonResponse(body: unknown, status: number): Response {
+  return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
+}

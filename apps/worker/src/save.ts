@@ -272,16 +272,28 @@ export function rejectedLinkPage(
   rejection: Rejection,
   signedIn: boolean,
 ): Response {
+  const address = rejectedAddressState(captured, rejection);
+  return address === undefined
+    ? invalidPage("invalidFields" in rejection ? rejection.invalidFields : [], signedIn)
+    : addressFormPage(address, signedIn);
+}
+
+/**
+ * What the address form shows for a rejection: the reason, and the typed value only when it may
+ * go back in the field. Undefined when the address passed and other fields failed, which the
+ * address form has no field for.
+ */
+export function rejectedAddressState(
+  captured: Record<string, string>,
+  rejection: Rejection,
+): AddressFormState | undefined {
   if ("sensitive" in rejection) {
-    return addressFormPage(
-      { value: "", error: SENSITIVE_URL_EXPLANATIONS[rejection.sensitive] },
-      signedIn,
-    );
+    return { value: "", error: SENSITIVE_URL_EXPLANATIONS[rejection.sensitive] };
   }
   if (rejection.invalidFields.includes("url")) {
-    return addressFormPage(rejectedAddress(captured.url ?? ""), signedIn);
+    return rejectedAddress(captured.url ?? "");
   }
-  return invalidPage(rejection.invalidFields, signedIn);
+  return undefined;
 }
 
 /** Screens a GET /save link. Returns the page that ends the request, or the validated payload. */
