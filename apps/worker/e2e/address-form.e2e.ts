@@ -183,8 +183,8 @@ test.describe("while the page is looked up", () => {
 
   // Before sign-in the form asks for GET /save, which goes through sign-in and looks nothing up,
   // so it gets no pending state and its page does not load the script.
-  test("the form shown before sign-in says nothing about a lookup", async ({ page, context }) => {
-    await context.clearCookies();
+  test("the form shown before sign-in says nothing about a lookup", async ({ page, signOut }) => {
+    await signOut();
     await page.goto(
       `/save?${new URLSearchParams({ url: "http://pages.test/signed-out" }).toString()}`,
     );

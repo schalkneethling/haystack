@@ -291,13 +291,13 @@ test("the dialog cannot be closed while the delete request runs", async ({ page,
   expect(rows).toHaveLength(0);
 });
 
-test("a delete after the session ended keeps the item and says why", async ({ page, context }) => {
+test("a delete after the session ended keeps the item and says why", async ({ page, signOut }) => {
   await saveThroughForm(page, "https://example.com/signed-out", "Signed-out guide");
   await page.goto("/");
   const button = page.getByRole("button", { name: "Delete Signed-out guide" });
   await button.click();
-  // The fixture signs in with a session cookie; remove it, as an ended session would.
-  await context.clearCookies();
+  // Ends the session in the browser, as an ended session would.
+  await signOut();
   await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
   await expect(listStatus(page)).toHaveText(
     "Could not delete “Signed-out guide”, because you are signed out. Reload the page to sign in again.",
