@@ -137,7 +137,7 @@ describe("the address form", () => {
     // The form is named by its label, so it is a form landmark, "Save a link", which a screen
     // reader user can reach although it comes before the heading.
     expect(markup).toContain(
-      '<form class="panel address-form" method="post" action="/save/address" novalidate aria-labelledby="save-url-label">',
+      '<form class="panel address-form" method="post" action="/save/address" novalidate aria-labelledby="save-url-label" data-address-form="card">',
     );
     expect(markup).toContain(
       '<label id="save-url-label" class="address-form-title" for="save-url">Save a link</label>',
@@ -161,7 +161,7 @@ describe("the address form", () => {
     expect(markup).toContain('<h1><label for="save-url">Save a link</label></h1>');
     // Not a landmark: the heading before it already names it (address-form.ts says why).
     expect(markup).toContain(
-      '<form class="panel address-form" method="post" action="/save/address" novalidate>',
+      '<form class="panel address-form" method="post" action="/save/address" novalidate data-address-form="page" data-idle-title="Save a link - Haystack">',
     );
     expect(markup).toContain("Do not save links that contain access tokens");
     expect(markup).not.toContain("can&#39;t be saved");

@@ -7,7 +7,7 @@
 import type { Page } from "@playwright/test";
 import type { PageFixture } from "../test/page-fixture.ts";
 import { expect, test } from "./fixtures.ts";
-import { holdLookups, MESSAGES, PROCESSING_LABEL } from "./held-lookups.ts";
+import { holdLookups, installPausedClock, MESSAGES, PROCESSING_LABEL } from "./held-lookups.ts";
 
 test.beforeEach(async ({ signIn }) => {
   await signIn();
@@ -210,7 +210,7 @@ test.describe("while a lookup runs", () => {
     page,
     pages,
   }) => {
-    await page.clock.install();
+    await installPausedClock(page);
     const lookups = await holdLookups(page);
     await page.goto("/save");
     await field(page).fill(pages.url("/moved-away"));
@@ -474,7 +474,7 @@ test.describe("8. a lookup that fails leaves the form ready to try again", () =>
     page,
     pages,
   }) => {
-    await page.clock.install();
+    await installPausedClock(page);
     const lookups = await holdLookups(page);
     await page.goto("/save");
     await field(page).fill(pages.url("/replaced"));
@@ -571,4 +571,96 @@ test("the form shown before sign-in asks for GET /save, without the script", asy
   const request = await navigation;
   expect(request.method()).toBe("GET");
   expect(request.resourceType()).toBe("document");
+});
+
+// Found in review of #105, each with the point of the design it belongs to.
+test.describe("review of #105", () => {
+  // The message is announced by focus, so the region is not live as well, or NVDA, JAWS and
+  // TalkBack would read it twice. Without the script, nothing writes to the region.
+  test("3. the status region is not live once the script runs", async ({ page }) => {
+    await page.goto("/save");
+    await expect(status(page)).toHaveAttribute("aria-live", "off");
+    await expect(status(page)).toHaveRole("status");
+  });
+
+  test("6. the save link is followed in a browser without URL.parse", async ({ page, pages }) => {
+    await page.addInitScript(() => {
+      Reflect.deleteProperty(URL, "parse");
+    });
+    const address = pageAbout(pages, "/no-url-parse", "No URL.parse");
+    await page.goto("/save");
+    expect(await page.evaluate(() => "parse" in URL)).toBe(false);
+    await field(page).fill(address);
+    await field(page).press("Enter");
+    await expectSaveFormFor(page, address, "No URL.parse");
+  });
+
+  test("7. the error goes where the server puts it: before the hint in the card, before the form on its own page", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await field(page).fill("pages.test/in-card");
+    await field(page).press("Enter");
+    await expect(page.locator("form.address-form .alert + #save-url-hint")).toHaveCount(1);
+    await page.goto("/save");
+    await field(page).fill("pages.test/on-its-page");
+    await field(page).press("Enter");
+    await expect(page.locator(".alert + form.address-form")).toHaveCount(1);
+  });
+
+  test("7. a value that must not stay is cleared only while the field still holds it", async ({
+    page,
+    pages,
+  }) => {
+    const lookups = await holdLookups(page);
+    await page.goto("/save");
+    await field(page).fill(pages.url("/cb?access_token=secret-value"));
+    await field(page).press("Enter");
+    const lookup = await lookups.next(1);
+    // The user goes on typing something else before the answer comes.
+    await field(page).fill("something typed since");
+    await lookup.release();
+    await expect(page.getByRole("alert")).toHaveText(SECRET_REASON);
+    await expect(field(page)).toHaveValue("something typed since");
+  });
+
+  // Enter from the field, then back to the field to correct the address while the lookup runs:
+  // the failure's message must not take focus from the field, or the rest of the typing is lost.
+  test("8. a failure message does not take focus from a user typing in the field", async ({
+    page,
+    pages,
+  }) => {
+    const lookups = await holdLookups(page);
+    await page.goto("/save");
+    await field(page).fill(pages.url("/typing"));
+    await field(page).press("Enter");
+    const lookup = await lookups.next(1);
+    await expect(message(page)).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Shift+Tab");
+    await expect(field(page)).toBeFocused();
+    await page.keyboard.press("End");
+    await page.keyboard.type("-cor");
+    await lookup.fail();
+    await expect(status(page)).toHaveText(MESSAGES.network);
+    await page.keyboard.type("rected");
+    await expect(field(page)).toBeFocused();
+    await expect(field(page)).toHaveValue(`${pages.url("/typing")}-corrected`);
+  });
+
+  // A page the server rendered with an error is titled for the error. Once a new request has
+  // cleared the error, it takes the page's error-free title, even when the request then fails.
+  test("8. a page the server rendered with an error gets its error-free title back after a failure", async ({
+    page,
+    pages,
+  }) => {
+    const lookups = await holdLookups(page);
+    await page.goto(`/save?${new URLSearchParams({ url: "http://pages.test/a" }).toString()}`);
+    await expect(page).toHaveTitle("Check the address - Haystack");
+    await field(page).fill(pages.url("/after-error"));
+    await field(page).press("Enter");
+    await (await lookups.next(1)).fail();
+    await expect(status(page)).toHaveText(MESSAGES.network);
+    await expect(page).toHaveTitle("Save a link - Haystack");
+  });
 });

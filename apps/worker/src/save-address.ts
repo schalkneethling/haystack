@@ -55,11 +55,19 @@ function logFallback(reason: Fallback): void {
 }
 
 // Whether the address form's script asked for JSON: a media type in `Accept` that is
-// application/json, whatever its parameters.
+// application/json, with any parameters but a quality of 0, which means "not acceptable" (RFC
+// 9110, section 12.4.2).
 function wantsJson(request: Request): boolean {
-  return (request.headers.get("accept") ?? "")
-    .split(",")
-    .some((type) => type.split(";")[0]?.trim().toLowerCase() === "application/json");
+  return (request.headers.get("accept") ?? "").split(",").some((range) => {
+    const [type = "", ...parameters] = range.split(";");
+    if (type.trim().toLowerCase() !== "application/json") {
+      return false;
+    }
+    const quality = parameters
+      .map((parameter) => parameter.split("="))
+      .find(([name]) => name?.trim().toLowerCase() === "q")?.[1];
+    return quality === undefined || Number.parseFloat(quality) !== 0;
+  });
 }
 
 // The save link, as a 303 to it, or as JSON for the script.

@@ -62,10 +62,19 @@ function isRecord(value) {
  */
 function saveLinkIn(body) {
   const link = isRecord(body) && typeof body.saveLink === "string" ? body.saveLink : null;
-  const url = link === null ? null : URL.parse(link, window.location.href);
-  return url !== null && url.origin === window.location.origin && url.pathname === "/save"
-    ? url.href
-    : null;
+  if (link === null) {
+    return null;
+  }
+  // The URL constructor, not URL.parse, which Safari before 17.4 and Chrome and Firefox before
+  // 126 do not have.
+  /** @type {URL} */
+  let url;
+  try {
+    url = new URL(link, window.location.href);
+  } catch {
+    return null;
+  }
+  return url.origin === window.location.origin && url.pathname === "/save" ? url.href : null;
 }
 
 /**
@@ -110,31 +119,55 @@ function enhance(form, field, button, status) {
   let inFlight = null;
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let announceTimer;
+  // Whether the current lookup's processing message has been written, so that the user has had
+  // the chance to move on from it.
+  let processingShown = false;
 
-  // Whether the message may take focus: focus is still on the form, as it is after a press of
-  // Continue or of Enter in the field, or on nothing, as after a click in Safari, which does not
-  // focus a clicked button. A user who has moved elsewhere keeps their place, and the message is
-  // written without focus.
-  function mayTakeFocus() {
+  // The message is how the script announces, by focus, so the region is not also a live region
+  // once the script runs: NVDA, JAWS and TalkBack would read a focused message in a live region
+  // twice. aria-live is a global attribute, and its explicit value overrides the role's implicit
+  // "polite". Without the script nothing writes to the region, so the server leaves it as it is.
+  status.setAttribute("aria-live", "off");
+
+  // Whether a message may take focus when it is written. Focus on nothing, as after a click in
+  // Safari, which does not focus a clicked button, can always go to it. Otherwise:
+  // - The processing message follows a press of Continue, or of Enter in the field, so it may
+  //   take focus from anywhere in the form.
+  // - A failure's message may take focus only from Continue or from the message it replaces.
+  //   A user who went back to the field while the lookup ran is typing there, and keeps it.
+  // A user who has moved elsewhere keeps their place, and the message is written without focus.
+  /** @param {"processing" | "failure"} kind */
+  function mayTakeFocus(kind) {
     const active = document.activeElement;
-    return active === null || active === document.body || form.contains(active);
+    if (active === null || active === document.body) {
+      return true;
+    }
+    return kind === "processing"
+      ? form.contains(active)
+      : active === button || status.contains(active);
   }
 
   // Writes a message in the status region ANNOUNCE_DELAY_MS from now, replacing the one there,
-  // and focuses it, so a screen reader reads it (see MESSAGES). The message there until then
-  // stays, so focus does not fall to the page in between. The paragraph is focusable by script
-  // only (tabindex -1), and the region around it keeps its role, as in the variant measured.
-  /** @param {(Node | string)[]} content */
-  function announce(...content) {
+  // and focuses it when it may, so a screen reader reads it (see MESSAGES). The message there
+  // until then stays, so focus does not fall to the page in between. The paragraph is focusable
+  // by script only (tabindex -1).
+  /**
+   * @param {"processing" | "failure"} kind
+   * @param {(Node | string)[]} content
+   */
+  function announce(kind, ...content) {
     clearTimeout(announceTimer);
     announceTimer = setTimeout(() => {
-      const takeFocus = mayTakeFocus();
+      const takeFocus = mayTakeFocus(kind);
       const message = document.createElement("p");
       message.append(...content);
       message.tabIndex = -1;
       status.replaceChildren(message);
       if (takeFocus) {
         message.focus();
+      }
+      if (kind === "processing") {
+        processingShown = true;
       }
     }, ANNOUNCE_DELAY_MS);
   }
@@ -146,8 +179,16 @@ function enhance(form, field, button, status) {
   }
 
   // The page's title without an error, to go back to when the error is cleared. A page that the
-  // server rendered with an error has no title without one, so it keeps its own.
-  const idleTitle = document.getElementById(ERROR_ID) === null ? document.title : null;
+  // server rendered with an error has another title, so the server puts its error-free title on
+  // the form.
+  const idleTitle =
+    document.getElementById(ERROR_ID) === null
+      ? document.title
+      : (form.dataset.idleTitle ?? document.title);
+  // Where a new error goes: after the heading, before the form, on the form's own page, as the
+  // server renders it there, and before the hint in the saved links page's card, which has no
+  // heading of its own. The server says which form this is.
+  const inCard = form.dataset.addressForm === "card";
 
   // The rejected address's error, in the markup the server renders: an alert holding the
   // paragraph that the field's description points at, error first, then the hint. On its own
@@ -161,9 +202,7 @@ function enhance(form, field, button, status) {
       existing?.closest(".alert")?.remove();
       field.removeAttribute("aria-invalid");
       field.setAttribute("aria-describedby", HINT_ID);
-      if (idleTitle !== null) {
-        document.title = idleTitle;
-      }
+      document.title = idleTitle;
       return;
     }
     const { text, title } = error;
@@ -177,7 +216,6 @@ function enhance(form, field, button, status) {
       paragraph.textContent = text;
       alert.append(paragraph);
       const hint = document.getElementById(HINT_ID);
-      const inCard = form.querySelector(".address-form-title") !== null;
       if (inCard && hint !== null) {
         hint.before(alert);
       } else {
@@ -193,7 +231,8 @@ function enhance(form, field, button, status) {
   // Continue's label, and the processing message while a lookup runs.
   function startProcessing() {
     button.textContent = PROCESSING_LABEL;
-    announce(MESSAGES.processing);
+    processingShown = false;
+    announce("processing", MESSAGES.processing);
   }
 
   // The form as it is before a lookup: Continue's own label, and no message.
@@ -202,8 +241,11 @@ function enhance(form, field, button, status) {
     clearMessage();
   }
 
-  /** @param {Outcome} outcome */
-  function settle(outcome) {
+  /**
+   * @param {Outcome} outcome
+   * @param {string} address The address that was sent.
+   */
+  function settle(outcome, address) {
     if (outcome.kind === "go") {
       // The form stays as it is while the save form loads.
       window.location.assign(outcome.link);
@@ -211,7 +253,9 @@ function enhance(form, field, button, status) {
     }
     if (outcome.kind === "rejected") {
       reset();
-      if (!outcome.keepValue) {
+      // A value that must not stay is the address that was sent. A field that holds something
+      // else by now, because the user went on typing, is left as it is.
+      if (!outcome.keepValue && field.value === address) {
         field.value = "";
       }
       showError({ text: outcome.error, title: outcome.title });
@@ -219,16 +263,18 @@ function enhance(form, field, button, status) {
       return;
     }
     // A failure's message replaces the processing message, which keeps focus until then, and
-    // says what to do next.
+    // says what to do next. A failure that comes before the processing message was written is
+    // the first message after the press, so it follows the processing message's rule.
     button.textContent = idleLabel;
+    const kind = processingShown ? "failure" : "processing";
     if (outcome.kind === "signedOut") {
       const link = document.createElement("a");
       link.href = `/auth/sign-in?return_to=${encodeURIComponent(window.location.pathname)}`;
       link.textContent = MESSAGES.signIn;
-      announce(`${MESSAGES.signedOut} `, link, ".");
+      announce(kind, `${MESSAGES.signedOut} `, link, ".");
       return;
     }
-    announce(MESSAGES[outcome.kind]);
+    announce(kind, MESSAGES[outcome.kind]);
   }
 
   /** @param {string} address */
@@ -263,7 +309,7 @@ function enhance(form, field, button, status) {
       return;
     }
     inFlight = null;
-    settle(outcome);
+    settle(outcome, address);
   }
 
   // A press of Continue or Enter in the field submits the form. The browser's own submission is

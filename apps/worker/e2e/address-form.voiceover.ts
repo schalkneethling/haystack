@@ -6,14 +6,21 @@
 // after the press every time, and missed it every time as a live region or an alert (plan, "The
 // address form (#97)"). The runs measured that on Playwright's WebKit on macOS 26, not Safari.
 //
+// The page's clock is Playwright's, paused (installPausedClock), and the test moves it on by the
+// script's 100 ms itself. A held request would otherwise reach the script's 10-second timeout
+// while VoiceOver is still speaking: on CI a press with `capture: true` waited longer than that
+// (run 39444075815). Presses use Guidepup's `capture: "initial"`, which looks at VoiceOver's
+// output once, and `waitForSpoken` listens after that.
+//
 // It was written without a local run, because the VoiceOver tests change macOS settings, so its
-// first CI run is its first check. It assumes three things:
+// first CI run is its first check. It assumes four things:
 // - VoiceOver's Space on the focused Continue button (`act`) submits the form, as it does in the
 //   rejected address test in save-pages.voiceover.ts.
 // - VoiceOver follows focus to the message, as it did in the investigation's runs, and reads it.
 // - When the script moves focus to the field after a rejection, VoiceOver follows it and reads
 //   the field with its description, the error first.
-import { holdLookups, MESSAGES } from "./held-lookups.ts";
+// - The paused clock drives the script's timers in headed WebKit as in the browser tests.
+import { holdLookups, installPausedClock, MESSAGES } from "./held-lookups.ts";
 import { expect, test } from "./voiceover-fixtures.ts";
 import { waitForSpoken } from "./wait-for-spoken.ts";
 
@@ -30,6 +37,7 @@ test("the lookup's message is read when it takes focus, a rejected address at th
   pages,
   voiceOver,
 }) => {
+  await installPausedClock(page);
   const lookups = await holdLookups(page);
   const field = page.getByRole("textbox", { name: "Save a link" });
   const message = page.locator("#save-url-status > p");
@@ -38,16 +46,18 @@ test("the lookup's message is read when it takes focus, a rejected address at th
   await field.fill("pages.test/voiceover-rejected");
   await voiceOver.navigateToWebContent();
 
-  // The user presses Continue with VoiceOver.
+  // The user presses Continue with VoiceOver, and the script writes and focuses its message
+  // 100 ms later.
   await page.getByRole("button", { name: "Continue" }).focus();
   await voiceOver.perform(voiceOver.keyboardCommands.moveCursorToKeyboardFocus);
   await voiceOver.clearSpokenPhraseLog();
-  await voiceOver.act({ capture: true });
+  await voiceOver.act({ capture: "initial" });
   const rejected = await lookups.next(1);
+  await page.clock.runFor(100);
   await expect(message).toHaveText(MESSAGES.processing);
   await expect(message).toBeFocused();
-  // The message can be part of the announcement that pressing the button started, so the whole
-  // log is searched first, then later phrases.
+  // The message can be part of what was captured after the press, so the whole log is searched
+  // first, then later phrases.
   if (!PROCESSING.test((await voiceOver.spokenPhraseLog()).join(" "))) {
     await waitForSpoken(voiceOver, PROCESSING);
   }
@@ -67,11 +77,16 @@ test("the lookup's message is read when it takes focus, a rejected address at th
   await field.fill(pages.url("/voiceover-signed-out"));
   await page.getByRole("button", { name: "Continue" }).focus();
   await voiceOver.perform(voiceOver.keyboardCommands.moveCursorToKeyboardFocus);
-  await voiceOver.act();
+  await voiceOver.act({ capture: "initial" });
   const signedOut = await lookups.next(2);
+  await page.clock.runFor(100);
   await expect(message).toHaveText(MESSAGES.processing);
   await voiceOver.clearSpokenPhraseLog();
   await signedOut.answer(401);
+  // Continue gets its own label back when the script has the answer, and the message follows
+  // 100 ms later.
+  await expect(page.getByRole("button", { name: "Continue" })).toBeVisible();
+  await page.clock.runFor(100);
   await expect(message).toHaveText(MESSAGES.signedOut);
   await expect(message).toBeFocused();
   if (!SIGNED_OUT.test((await voiceOver.spokenPhraseLog()).join(" "))) {

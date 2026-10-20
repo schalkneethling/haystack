@@ -769,6 +769,16 @@ describe("an answer in JSON, for the address form's script", () => {
   });
 
   it.each([
+    ["application/json;q=0", "application/json;q=0"],
+    ["application/json; q=0.0, with HTML acceptable", "text/html, application/json; q=0.0"],
+  ])("is not given for %s, which says JSON is not acceptable", async (_, accept) => {
+    fixture.page("/json-refused", FULL_PAGE);
+    const response = await postAddress(fixture.url("/json-refused"), { accept });
+    expect(response.status).toBe(303);
+    expect(response.headers.get("content-type")).toBeNull();
+  });
+
+  it.each([
     ["an address without a scheme, which may stay", "pages.test/page", ADDRESS_RULE, true],
     ["an http: address, which may stay", "http://pages.test/page", ADDRESS_RULE, true],
     ["an empty address", "", "Enter the address of a page, starting with https://.", false],

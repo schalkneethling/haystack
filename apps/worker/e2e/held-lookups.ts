@@ -45,6 +45,17 @@ async function settle(action: () => Promise<void>): Promise<void> {
   await action().catch(() => undefined);
 }
 
+/**
+ * Installs Playwright's clock on the page, paused, so the script's timers fire only when the test
+ * moves the clock on (`runFor` or `fastForward`). `install` alone leaves the clock running in
+ * real time. Call it before the page loads.
+ */
+export async function installPausedClock(page: Page): Promise<void> {
+  const start = new Date("2026-01-01T09:00:00Z");
+  await page.clock.install({ time: start });
+  await page.clock.pauseAt(new Date(start.getTime() + 1000));
+}
+
 export async function holdLookups(page: Page): Promise<HeldLookups> {
   const all: HeldLookup[] = [];
   const failed = new Set<Request>();

@@ -17,7 +17,7 @@
 // `type="url"` for the keyboard and the autofill it offers.
 import { html, type SafeHtml } from "./html.ts";
 import { fieldError, SENSITIVE_NOTICE } from "./notices.ts";
-import { htmlResponse } from "./page.ts";
+import { htmlResponse, pageTitle } from "./page.ts";
 
 /** What the form shows. */
 export interface AddressFormState {
@@ -80,7 +80,9 @@ function formTarget(signedIn: boolean): SafeHtml {
  * Only a signed-in user sees the saved links page.
  */
 export function addressFormCard(): SafeHtml {
-  return html`<form class="panel address-form" ${formTarget(true)} novalidate aria-labelledby="${TITLE_ID}">
+  // `data-address-form` tells address-form.js which form this is, so it puts an error where the
+  // server would: the card has no heading of its own, so the error goes before the hint.
+  return html`<form class="panel address-form" ${formTarget(true)} novalidate aria-labelledby="${TITLE_ID}" data-address-form="card">
         <label id="${TITLE_ID}" class="address-form-title" for="${FIELD_ID}">${LABEL}</label>
         ${controls({ value: "" })}
       </form>`;
@@ -95,13 +97,16 @@ export function addressFormCard(): SafeHtml {
  * This form is not named, so it is not a landmark. The heading comes first in `<main>` and is
  * the field's label, so moving by heading or to the main landmark reaches the form, and a form
  * landmark named "Save a link" right after the heading "Save a link" would only repeat it.
+ *
+ * `data-idle-title` is the page's title without an error, which address-form.js goes back to
+ * when it clears an error that the server rendered, because the page then has another title.
  */
 export function addressFormPage(state: AddressFormState, signedIn: boolean): Response {
   const error = state.error === undefined ? null : fieldError(ERROR_ID, state.error);
   return htmlResponse(
     state.error === undefined ? LABEL : ADDRESS_ERROR_TITLE,
     html`<h1><label for="${FIELD_ID}">${LABEL}</label></h1>${error}
-      <form class="panel address-form" ${formTarget(signedIn)} novalidate>
+      <form class="panel address-form" ${formTarget(signedIn)} novalidate data-address-form="page" data-idle-title="${pageTitle(LABEL)}">
         ${controls(state)}
         ${SENSITIVE_NOTICE}
       </form>`,
