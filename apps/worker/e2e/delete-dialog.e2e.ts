@@ -193,12 +193,13 @@ async function recordAnnouncements(page: Page): Promise<Announcement[]> {
 }
 
 /**
- * The script waits 100 ms before it writes the message, because VoiceOver does not speak one
- * that is written in the same task as the dialog closing (plan, "Deleting bookmarks"). A timer
- * never fires early, so 90 ms only leaves room for the clock being coarse.
+ * The script waits 500 ms before it writes the message, because VoiceOver drops one that is
+ * written in the same task as the dialog closing, or 100 ms after it on the saved links page
+ * (plan, "Deleting bookmarks"). A timer never fires early, so 490 ms only leaves room for the
+ * clock being coarse.
  */
 function expectDelayed(announcement: Announcement | undefined): void {
-  expect(announcement?.msSinceClose).toBeGreaterThanOrEqual(90);
+  expect(announcement?.msSinceClose).toBeGreaterThanOrEqual(490);
 }
 
 // The message has to come after the dialog is closed and focus has moved, and after that delay.
