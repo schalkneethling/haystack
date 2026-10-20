@@ -63,9 +63,13 @@ Feature: Deleting a saved link
         | "Newest", "A guide", "Oldest" | Oldest   | the title of the card before it, "A guide"                      |
         | only "A guide"                | A guide  | the heading "Saved links", and the empty list's message appears |
 
-    @integration:apps/worker/test/recent-saves.test.ts
-    @playwright:apps/worker/e2e/delete-dialog.e2e.ts
+    @untested
     Scenario: Deleting every link the list shows, when I have older ones
+      No test deletes every card on a page of 50. The integration test in
+      apps/worker/test/recent-saves.test.ts checks only that the message is
+      in the page's markup, hidden, when there are more links than the list
+      shows.
+
       Given I have more saved links than the 50 the list shows
       When I delete every card on the page
       Then the page says "You deleted every link shown here. Reload the page to see your older links."

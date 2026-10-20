@@ -85,6 +85,7 @@ Feature: Saving a link by typing or pasting its address
     Then VoiceOver reads "Looking up the page. This can take a few seconds."
 
   @playwright:apps/worker/e2e/address-form.e2e.ts
+  @playwright:apps/worker/e2e/design.e2e.ts
   Scenario: Continue is never disabled while the page is looked up
     A disabled button would lose focus, and a screen reader would call it
     dimmed, so Continue stays a working button and its label says what is
@@ -337,10 +338,18 @@ Feature: Saving a link by typing or pasting its address
 
   @playwright:apps/worker/e2e/address-form.e2e.ts
   Scenario: Going back from the save form
+    The browser test that goes back checks that the form is ready and shows
+    no message. A browser can also restore the page as I left it, still
+    looking the page up. Playwright's Chromium doesn't show whether it used
+    that restored copy, so a second test sends the event a browser sends for
+    a restored page, and checks that the form is ready, shows no message,
+    and that nothing has focus.
+
     Given I entered an address on the "Save a link" page, and the save form opened for it
     When I go back in the browser
     Then the "Save a link" form is ready, with Continue's own label
-    And no message is showing, and nothing on the page has focus
+    And no message is showing
+    And if the browser restored the page as I left it, still looking the page up, nothing on the page has focus
 
   @playwright:apps/worker/e2e/address-form.e2e.ts
   @integration:apps/worker/test/address-form.test.ts

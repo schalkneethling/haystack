@@ -46,7 +46,6 @@ Feature: Signing in and out
     When I sign in through that link with a Google account that Haystack allows
     Then I land on my saved links, not on the other site
 
-  @integration:apps/worker/test/sign-in.test.ts
   @integration:apps/worker/test/save-form.test.ts
   @integration:apps/worker/test/address-form.test.ts
   Scenario: A save link that carries a secret is refused before I sign in
@@ -152,6 +151,13 @@ Feature: Signing in and out
 
   @integration:apps/worker/test/auth.test.ts
   Scenario Outline: My session has ended
+    The integration tests check both reasons differently. For an expired
+    session, they check that a page request is sent to sign in. For an
+    account removed from the allowed list, they check that the session is
+    removed and that a request to Haystack is refused, using a request that
+    is not for a page, so the redirect for a page is checked only in the
+    expired case.
+
     Given I signed in to Haystack earlier
     And <why the session ended>
     When I open my saved links

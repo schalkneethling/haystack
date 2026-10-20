@@ -53,11 +53,11 @@ Feature: Saving the current page with the extension
     And its Description field holds <the description>
 
     Examples:
-      | what the page has                                   | the title                | the description         |
-      | a sharing title and description, and a document one | the sharing title        | the sharing description |
-      | only a document title and a meta description        | the document title       | the meta description    |
-      | no title and no description at all                  | the page's full address  | nothing                 |
-      | only a sharing title, longer than 200 characters    | its first 200 characters | nothing                 |
+      | what the page has                                   | the title                                                                                                     | the description         |
+      | a sharing title and description, and a document one | the sharing title                                                                                             | the sharing description |
+      | only a document title and a meta description        | the document title                                                                                            | the meta description    |
+      | no title and no description at all                  | the page's address, cut to 200 characters if it is longer, or to 199 if the 200th would split an emoji in two | nothing                 |
+      | only a sharing title, longer than 200 characters    | its first 200 characters, or 199 if the 200th would split an emoji in two                                     | nothing                 |
 
   @playwright:apps/extension/e2e/toolbar-button.e2e.ts
   @unit:apps/extension/test/open-save-form.test.ts

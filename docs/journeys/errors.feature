@@ -72,11 +72,29 @@ Feature: Pages a person can reach by mistake
     And nothing is saved unless I press Save
 
   @integration:apps/worker/test/save-post.test.ts
+  Scenario: Pressing Save after my session ended
+    The save form is an ordinary form, with or without JavaScript, so this
+    happens either way. The likely way to get here is to leave the save form
+    open until the session expires. The integration test checks that the
+    request is refused as signed out and that nothing is saved. The wording
+    is the Worker's plain-text answer.
+
+    Given I opened the save form while I was signed in
+    And I left it open until my session expired
+    When I press "Save"
+    Then the browser shows the plain text "Unauthorized"
+    And nothing is saved
+    And opening any Haystack page sends me to Google to sign in
+
   @integration:apps/worker/test/save-address.test.ts
   @integration:apps/worker/test/delete-bookmark.test.ts
   Scenario Outline: Pressing a button after my session ended, without JavaScript
-    The integration tests check that the answer is refused as signed out, and
-    that nothing changes. The wording is the Worker's plain-text answer.
+    With JavaScript, the address form and the delete dialog say in the page
+    that I am signed out instead (see address-form.feature and
+    delete.feature), and the delete confirmation page is reached only without
+    JavaScript. The integration tests check that the request is refused as
+    signed out and that nothing changes. The wording is the Worker's
+    plain-text answer.
 
     Given my browser has JavaScript turned off
     And I opened <the page> while I was signed in
@@ -88,9 +106,21 @@ Feature: Pages a person can reach by mistake
 
     Examples:
       | the page                     | the button |
-      | the save form                | "Save"     |
       | the "Save a link" page       | "Continue" |
       | the delete confirmation page | "Delete"   |
+
+  @integration:apps/worker/test/save-post.test.ts
+  Scenario: A save request that isn't a form
+    Only a request built by hand, such as one that sends JSON, reaches this
+    page, because the save form always sends a form. The integration test
+    checks that the request is refused and that nothing is saved, but not the
+    page's wording, which is quoted from the code.
+
+    Given I am signed in to Haystack
+    When a request to save a link is sent with something other than a form
+    Then I see the page titled "This link can't be saved - Haystack", under the heading "This link can't be saved"
+    And it says "Save links from the form on the save page."
+    And nothing is saved
 
   @playwright:apps/worker/e2e/save-form.e2e.ts
   @playwright:apps/worker/e2e/design.e2e.ts

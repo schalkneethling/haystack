@@ -50,6 +50,7 @@ These are the candidates for new tests, most important first.
 
 1. **"Saving a page in Firefox"** (`extension-save.feature`) is the main way to save a link in one of the two browsers Haystack supports. Playwright cannot load an extension in Firefox, so only the manual check under "Firefox manual check" in the plan's "Testing strategy" covers it.
 2. **"The delete fails because Haystack can't be reached"** (`delete.feature`) is the one failure of the delete dialog that no browser test reaches. A Playwright test could fail the request the way `delete-dialog.e2e.ts` already answers it with an error.
-3. **"A screen reader user hears why the popup refused the page"** (`extension-save.feature`) depends on a status message that no screen reader test has heard. The browser test checks the popup's text and runs axe on it.
-4. **"A screen reader user hears that the dialog's buttons are busy"** (`delete.feature`) rests on what VoiceOver said in trial runs, which the plan records but no test checks.
-5. **"Saving a page that Firefox doesn't let the extension read"** (`extension-save.feature`) is covered by the same manual check as the first item. The unit tests cover the same fallback with a fake browser.
+3. **"Deleting every link the list shows, when I have older ones"** (`delete.feature`) shows a message that only a person with more than 50 links can see. The integration test checks only that the message is in the page's markup, hidden, and no browser test deletes every card on a full page.
+4. **"A screen reader user hears why the popup refused the page"** (`extension-save.feature`) depends on a status message that no screen reader test has heard. The browser test checks the popup's text and runs axe on it.
+5. **"A screen reader user hears that the dialog's buttons are busy"** (`delete.feature`) rests on what VoiceOver said in trial runs, which the plan records but no test checks.
+6. **"Saving a page that Firefox doesn't let the extension read"** (`extension-save.feature`) is covered by the same manual check as the first item. The unit tests cover the same fallback with a fake browser.

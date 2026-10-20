@@ -46,8 +46,9 @@ Feature: Confirming and saving a link
   @playwright:apps/worker/e2e/save-form.e2e.ts
   Scenario: Completing the save form with the keyboard alone
     Given the save form is open for a page I have not saved yet
-    When I press Tab three times past the header's wordmark, "Saved links" and "Sign out"
-    Then the Title field has focus
+    When I press Tab four times
+    Then the focus moves through the Haystack wordmark, the link "Saved links" and the button "Sign out"
+    And then the Title field has focus
     When I type a new title, and press Tab
     Then the Description field has focus
     When I press Tab
