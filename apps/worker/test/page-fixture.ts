@@ -17,12 +17,13 @@
 // test calls the Worker from Node, so the browser tests' fixtures let exactly the Worker's own
 // origin through, with `allow`.
 //
-// Because Node makes the request, four things differ from production, and the tests do not rely
-// on them (the plan's "Testing strategy" lists them too): Node follows redirects itself, so the
-// Worker sees the final response under the first address; Node keeps reading a body after the
-// Worker has cancelled it, so a test cannot see the cancellation; a request Node cannot make
-// reaches the Worker as a 500 response rather than an error; and Node adds headers of its own,
-// such as `accept-language`.
+// Because the harness stands between the Worker and the network, five things differ from
+// production, and the tests do not rely on them (the plan's "Testing strategy" lists the same
+// five): Node follows redirects itself, so the Worker sees the final response under the first
+// address; Node keeps reading a body after the Worker has cancelled it, so a test cannot see the
+// cancellation; a request Node cannot make reaches the Worker as a 500 response rather than an
+// error; the harness hands a request to the Worker as `http`, even when the test addressed it as
+// `https`; and Node adds headers of its own, such as `accept-language`.
 import { http, HttpResponse, passthrough } from "msw";
 import { setupServer } from "msw/node";
 

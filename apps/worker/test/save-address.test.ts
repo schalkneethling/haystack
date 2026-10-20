@@ -263,6 +263,23 @@ describe("a page that says what it is", () => {
     });
   });
 
+  // An empty label declares nothing, and a browser ignores it. The header names no charset, so the
+  // page's own declaration is the one that counts.
+  it.each([
+    ["empty", '<meta charset="">'],
+    ["only whitespace", '<meta charset="  ">'],
+    [
+      "empty, in <meta http-equiv>",
+      '<meta http-equiv="content-type" content="text/html; charset=">',
+    ],
+  ])("ignores a charset label that is %s", async (_, declaration) => {
+    fixture.route("/no-label", () => html(`<head>${declaration}<title>No label</title></head>`));
+    expect(savedLinkFields(await postAddress(fixture.url("/no-label")))).toEqual({
+      url: fixture.url("/no-label"),
+      title: "No label",
+    });
+  });
+
   it("cuts long values to their caps, as the extension does", async () => {
     fixture.page(
       "/long",
@@ -409,11 +426,18 @@ describe("the read stops early", () => {
     });
   });
 
-  // A page made of nothing but a tag the reader wants, up to the byte limit, is the most work a
-  // page can ask of it. Its lookup takes no longer than a tiny page's, give or take a margin that
-  // is far smaller than what the same page costs without the budget.
-  it("so a page full of the tags it wants is looked up as fast as a tiny page", async () => {
-    const tag = '<meta name="description" content="x">';
+  // A page made of nothing but one tag that reaches a handler, up to the byte limit, is the most
+  // work a page can ask of the reader along that path. Each such page is looked up no slower than
+  // a tiny page, give or take a margin, because every handler call counts against the budget, and
+  // the reader stops the rewriter outright once it is done.
+  it.each([
+    ["<meta name=description>", '<meta name="description" content="x">'],
+    ["<head>", "<head>"],
+    ["<title>", "<title>x</title>"],
+    // An empty title has no text to count, so only its element counts.
+    ["an empty <title>", "<title></title>"],
+    ["<body>", "<body>"],
+  ])("so a page full of %s is looked up as fast as a tiny page", async (_, tag) => {
     const filled = tag.repeat(Math.ceil(LOOKUP_READ_LIMIT_BYTES / tag.length));
     fixture.page("/full-of-tags", `<head>${filled}<title>T</title></head>`);
     fixture.page("/tiny", "<head><title>Tiny</title></head>");
@@ -429,8 +453,10 @@ describe("the read stops early", () => {
     }
     const tiny = await fastest("/tiny");
     const full = await fastest("/full-of-tags");
-    // Measured on a loaded machine: about 4 ms slower with the budget, and about 90 ms slower
-    // without it, so 50 ms tells the two apart with room for load either way.
+    // Measured with the fix: 0 to 2 ms slower on every path. Without it, about 130 ms for <head>
+    // and 360 ms for <title>, and about 90 ms for the meta tag without the budget, so 50 ms tells
+    // them apart with room for load. <body> cost only about 10 ms without the fix, under the margin,
+    // so this holds it to the margin but does not show its fix.
     expect(full - tiny).toBeLessThan(50);
   });
 });

@@ -30,7 +30,8 @@ export const LOOKUP_TIMEOUT_MS = 3000;
 export const LOOKUP_READ_LIMIT_BYTES = 256 * 1024;
 
 /**
- * How many elements the reader's handlers take at most. The Workers Free plan allows 10 ms of
+ * How many handler calls the reader takes at most. Every call counts: an element of any of the
+ * selectors, `<head>`, `<title>`, and each chunk of a title's text. The Workers Free plan allows 10 ms of
  * CPU time per request, and each element that reaches a handler in JavaScript costs about 14 µs
  * in the local runtime (the review of #105 measured it: 256 KiB of repeated `<meta>` took about
  * 667 ms when every one reached JavaScript, and the same size of comments 11 ms). The selectors
@@ -77,6 +78,10 @@ function asciiLowerCase(value: string): string {
 }
 
 const ASCII_WHITESPACE = /[\t\n\f\r ]+/g;
+const EDGE_WHITESPACE = /^[\t\n\f\r ]+|[\t\n\f\r ]+$/g;
+
+// The message of the error the reader throws to stop the rewriter (see `HeadReader`).
+const READER_DONE = "The page reader is done";
 
 // The labels of UTF-8 in the WHATWG Encoding Standard, and of UTF-16, which the HTML standard
 // reads as UTF-8 when a page declares it in a meta tag. Any other declared encoding would be read
@@ -127,8 +132,13 @@ const META_SELECTORS: ReadonlyArray<readonly [MetaField, string]> = [
  * decodes them. The title is decoded, then its whitespace is collapsed and trimmed, as
  * `document.title` does.
  *
- * Only the elements the reader wants reach its handlers, through the selectors, and it takes at
- * most LOOKUP_ELEMENT_BUDGET of them, so a page cannot make it spend its CPU time.
+ * Only the elements the reader wants reach its handlers, through the selectors, and every handler
+ * call counts against LOOKUP_ELEMENT_BUDGET, so a page cannot make it spend its CPU time. When the
+ * reader is done, for any reason, it stops the rewriter outright by throwing from the handler:
+ * otherwise the rewriter would go on through the rest of the chunk it is parsing, and call a
+ * handler for every matching element in it. In workerd, a handler that throws stops the rewriter
+ * from calling any further handler, and the error comes out of the rewritten body, without its
+ * class, so `readHead` tells the stop apart by the reader's `finished` flag.
  *
  * HTMLRewriter decodes the page by the charset in the response's `content-type`, or as UTF-8, and
  * not by a `<meta charset>` in the page. So when the header names no charset and the head
@@ -141,8 +151,7 @@ const META_SELECTORS: ReadonlyArray<readonly [MetaField, string]> = [
 class HeadReader {
   /**
    * Whether the reader is done, so nothing more is read: the head has ended, or the budget or a
-   * charset stopped it. The rewriter goes on through the rest of the chunk it is parsing, so
-   * every handler checks this first.
+   * charset stopped it.
    */
   finished = false;
   /** Set when the head declares a charset that the rewriter does not decode with. */
@@ -160,37 +169,37 @@ class HeadReader {
     this.#headerCharset = headerCharset;
   }
 
-  // Counts an element against the budget. Returns whether the handler may read it.
-  #take(): boolean {
-    if (this.finished) {
-      return false;
-    }
+  // Marks the reader done and stops the rewriter (see the class comment).
+  #stop(): never {
+    this.finished = true;
+    throw new Error(READER_DONE);
+  }
+
+  // Counts a handler call against the budget, and stops the reader when the budget is spent. A
+  // handler that runs after the reader is done stops it again.
+  #take(): void {
     this.#handled += 1;
-    if (this.#handled > LOOKUP_ELEMENT_BUDGET) {
-      this.finished = true;
-      return false;
+    if (this.finished || this.#handled > LOOKUP_ELEMENT_BUDGET) {
+      this.#stop();
     }
-    return true;
   }
 
   rewriter(): HTMLRewriter {
     let rewriter = new HTMLRewriter()
       .on("head", {
         element: (element) => {
-          element.onEndTag(() => {
-            this.finished = true;
-          });
+          this.#take();
+          element.onEndTag(() => this.#stop());
         },
       })
       .on("body", {
-        element: () => {
-          this.finished = true;
-        },
+        element: () => this.#stop(),
       })
       .on("title", {
         element: (element) => {
+          this.#take();
           // Only the first title counts, as for document.title.
-          if (this.#title !== undefined || !this.#take()) {
+          if (this.#title !== undefined) {
             return;
           }
           this.#title = "";
@@ -199,7 +208,9 @@ class HeadReader {
             this.#inTitle = false;
           });
         },
+        // Called for each chunk of a title's text, so it counts as well.
         text: (text) => {
+          this.#take();
           if (this.#inTitle) {
             this.#title += text.text;
           }
@@ -207,17 +218,15 @@ class HeadReader {
       })
       .on('link[rel~="canonical" i][href]', {
         element: (element) => {
-          if (this.#take()) {
-            this.#canonicalHrefs.push(decodeHTMLAttribute(element.getAttribute("href") ?? ""));
-          }
+          this.#take();
+          this.#canonicalHrefs.push(decodeHTMLAttribute(element.getAttribute("href") ?? ""));
         },
       })
       .on("base[href]", {
         element: (element) => {
+          this.#take();
           // The first base element with an href sets the document's base URL.
-          if (this.#take() && this.#base === undefined) {
-            this.#base = decodeHTMLAttribute(element.getAttribute("href") ?? "");
-          }
+          this.#base ??= decodeHTMLAttribute(element.getAttribute("href") ?? "");
         },
       })
       .on("meta[charset]", {
@@ -235,29 +244,25 @@ class HeadReader {
   }
 
   #readMeta(field: MetaField, element: Element): void {
-    if (!this.#take()) {
-      return;
-    }
+    this.#take();
     const value = decodeHTMLAttribute(element.getAttribute("content") ?? "");
     if (value.trim() !== "") {
       this.#meta[field] ??= value;
     }
   }
 
-  // A charset in the header wins over one in the page, as in a browser.
+  // A charset in the header wins over one in the page, as in a browser. An empty label declares
+  // nothing, and a browser ignores it, so it is ignored here too. An unknown label, such as "foo",
+  // stops the reader, which is cautious, and saves carrying the Encoding Standard's whole list.
   #readCharset(label: string | null | undefined): void {
-    if (
-      !this.#take() ||
-      this.#headerCharset !== undefined ||
-      label === null ||
-      label === undefined
-    ) {
+    this.#take();
+    if (this.#headerCharset !== undefined || label === null || label === undefined) {
       return;
     }
-    const declared = asciiLowerCase(decodeHTMLAttribute(label)).trim();
-    if (!UTF8_LABELS.has(declared)) {
+    const declared = asciiLowerCase(decodeHTMLAttribute(label)).replace(EDGE_WHITESPACE, "");
+    if (declared !== "" && !UTF8_LABELS.has(declared)) {
       this.wrongCharset = true;
-      this.finished = true;
+      this.#stop();
     }
   }
 
@@ -315,10 +320,21 @@ async function readHead(response: Response, body: ReadableStream<Uint8Array>): P
   const rewritten = reader
     .rewriter()
     .transform(new Response(limited, { headers: { "content-type": contentType } }));
-  // The rewriter parses as its output is read. The output itself is not needed.
+  // The rewriter parses as its output is read. The output itself is not needed. When the reader
+  // stops the rewriter, the read rejects, and what the reader took is the result. Any other error
+  // goes to the caller.
   const output = rewritten.body?.getReader();
-  while (output !== undefined && !(await output.read()).done) {
-    // Keep reading.
+  try {
+    while (output !== undefined && !(await output.read()).done) {
+      // Keep reading.
+    }
+  } catch (error) {
+    if (!reader.finished) {
+      throw error;
+    }
+    await source.cancel().catch(() => {
+      // The rest of the body is not wanted.
+    });
   }
   if (reader.wrongCharset) {
     return { ok: false, reason: "charset" };
