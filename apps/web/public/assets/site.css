@@ -211,8 +211,8 @@ main > :where(p, ul, div) {
   padding-inline: var(--space-m);
 }
 
-/* The dialog's buttons while a delete runs. They stay focusable (delete-dialog.js). The fill and
-   the border go quiet, and the text stays at 6:1 on the raised fill in both schemes. */
+/* The dialog's buttons while a delete runs (delete-dialog.js). They stay focusable. The fill
+   and the border go quiet, and the text stays at 6:1 on the raised fill in both schemes. */
 .button[aria-disabled="true"],
 .button[aria-disabled="true"]:hover {
   background-color: var(--color-raised);
@@ -341,6 +341,15 @@ main > :where(p, ul, div) {
   padding-inline: 1.125rem;
 }
 
+/* While the page is looked up (#105, address-form.js), and when a lookup fails, the status
+   message appears under the row. The status region is empty otherwise, and sits in a wrapper
+   with the row, so it takes no space and adds no gap. Continue keeps its usual style: only its
+   label changes, because it is never disabled. */
+.address-status > p {
+  margin-block-start: var(--space-s);
+  max-inline-size: var(--width-narrow);
+}
+
 /* Notices and messages. */
 
 .notice {
@@ -394,6 +403,15 @@ main > :where(p, ul, div) {
   border-radius: var(--radius-field);
   padding-block: var(--space-s);
   padding-inline: var(--space-m);
+}
+
+/* address-form.js moves focus to its message, so a screen reader reads it (#105). The ring is the
+   site's focus ring, drawn whenever the message has focus, also after a click, because the
+   script, not the user, put focus there. An outline survives forced colors, which give it a
+   system color. */
+.address-status > p:focus {
+  outline: var(--focus-width) solid var(--color-focus);
+  outline-offset: var(--focus-offset);
 }
 
 .empty-state {

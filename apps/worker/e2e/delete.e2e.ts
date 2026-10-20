@@ -2,6 +2,7 @@
 // The dialog that JavaScript adds is tested in delete-dialog.e2e.ts.
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "./fixtures.ts";
+import { listStatus } from "./list-status.ts";
 import { saveThroughForm } from "./save-through-form.ts";
 
 test.beforeEach(async ({ signIn }) => {
@@ -35,7 +36,7 @@ test.describe("without JavaScript", () => {
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("Delete this link?");
     await page.getByRole("button", { name: "Delete" }).click();
 
-    await expect(page.getByRole("status")).toHaveText("Deleted “First guide”.");
+    await expect(listStatus(page)).toHaveText("Deleted “First guide”.");
     await expect(page.getByRole("button", { name: /^Delete / })).toHaveText(["Delete"]);
     await expect(page.getByRole("button", { name: "Delete Second guide" })).toBeVisible();
     // The Worker's database is shared by the tests in this process, so match these URLs only.

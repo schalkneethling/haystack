@@ -24,6 +24,7 @@
   "dependencies": {
     "@haystack/schemas": "workspace:*",
     "drizzle-orm": "^0.45.4",
+    "entities": "^8.1.0",
     "oauth4webapi": "^3.8.8"
   },
   "devDependencies": {
@@ -38,6 +39,7 @@
     "@varlock/cloudflare-integration": "^1.6.1",
     "drizzle-kit": "^0.31.11",
     "html-validate": "^11.16.2",
+    "msw": "^3.0.3",
     "varlock": "^1.22.0",
     "vite": "catalog:",
     "wrangler": "4.149.0"

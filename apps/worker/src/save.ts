@@ -191,7 +191,7 @@ function formPage(payload: CapturePayload, url: string, state: FormState): Respo
   );
 }
 
-async function existingBookmark(
+export async function existingBookmark(
   db: Db,
   userId: string,
   normalizedUrl: string,
@@ -204,7 +204,7 @@ async function existingBookmark(
 }
 
 /** Why the checks reject a link: fields that fail validation, or a flagged page address. */
-type Rejection =
+export type Rejection =
   | { readonly invalidFields: readonly CaptureField[] }
   | { readonly sensitive: SensitiveUrlReason };
 
@@ -212,7 +212,7 @@ type Rejection =
  * Validates the captured fields and refuses a sensitive address. Neither check depends on who is
  * signed in, so a signed-out GET /save is screened the same way.
  */
-function screenCapture(
+export function screenCapture(
   captured: Record<string, string>,
 ): { rejection: Rejection } | { payload: CapturePayload } {
   const validation = validateCapturePayload(captured);
@@ -259,28 +259,41 @@ function rejectedAddress(typed: string): AddressFormState {
 }
 
 /**
- * The page GET /save shows for a link the checks reject, whether it came from the address form,
- * a hand-built link or the extension. A rejected address gets the address form again, with the
- * reason, so the user can correct it there, and a flagged address is never put back in the
- * field. A link whose address passes but whose other fields fail gets the validation page,
- * because the address form has no field for them. Only a hand-built link can reach that page,
- * because the extension leaves out a field that fails validation.
+ * The page GET /save shows for a link the checks reject, whether it came from a hand-built link
+ * or the extension, and the page POST /save/address shows for a rejected address (#105). A
+ * rejected address gets the address form again, with the reason, so the user can correct it
+ * there, and a flagged address is never put back in the field. A link whose address passes but
+ * whose other fields fail gets the validation page, because the address form has no field for
+ * them. Only a hand-built link can reach that page, because the extension leaves out a field that
+ * fails validation, and the address form sends only the address.
  */
-function rejectedLinkPage(
+export function rejectedLinkPage(
   captured: Record<string, string>,
   rejection: Rejection,
   signedIn: boolean,
 ): Response {
+  const address = rejectedAddressState(captured, rejection);
+  return address === undefined
+    ? invalidPage("invalidFields" in rejection ? rejection.invalidFields : [], signedIn)
+    : addressFormPage(address, signedIn);
+}
+
+/**
+ * What the address form shows for a rejection: the reason, and the typed value only when it may
+ * go back in the field. Undefined when the address passed and other fields failed, which the
+ * address form has no field for.
+ */
+export function rejectedAddressState(
+  captured: Record<string, string>,
+  rejection: Rejection,
+): AddressFormState | undefined {
   if ("sensitive" in rejection) {
-    return addressFormPage(
-      { value: "", error: SENSITIVE_URL_EXPLANATIONS[rejection.sensitive] },
-      signedIn,
-    );
+    return { value: "", error: SENSITIVE_URL_EXPLANATIONS[rejection.sensitive] };
   }
   if (rejection.invalidFields.includes("url")) {
-    return addressFormPage(rejectedAddress(captured.url ?? ""), signedIn);
+    return rejectedAddress(captured.url ?? "");
   }
-  return invalidPage(rejection.invalidFields, signedIn);
+  return undefined;
 }
 
 /** Screens a GET /save link. Returns the page that ends the request, or the validated payload. */

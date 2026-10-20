@@ -9,3 +9,15 @@ export function mainContent(markup: string): string {
   }
   return content;
 }
+
+/**
+ * A signed-in page's <main> as a user who is not signed in gets it. The address form asks for
+ * GET /save before sign-in, and posts to /save/address after it (address-form.ts says why).
+ * Nothing else differs.
+ */
+export function signedOutMainContent(signedInMarkup: string): string {
+  return mainContent(signedInMarkup).replace(
+    'method="post" action="/save/address"',
+    'method="get" action="/save"',
+  );
+}

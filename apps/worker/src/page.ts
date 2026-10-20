@@ -60,6 +60,11 @@ function siteHeader({ signedIn, current }: PageOptions): SafeHtml {
     </header>`;
 }
 
+/** A page's whole title, as the browser shows it, from the page's own part of it. */
+export function pageTitle(title: string): string {
+  return `${title} - Haystack`;
+}
+
 function page(title: string, content: SafeHtml, options: PageOptions): SafeHtml {
   const bodyClass = options.width === "wide" ? html` class="layout-wide"` : null;
   return html`<!DOCTYPE html>
@@ -67,7 +72,7 @@ function page(title: string, content: SafeHtml, options: PageOptions): SafeHtml 
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>${title} - Haystack</title>${STYLESHEETS.map(
+    <title>${pageTitle(title)}</title>${STYLESHEETS.map(
       (href) => html`
     <link rel="stylesheet" href="${href}">`,
     )}${(options.scripts ?? []).map(
@@ -91,4 +96,17 @@ export function htmlResponse(
   options: PageOptions,
 ): Response {
   return new Response(page(title, content, options).toString(), { status, headers: HTML_HEADERS });
+}
+
+// The headers of a JSON answer to the site's own script: the HTML pages' security headers, and
+// no-store, because each answer belongs to one user and one request, and must not be reused.
+const JSON_HEADERS: Readonly<Record<string, string>> = {
+  ...HTML_HEADERS,
+  "content-type": "application/json; charset=utf-8",
+  "cache-control": "no-store",
+};
+
+/** A JSON answer to one of the site's own scripts. */
+export function jsonResponse(body: unknown, status: number): Response {
+  return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
 }

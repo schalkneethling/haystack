@@ -22,6 +22,7 @@ import { deletePathId } from "./bookmark-paths.ts";
 import { deleteBookmark } from "./delete-bookmark.ts";
 import { showRecentSaves } from "./recent-saves.ts";
 import { saveBookmark, showSaveForm, signedOutSave } from "./save.ts";
+import { saveAddress } from "./save-address.ts";
 import {
   accountNotAllowedPage,
   notFoundPage,
@@ -190,6 +191,10 @@ async function handleAppRoute(
   }
   if (path === "/save" && request.method === "POST") {
     return saveBookmark(request, db, session.user.id);
+  }
+  // The address form's Continue: the only route that fetches a page (plan, decision 2).
+  if (path === "/save/address" && request.method === "POST") {
+    return saveAddress(request, db, session.user.id);
   }
   const deleteId = request.method === "POST" ? deletePathId(path) : undefined;
   if (deleteId !== undefined) {

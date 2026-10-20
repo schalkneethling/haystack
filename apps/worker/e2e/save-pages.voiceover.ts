@@ -164,50 +164,59 @@ test("a rejected title announces the page, then the error, then the field as inv
   expect(field).toMatch(/\bedit text\b/i);
 });
 
-test("a rejected address announces the page, then the error, then the field as invalid", async ({
-  page,
-  voiceOver,
-}) => {
-  await page.goto("/save");
-  // The browser's own checks are off, so an http: address reaches the server's.
-  await page.getByLabel("Save a link").fill("http://example.com/voiceoveraddress");
-  await voiceOver.navigateToWebContent();
+// Without JavaScript, a rejected address gets the server's error page, which this test reads.
+// With JavaScript, address-form.js shows the error in place and moves focus to the field, which
+// address-form.voiceover.ts reads, so the two tests cover the two paths.
+test.describe("without JavaScript", () => {
+  test.use({ javaScriptEnabled: false });
 
-  // The user presses Continue with VoiceOver, so the page that loads is a result of their action.
-  await page.getByRole("button", { name: "Continue" }).focus();
-  await voiceOver.perform(voiceOver.keyboardCommands.moveCursorToKeyboardFocus);
-  await voiceOver.clearSpokenPhraseLog();
-  await voiceOver.act({ capture: true });
-  await expect(page).toHaveTitle("Check the address - Haystack");
-  // The page starts with its header, so VoiceOver can end this announcement with a hint about the
-  // banner. The title is part of the same announcement, so the whole log is searched.
-  expect((await voiceOver.spokenPhraseLog()).join(" ")).toMatch(/check the address/i);
+  test("a rejected address announces the error page, then the error, then the field as invalid", async ({
+    page,
+    voiceOver,
+  }) => {
+    await page.goto("/save");
+    // The browser's own checks are off, so an http: address reaches the server's.
+    await page.getByLabel("Save a link").fill("http://example.com/voiceoveraddress");
+    await voiceOver.navigateToWebContent();
 
-  // The page that loaded has no cursor position the test knows, so start from the first item of
-  // the page before moving by heading. The heading holds the field's label, so VoiceOver may read
-  // the label as an item of its own before the error, and the error is looked for in the next two
-  // items.
-  await voiceOver.navigateToWebContent();
-  await voiceOver.clearSpokenPhraseLog();
-  await voiceOver.nextHeading();
-  await voiceOver.next();
-  await voiceOver.next();
-  expectInOrder(await voiceOver.spokenPhraseLog(), [
-    /\bheading\b.*\blevel 1\b.*save a link|save a link.*\bheading\b.*\blevel 1\b/i,
-    /haystack saves only secure pages/i,
-  ]);
+    // The user presses Continue with VoiceOver, so the page that loads is a result of their action.
+    await page.getByRole("button", { name: "Continue" }).focus();
+    await voiceOver.perform(voiceOver.keyboardCommands.moveCursorToKeyboardFocus);
+    await voiceOver.clearSpokenPhraseLog();
+    await voiceOver.act({ capture: true });
+    await expect(page).toHaveTitle("Check the address - Haystack");
+    // The page starts with its header, so VoiceOver can end this announcement with a hint about the
+    // banner. The title is part of the same announcement, so the whole log is searched.
+    expect((await voiceOver.spokenPhraseLog()).join(" ")).toMatch(/check the address/i);
 
-  // The field gets keyboard focus, and the VoiceOver cursor is moved to it, as in the test of the
-  // rejected title above, which says why.
-  await page.getByLabel("Save a link").focus();
-  await voiceOver.clearSpokenPhraseLog();
-  await voiceOver.perform(voiceOver.keyboardCommands.moveCursorToKeyboardFocus, { capture: true });
-  const field = (await voiceOver.spokenPhraseLog()).join(" ");
-  expect(field).toMatch(/\bsave a link\b/i);
-  expect(field).toMatch(/\binvalid data\b/i);
-  // The error is the field's description, so the user hears it without moving away from the field.
-  expect(field).toMatch(/haystack saves only secure pages/i);
-  // The typed address was kept, so the user can correct it. The matched part has no punctuation,
-  // because how VoiceOver reads punctuation in an address depends on its verbosity setting.
-  expect(field).toMatch(/voiceoveraddress/i);
+    // The page that loaded has no cursor position the test knows, so start from the first item of
+    // the page before moving by heading. The heading holds the field's label, so VoiceOver may read
+    // the label as an item of its own before the error, and the error is looked for in the next two
+    // items.
+    await voiceOver.navigateToWebContent();
+    await voiceOver.clearSpokenPhraseLog();
+    await voiceOver.nextHeading();
+    await voiceOver.next();
+    await voiceOver.next();
+    expectInOrder(await voiceOver.spokenPhraseLog(), [
+      /\bheading\b.*\blevel 1\b.*save a link|save a link.*\bheading\b.*\blevel 1\b/i,
+      /haystack saves only secure pages/i,
+    ]);
+
+    // The field gets keyboard focus, and the VoiceOver cursor is moved to it, as in the test of the
+    // rejected title above, which says why.
+    await page.getByLabel("Save a link").focus();
+    await voiceOver.clearSpokenPhraseLog();
+    await voiceOver.perform(voiceOver.keyboardCommands.moveCursorToKeyboardFocus, {
+      capture: true,
+    });
+    const field = (await voiceOver.spokenPhraseLog()).join(" ");
+    expect(field).toMatch(/\bsave a link\b/i);
+    expect(field).toMatch(/\binvalid data\b/i);
+    // The error is the field's description, so the user hears it without moving away from the field.
+    expect(field).toMatch(/haystack saves only secure pages/i);
+    // The typed address was kept, so the user can correct it. The matched part has no punctuation,
+    // because how VoiceOver reads punctuation in an address depends on its verbosity setting.
+    expect(field).toMatch(/voiceoveraddress/i);
+  });
 });

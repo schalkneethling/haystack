@@ -58,9 +58,29 @@ async function clickToolbarButton(context: BrowserContext, page: Page): Promise<
 }
 
 export const test = base.extend<
-  { signIn: () => Promise<void>; fixturePages: FixturePages; toolbar: Toolbar },
+  {
+    signIn: () => Promise<void>;
+    fixturePages: FixturePages;
+    toolbar: Toolbar;
+    workerRequests: undefined;
+  },
   { haystackWorker: HaystackWorker; extensionDir: string }
 >({
+  // The Worker starts with the Worker package's page fixture, which fails any request the Worker
+  // makes that no test planned for, such as a lookup of a page on the internet. It is checked
+  // after each test, so that a failure points to the test that caused it, and not only to the
+  // Worker's close at the end.
+  workerRequests: [
+    async ({ haystackWorker }, use) => {
+      haystackWorker.pages.reset();
+      await use(undefined);
+      expect(
+        haystackWorker.pages.unplanned,
+        "requests the Worker made that no test planned for",
+      ).toEqual([]);
+    },
+    { auto: true },
+  ],
   haystackWorker: [
     // Playwright reads fixture dependencies from this destructuring pattern, so it must be one.
     // oxlint-disable-next-line no-empty-pattern
