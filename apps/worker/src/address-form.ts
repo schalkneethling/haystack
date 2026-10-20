@@ -32,6 +32,9 @@ export interface AddressFormState {
 }
 
 const LABEL = "Save a link";
+
+/** The title of the address form when it shows a rejected address, on the page and in the script. */
+export const ADDRESS_ERROR_TITLE = "Check the address";
 const FIELD_ID = "save-url";
 const HINT_ID = "save-url-hint";
 const ERROR_ID = "save-url-error";
@@ -96,7 +99,7 @@ export function addressFormCard(): SafeHtml {
 export function addressFormPage(state: AddressFormState, signedIn: boolean): Response {
   const error = state.error === undefined ? null : fieldError(ERROR_ID, state.error);
   return htmlResponse(
-    state.error === undefined ? LABEL : "Check the address",
+    state.error === undefined ? LABEL : ADDRESS_ERROR_TITLE,
     html`<h1><label for="${FIELD_ID}">${LABEL}</label></h1>${error}
       <form class="panel address-form" ${formTarget(signedIn)} novalidate>
         ${controls(state)}

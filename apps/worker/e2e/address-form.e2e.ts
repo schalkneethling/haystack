@@ -310,6 +310,29 @@ test.describe("7. a rejected address", () => {
     expect(new URL(page.url()).pathname).toBe("/");
   });
 
+  // The server's error page is titled "Check the address", and the title is what VoiceOver says
+  // first on a new page, so the page in place takes the same title, and gives it back when the
+  // error goes.
+  test("gives the page the error page's title, and gives the title back when the error goes", async ({
+    page,
+    pages,
+  }) => {
+    const lookups = await holdLookups(page);
+    await page.goto("/");
+    await expect(page).toHaveTitle("Saved links - Haystack");
+    await field(page).fill("pages.test/no-scheme");
+    await field(page).press("Enter");
+    await (await lookups.next(1)).release();
+    await expect(page.getByRole("alert")).toHaveText(ADDRESS_RULE);
+    await expect(page).toHaveTitle("Check the address - Haystack");
+    // A new request clears the error, and with it the title.
+    await field(page).fill(pages.url("/title-back"));
+    await field(page).press("Enter");
+    await lookups.next(2);
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(page).toHaveTitle("Saved links - Haystack");
+  });
+
   test("that carries a secret is not put back in the field", async ({ page, pages }) => {
     await page.goto("/save");
     await field(page).fill(pages.url("/cb?access_token=secret-value"));

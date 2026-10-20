@@ -60,6 +60,11 @@ function siteHeader({ signedIn, current }: PageOptions): SafeHtml {
     </header>`;
 }
 
+/** A page's whole title, as the browser shows it, from the page's own part of it. */
+export function pageTitle(title: string): string {
+  return `${title} - Haystack`;
+}
+
 function page(title: string, content: SafeHtml, options: PageOptions): SafeHtml {
   const bodyClass = options.width === "wide" ? html` class="layout-wide"` : null;
   return html`<!DOCTYPE html>
@@ -67,7 +72,7 @@ function page(title: string, content: SafeHtml, options: PageOptions): SafeHtml 
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>${title} - Haystack</title>${STYLESHEETS.map(
+    <title>${pageTitle(title)}</title>${STYLESHEETS.map(
       (href) => html`
     <link rel="stylesheet" href="${href}">`,
     )}${(options.scripts ?? []).map(

@@ -23,7 +23,9 @@ const PROCESSING_LABEL = "Processing…";
 // What the status region says, and when. Each message is written ANNOUNCE_DELAY_MS after the
 // change that comes with it, such as the button's new label, because VoiceOver missed a status
 // message written in the same task as a change it was busy announcing (#56; plan, "Deleting
-// bookmarks"). The delete dialog's 100 ms is the delay that was tested.
+// bookmarks"). 100 ms is the delay that was tested then. The delete dialog has since moved to
+// 500 ms after focus moves (#107); no focus moves here, and how the processing state is
+// announced is being measured on CI, so the delay and the messages are kept here, easy to change.
 const ANNOUNCE_DELAY_MS = 100;
 const MESSAGES = {
   processing: "Looking up the page. This can take a few seconds.",
@@ -43,7 +45,7 @@ const TIMEOUT_MS = 10_000;
 
 /**
  * @typedef {{ kind: "go", link: string }
- *   | { kind: "rejected", error: string, keepValue: boolean }
+ *   | { kind: "rejected", error: string, keepValue: boolean, title: string }
  *   | { kind: "timeout" | "network" | "signedOut" | "unexpected" }} Outcome
  */
 
@@ -87,9 +89,10 @@ async function outcomeOf(response) {
     response.status === 400 &&
     isRecord(body) &&
     typeof body.error === "string" &&
-    typeof body.keepValue === "boolean"
+    typeof body.keepValue === "boolean" &&
+    typeof body.title === "string"
   ) {
-    return { kind: "rejected", error: body.error, keepValue: body.keepValue };
+    return { kind: "rejected", error: body.error, keepValue: body.keepValue, title: body.title };
   }
   return { kind: "unexpected" };
 }
@@ -121,19 +124,29 @@ function enhance(form, field, button, status) {
     }, ANNOUNCE_DELAY_MS);
   }
 
+  // The page's title without an error, to go back to when the error is cleared. A page that the
+  // server rendered with an error has no title without one, so it keeps its own.
+  const idleTitle = document.getElementById(ERROR_ID) === null ? document.title : null;
+
   // The rejected address's error, in the markup the server renders: an alert holding the
   // paragraph that the field's description points at, error first, then the hint. On its own
   // page the alert follows the heading, before the form; in the saved links page's card it comes
-  // before the hint.
-  /** @param {string | null} text */
-  function showError(text) {
+  // before the hint. The page's title changes with it, to the title the server gives the
+  // address form with an error, which the answer carries, and back when the error is cleared.
+  /** @param {{ text: string, title: string } | null} error */
+  function showError(error) {
     const existing = document.getElementById(ERROR_ID);
-    if (text === null) {
+    if (error === null) {
       existing?.closest(".alert")?.remove();
       field.removeAttribute("aria-invalid");
       field.setAttribute("aria-describedby", HINT_ID);
+      if (idleTitle !== null) {
+        document.title = idleTitle;
+      }
       return;
     }
+    const { text, title } = error;
+    document.title = title;
     if (existing === null) {
       const alert = document.createElement("div");
       alert.className = "alert";
@@ -174,7 +187,7 @@ function enhance(form, field, button, status) {
       if (!outcome.keepValue) {
         field.value = "";
       }
-      showError(outcome.error);
+      showError({ text: outcome.error, title: outcome.title });
       field.focus();
       return;
     }

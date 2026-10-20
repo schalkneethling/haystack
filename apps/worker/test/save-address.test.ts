@@ -787,7 +787,12 @@ describe("an answer in JSON, for the address form's script", () => {
   ])("rejects %s (400) with its error, and fetches nothing", async (_, url, error, keepValue) => {
     const response = await postAddress(url, JSON_ACCEPT);
     const text = await response.clone().text();
-    expect(await expectJsonAnswer(response, 400)).toEqual({ error, keepValue });
+    // The title is the one the address form's page has with an error, so the script can match it.
+    expect(await expectJsonAnswer(response, 400)).toEqual({
+      error,
+      keepValue,
+      title: "Check the address - Haystack",
+    });
     expect(text).not.toContain("secret-value");
     expect(fixture.requests).toHaveLength(0);
   });

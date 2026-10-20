@@ -25,7 +25,8 @@ import {
   withoutSensitiveCanonicalUrl,
 } from "@haystack/schemas";
 import type { Db } from "./db/client.ts";
-import { jsonResponse } from "./page.ts";
+import { ADDRESS_ERROR_TITLE } from "./address-form.ts";
+import { jsonResponse, pageTitle } from "./page.ts";
 import { type LookupFailure, lookUpPage } from "./page-lookup.ts";
 import { existingBookmark, rejectedAddressState, rejectedLinkPage, screenCapture } from "./save.ts";
 
@@ -43,6 +44,8 @@ export interface RejectedAddressAnswer {
   readonly error: string;
   /** Whether the typed value may stay in the field. A sensitive value never may. */
   readonly keepValue: boolean;
+  /** The page title the address form has with this error, as on the page the server renders. */
+  readonly title: string;
 }
 
 // Only the code is logged. The address and anything from the page are never logged, because an
@@ -117,7 +120,11 @@ export async function saveAddress(request: Request, db: Db, userId: string): Pro
     const state = rejectedAddressState(captured, screened.rejection);
     if (wantsJson(request) && state?.error !== undefined) {
       return jsonResponse(
-        { error: state.error, keepValue: state.value !== "" } satisfies RejectedAddressAnswer,
+        {
+          error: state.error,
+          keepValue: state.value !== "",
+          title: pageTitle(ADDRESS_ERROR_TITLE),
+        } satisfies RejectedAddressAnswer,
         400,
       );
     }
