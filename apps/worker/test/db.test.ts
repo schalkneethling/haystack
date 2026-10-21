@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 import { createTestHarness } from "wrangler";
+import { seedBookmark, seedEnrichment, seedEnrichmentFailure } from "./seed.ts";
 
 const server = createTestHarness({
   workers: [{ configPath: new URL("../wrangler.jsonc", import.meta.url) }],
@@ -24,15 +25,17 @@ async function insertUser(): Promise<string> {
 }
 
 describe("migrated database", () => {
-  it("contains the Milestone 1 tables", async () => {
+  it("contains the Milestone 1 and enrichment tables", async () => {
     const { DB } = await server.getWorker().getEnv();
     const { results } = await DB.prepare(
-      "SELECT name FROM sqlite_schema WHERE type = 'table' AND name IN ('users', 'sessions', 'auth_flows', 'bookmarks') ORDER BY name",
+      "SELECT name FROM sqlite_schema WHERE type = 'table' AND name IN ('users', 'sessions', 'auth_flows', 'bookmarks', 'enrichments', 'enrichment_failures') ORDER BY name",
     ).all();
 
     expect(results.map((row: { name: string }) => row.name)).toEqual([
       "auth_flows",
       "bookmarks",
+      "enrichment_failures",
+      "enrichments",
       "sessions",
       "users",
     ]);
@@ -83,5 +86,34 @@ describe("migrated database", () => {
       .bind(userId)
       .all();
     expect(bookmarks.results).toHaveLength(1);
+  });
+
+  it("deletes a bookmark's enrichments and failure records when the bookmark is deleted", async () => {
+    const { DB } = await server.getWorker().getEnv();
+    const userId = await insertUser();
+    const url = "https://example.com/enriched";
+    const bookmarkId = await seedBookmark(DB, userId, url, url);
+    const otherUrl = "https://example.com/kept";
+    const otherId = await seedBookmark(DB, userId, otherUrl, otherUrl);
+    for (const id of [bookmarkId, otherId]) {
+      await seedEnrichment(DB, id, 1);
+      await seedEnrichmentFailure(DB, id, 2, 1);
+    }
+    const rowsOf = async (id: string) => ({
+      enrichments: (
+        await DB.prepare("SELECT id FROM enrichments WHERE bookmark_id = ?").bind(id).all()
+      ).results.length,
+      failures: (
+        await DB.prepare("SELECT schema_version FROM enrichment_failures WHERE bookmark_id = ?")
+          .bind(id)
+          .all()
+      ).results.length,
+    });
+    expect(await rowsOf(bookmarkId)).toEqual({ enrichments: 1, failures: 1 });
+
+    await DB.prepare("DELETE FROM bookmarks WHERE id = ?").bind(bookmarkId).run();
+
+    expect(await rowsOf(bookmarkId)).toEqual({ enrichments: 0, failures: 0 });
+    expect(await rowsOf(otherId)).toEqual({ enrichments: 1, failures: 1 });
   });
 });
