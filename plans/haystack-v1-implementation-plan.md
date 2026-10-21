@@ -881,20 +881,51 @@ The deterministic check is part of Milestone 1.
 
 The deterministic list cannot recognize capability URLs that carry no telltale parameter, such as a private document share. Jev adds a probability for those. Because the question is whether a URL is safe to send to third parties, Jev must never see the raw URL.
 
-**Redaction.** A pure function, `describeUrlForJudgment(url, title)`, in `packages/schemas` produces the state sent to Jev: the scheme and host, the path with each segment that looks random (long, high in digits or mixed case, or otherwise not word-like) replaced by a placeholder describing its shape, and the query parameter and fragment parameter _names_ with a shape placeholder for each value. Values are never included. The captured page title is included, since it is useful evidence and is not a secret. For example:
+**Redaction (#121).** A pure function, `describeUrlForJudgment(url, title, declaresSensitiveCanonical)`, in `packages/schemas/src/describe-url-for-judgment.ts`, produces the state sent to Jev: the scheme and host, the path with each segment that is not word-like replaced by a placeholder describing its shape, and the query parameter and fragment parameter _names_ with a shape placeholder for each value. Values are never included, and neither are the user name and password. The captured page title is included, since it is useful evidence and is not a secret. It takes a parsed `URL`, as `detectSensitiveUrl` does, sends nothing anywhere, and does not change the URL. For example, a Google Docs share gives:
 
 ```json
 {
+  "scheme": "https",
   "host": "docs.google.com",
   "path": "/document/d/<random:44>/edit",
-  "query": { "usp": "<word:7>" },
-  "title": "Q3 planning (draft)"
+  "query": [{ "name": "usp", "value": "<word:7>" }],
+  "title": "Q3 planning (draft) - Google Docs"
 }
 ```
 
-The redaction must err toward masking. A test suite proves that no query value, fragment value, or random-looking path segment from a set of fixture URLs ever appears in the output.
+The output's keys:
 
-**The dropped canonical URL is evidence (#79).** When the page declared a canonical URL that `detectSensitiveUrl` flags, the state also says so, as `"declares_sensitive_canonical": true`, and the criteria describe it as a strong sign that the address works as a key. The canonical URL itself is never sent, in raw or redacted form. So `describeUrlForJudgment` takes the flag as well as the URL and the title.
+- **`scheme`** is the scheme without its colon, such as `https`.
+- **`host`** is the parser's host, kept as it is, because a host is not a secret. An internationalized host is therefore in punycode (`xn--bcher-kva.example`), and a port that is not the default one is included (`example.com:8443`).
+- **`path`** is the path with every segment that is not word-like masked. Empty segments are kept, so `/docs/` and `/docs` stay different. A kept segment is shown percent-decoded, so `Quarterly%20Report.pdf` reads as `Quarterly Report.pdf`.
+- **`query`** is a list of `{ "name", "value" }` pairs, in the URL's order, with repeated names kept. A list is used rather than an object, so repeated names survive and a name such as `__proto__` is only data. A name is kept, decoded, when it is word-like, and is a placeholder otherwise, because a long random key can be a secret too. A value is always a placeholder, even a word-like one, and a pair without `=` has the value `<empty>`.
+- **`fragment`** describes the fragment. The part before the fragment's first `?` is a `route` when it starts with `/` (or `!/`, the older hashbang form), and it is described like the path. It is `parameters` when it contains `=` or `&`, as in `#access_token=…&state=…`. Otherwise it is an `anchor`, such as a heading's id: a word-like anchor such as `#probabilistic-check-with-jev` is kept, because it is useful evidence, and any other is masked. The part after the first `?` is always `parameters`, so a hash route's query (`#/callback?code=…`) is read the way `detectSensitiveUrl` reads it.
+- **`title`** is the captured title, with every masked part of the URL in it replaced by that part's placeholder. A title can hold the URL itself: the save form falls back to the full address when a page has no title, and a browser can show an untitled page's address as its tab title. Such a title may also be cut to its cap partway through a value, so a title that ends with the start of a masked part has that ending replaced too. Masked parts shorter than four characters are not searched for, because they would match ordinary words (`?page=2` in "Page 2 of 10") and are too short to hold a secret.
+- **`declares_sensitive_canonical`** is `true` when the page declared a canonical URL that `detectSensitiveUrl` flagged (see below), and is absent otherwise.
+
+A key is absent when the URL has no such part: no `query` for a URL without parameters, no `fragment` for a URL without a fragment (or with only `#` or `#?`), and no `title` when the title is absent or empty.
+
+**The placeholder grammar.** A placeholder is `<empty>` for an empty value, or `<class:length>`. The length counts the decoded text's characters (Unicode code points). The class is the first of these that fits:
+
+- `digits`: only the digits 0 to 9, such as an id or a timestamp.
+- `word`: word-like, by the rule below. Only a value can get this class, because a word-like segment, name or anchor is kept as it is.
+- `hex`: only hexadecimal digits, all in one case, such as a hash or a signature.
+- `random`: anything else, from a token to a word with a non-ASCII letter.
+
+So a placeholder tells Jev how long a part is and which characters it uses, and nothing else. A kept part has only ASCII letters, digits, `-`, `_`, `.` and spaces, so it cannot be mistaken for a placeholder.
+
+**The word-like rule.** A part is word-like when, after percent-decoding, it reads as words a person chose, such as `document`, `edit`, `usp`, `X-Amz-Signature`, `index.html` or `how-to-use-css-grid-in-2026`. Each limit is there because random strings break it:
+
+- Only ASCII letters, digits, `-`, `_`, `.` and the space are allowed. Anything with `%`, `+`, `/`, `=`, `~` or a non-ASCII letter is masked, and base64 tokens usually have `+`, `/` or `=`.
+- The separators (`-`, `_`, `.` and the space) split the part into pieces. Each piece is letters, a number of up to four digits, or letters and such a number joined (`v2`, `es2023`, `4k`). Letters are lowercase (`grid`), capitalized (`Roadmap`), an acronym of up to four capitals (`API`), or one of these followed by capitalized words (`iPhone`, `SignedHeaders`). A random mix of cases, or of letters and digits, fails this, so a Google Docs id, a Dropbox id, a UUID and a Notion page's slug with its id are masked.
+- A piece has at most 20 characters, the whole part at most 80, and the whole part at most 8 digits. So a long token, a number of five or more digits, and a long number split by separators are masked.
+- No piece has more than four consonants in a row, counting `y` as a vowel. This catches many random lowercase strings, such as `xkqrzpmt`. A few real words fail it, such as `strengths` and `https`, and they are masked, which is the safe direction.
+
+The redaction errs toward masking: a borderline part is masked, because a lost word costs Jev a little evidence, while a secret that was sent cannot be taken back. Two limits remain. A short random string of lowercase letters, such as a meeting code like `abc-defg-hij`, passes the rule, because telling it from words would need a dictionary; it has little room for a secret, and the host and title give Jev more evidence than it does. And a secret that is itself word-like, such as a parameter name used as a token, is kept like any other word.
+
+The tests (`packages/schemas/test/describe-url-for-judgment.test.ts`) describe a set of fixture URLs: a Google Docs share, a Dropbox link, a pre-signed S3 URL, a Notion share, a magic sign-in link, an invitation link, a password reset link, a hash route carrying a token, a fragment of OAuth parameters, percent-encoded values, an internationalized host, and credentials in the URL. For each, the test reads the URL's query values, fragment values and credentials with a parser of its own, adds the path segments that must be masked, and searches the serialized output for each of them, as written and percent-decoded. It does the same with the address itself as the title, and with the address cut at every length as the title. It also checks that every value is a placeholder, and that everything else is kept word-like text or a placeholder. Tables cover the word-like rule and the placeholder grammar.
+
+**The dropped canonical URL is evidence (#79).** When the page declared a canonical URL that `detectSensitiveUrl` flags, the state also says so, as `"declares_sensitive_canonical": true`, and the criteria describe it as a strong sign that the address works as a key. The canonical URL itself is never sent, in raw or redacted form. So `describeUrlForJudgment` takes the flag as well as the URL and the title, and adds `"declares_sensitive_canonical": true` only when the flag is set.
 
 How the fact reaches the check: `withoutSensitiveCanonicalUrl` will also report whether it dropped a flagged URL, so each place that drops one (the popup, `GET /save` and `POST /save`) can record it. The popup passes the flag in the save URL. `GET /save` carries it forward as a hidden input, or sets it when it drops the URL itself, and `POST /save` stores it in `sensitive_canonical_dropped`, so the enrichment gate has it for a bookmark checked later. The flag is a few characters, so the popup never drops it to make the save URL fit. The Milestone 2 work decides the query key.
 
