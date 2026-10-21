@@ -41,6 +41,9 @@ interface Fixture {
   expected: UrlDescription;
   // The path segments that must be masked, as written in the URL.
   randomSegments: string[];
+  // Secrets inside a value, such as a token in an encoded redirect. Masking the whole value hides
+  // them in the description. A title that holds one on its own is not caught (#136).
+  innerSecrets?: string[];
 }
 
 const fixtures: Fixture[] = [
@@ -204,7 +207,8 @@ const fixtures: Fixture[] = [
       ],
       title: "Shared plans",
     },
-    randomSegments: ["Projekt%20Pl%C3%A4ne", "Projekt Pläne", "nested-token-7Hq2"],
+    randomSegments: ["Projekt%20Pl%C3%A4ne", "Projekt Pläne"],
+    innerSecrets: ["nested-token-7Hq2"],
   },
   {
     name: "an internationalized host",
@@ -235,8 +239,13 @@ const fixtures: Fixture[] = [
 
 // The secrets of a fixture in every form, longer than two characters. Shorter ones (`dl=0`)
 // would match the digits of a placeholder's length, so the placeholder check covers them.
-function secretsOf(fixture: Fixture): string[] {
-  const raw = [...valuesIn(new URL(fixture.url)), ...fixture.randomSegments];
+// `whole` leaves out the secrets inside a value.
+function secretsOf(fixture: Fixture, whole = false): string[] {
+  const raw = [
+    ...valuesIn(new URL(fixture.url)),
+    ...fixture.randomSegments,
+    ...(whole ? [] : (fixture.innerSecrets ?? [])),
+  ];
   return [...new Set(raw.flatMap(forms))].filter((secret) => secret.length > 2);
 }
 
@@ -282,25 +291,54 @@ describe("describeUrlForJudgment", () => {
       }
     });
 
-    it("masks the URL's values in a title that is the address itself", () => {
-      // The save form's fallback when a page has no title is the full address.
-      const serialized = JSON.stringify(describeUrl(fixture.url, fixture.url));
+    // The save form's fallback when a page has no title is the full address, and a browser can
+    // show an untitled page's address, without its scheme, as its tab title.
+    const decoded = decodeURIComponent(fixture.url);
+    it.each([
+      ["as written", fixture.url],
+      ["percent-decoded", decoded],
+      ["without its scheme", fixture.url.replace(/^https:\/\//, "")],
+      ["percent-decoded and without its scheme", decoded.replace(/^https:\/\//, "")],
+      ["in parentheses after other words", `Saved link (${fixture.url})`],
+    ])("leaves out a title that is the address %s", (_, title) => {
+      const description = describeUrl(fixture.url, title);
+      expect("title" in description).toBe(false);
+      const serialized = JSON.stringify(description);
       for (const secret of secretsOf(fixture)) {
         expect(serialized, secret).not.toContain(secret);
       }
     });
 
-    it("masks the end of a value in a title cut off partway through it", () => {
+    it("leaves out a title that is the address cut off anywhere past its host", () => {
+      // The first `/` after the scheme ends the host. A title that stops at that `/` holds only
+      // the site's address, so it is kept like a title that names the site.
+      const hostEnd = fixture.url.indexOf("/", "https://".length);
       for (let length = 1; length <= fixture.url.length; length += 1) {
-        const title = describeUrl(fixture.url, fixture.url.slice(0, length)).title ?? "";
-        for (const secret of secretsOf(fixture)) {
-          expect(title, secret).not.toContain(secret);
-          for (let prefix = 4; prefix <= secret.length; prefix += 1) {
-            expect(title.endsWith(secret.slice(0, prefix)), `${title} ends with ${secret}`).toBe(
-              false,
-            );
+        const title = fixture.url.slice(0, length);
+        const description = describeUrl(fixture.url, title);
+        if (length > hostEnd + 1) {
+          expect("title" in description, title).toBe(false);
+        } else if (length <= "https://".length) {
+          expect(description.title).toBe(title);
+        } else {
+          // Within the host, which holds credentials when the URL has them.
+          const kept = description.title ?? "";
+          for (const secret of secretsOf(fixture)) {
+            for (let prefix = 4; prefix <= secret.length; prefix += 1) {
+              expect(kept.includes(secret.slice(0, prefix)), `${kept} has ${secret}`).toBe(false);
+            }
           }
         }
+      }
+    });
+
+    it("masks every value, as written or decoded, in a title of ordinary text", () => {
+      // Each secret of four or more characters, in every form, as words in a title.
+      const secrets = secretsOf(fixture, true).filter((secret) => secret.length >= 4);
+      const description = describeUrl(fixture.url, `Notes: ${secrets.join(" · ")}`);
+      expect(description.title).toBeDefined();
+      for (const secret of secrets) {
+        expect(description.title, secret).not.toContain(secret);
       }
     });
   });
@@ -316,6 +354,8 @@ describe("describeUrlForJudgment", () => {
     ["capitalized words", "Albert_Einstein", "/Albert_Einstein"],
     ["an acronym", "API", "/API"],
     ["camel case", "iPhone", "/iPhone"],
+    ["camel case with a short first word", "McDonald", "/McDonald"],
+    ["capitalized words run together", "SignedHeaders", "/SignedHeaders"],
     ["letters and a short number", "es2023", "/es2023"],
     ["a short number and letters", "4k", "/4k"],
     ["a year", "2026", "/2026"],
@@ -323,7 +363,7 @@ describe("describeUrlForJudgment", () => {
     ["a leading separator", ".well-known", "/.well-known"],
     ["an encoded space between words", "Quarterly%20Report.pdf", "/Quarterly Report.pdf"],
     ["an encoded letter", "%64ocument", "/document"],
-    // Telling a short lowercase code from words would need a dictionary, so it is kept.
+    // Telling a short lowercase code from words would need a dictionary, so it is kept (#135).
     ["a short lowercase code", "abc-defg-hij", "/abc-defg-hij"],
   ])("keeps %s", (_, segment, path) => {
     expect(describeUrl(`https://example.com/${segment}`).path).toBe(path);
@@ -340,6 +380,11 @@ describe("describeUrlForJudgment", () => {
     ["uppercase hexadecimal", "DEADBEEF", "/<hex:8>"],
     ["an acronym of more than four capitals", "README", "/<random:6>"],
     ["random case", "aBcDeF", "/<random:6>"],
+    ["alternating case", "AbCdEf", "/<random:6>"],
+    ["alternating case in pairs", "MoNaLiSaPo", "/<random:10>"],
+    ["alternating case from a capital", "XaZeKiQoWu", "/<random:10>"],
+    ["alternating case and a number", "AbCd1234", "/<random:8>"],
+    ["an ampersand", "a&Zx9Kq2Lm", "/<random:10>"],
     ["a piece longer than 20 characters", "internationalizations", "/<random:21>"],
     ["a UUID", "7f3c9a2e-1b4d-4e8a-9c6f-2d1e0b3a5c7f", "/<random:36>"],
     ["a non-ASCII letter", "caf%C3%A9", "/<random:4>"],
@@ -509,8 +554,63 @@ describe("describeUrlForJudgment", () => {
     ).toBe("<random:15> <word:6>");
   });
 
-  it("leaves masked parts shorter than four characters in the title", () => {
+  it("leaves masked parts shorter than four characters in a title of ordinary text", () => {
     expect(describeUrl("https://example.com/?page=2", "Page 2 of 10").title).toBe("Page 2 of 10");
+  });
+
+  it("masks a whole value in a title even where another value starts right after it", () => {
+    // Every character of `a` is masked. `ZW` stays: it is only the start of `b`, and in a title
+    // of ordinary text only whole parts are masked.
+    const title = describeUrl(
+      "https://example.com/?a=SECRET1XY&b=XYZWQRSTUV",
+      "Note SECRET1XYZW",
+    ).title;
+    expect(title).toBe("Note <random:9>ZW");
+  });
+
+  it("keeps words in a title that only start like a value", () => {
+    expect(describeUrl("https://example.com/?q=how+to+cook", "Results for how to").title).toBe(
+      "Results for how to",
+    );
+    expect(describeUrl("https://example.com/?q=how+to+cook", "Results for how to cook").title).toBe(
+      "Results for <word:11>",
+    );
+  });
+
+  it.each([
+    ["the address", "https://example.com/?pin=123", "https://example.com/?pin=123"],
+    [
+      "the address in other words",
+      "https://example.com/?pin=123",
+      "See https://example.com/?pin=123.",
+    ],
+    ["the address without its scheme", "https://example.com/?pin=123", "example.com/?pin=123"],
+    ["the address in capitals", "https://example.com/?pin=123", "HTTPS://EXAMPLE.COM/?pin=123"],
+    ["a Unicode host", "https://bücher.example/r?pin=123", "https://bücher.example/r?pin=123"],
+    ["the address cut off", "https://example.com/r?pin=123", "https://example.com/r?pi"],
+  ])("leaves out a title that holds %s, short values included", (_, url, title) => {
+    const description = describeUrl(url, title);
+    expect("title" in description).toBe(false);
+    expect(JSON.stringify(description)).not.toContain("123");
+  });
+
+  it.each([
+    ["the site's name", "example.com"],
+    ["the site's name in a sentence", "Welcome to example.com"],
+    ["another site's address", "Moved to https://example.org/?pin=123"],
+  ])("keeps a title that holds %s", (_, title) => {
+    expect(describeUrl("https://example.com/a?pin=123", title).title).toBe(title);
+  });
+
+  it.each([
+    "file:///etc/passwd",
+    "blob:https://example.com/1Xk9aBcD",
+    "mailto:alice@example.com",
+    "data:text/plain,secret",
+    "ftp://example.com/file",
+    "javascript:alert(1)",
+  ])("throws for the non-http URL %s", (url) => {
+    expect(() => describeUrl(url)).toThrow(TypeError);
   });
 
   it("does not change the URL it is given", () => {
