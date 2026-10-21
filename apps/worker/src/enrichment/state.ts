@@ -12,8 +12,10 @@ export interface EnrichmentStateInputs {
   sensitivityAcknowledgedAt: number | null;
   // The schema version of each of the bookmark's enrichments, in any order.
   enrichmentVersions: readonly number[];
-  // The bookmark's failure record at the current schema version, if it has one.
+  // The bookmark's failure record at `failureVersion`, if it has one.
   failure: { attempts: number } | null;
+  // The schema version the failure record was read at. It must be the current one.
+  failureVersion: number;
 }
 
 /** The configuration the state depends on. */
@@ -26,16 +28,26 @@ export interface EnrichmentStatePolicy {
   attemptLimit: number;
 }
 
-/** The first state in the plan's table whose condition the bookmark meets. */
+/**
+ * The first state in the plan's table whose condition the bookmark meets. Throws when the
+ * inputs were read at another schema version, because the bookmark's failure record at this
+ * one would be missing, and it could never be Failed.
+ */
 export function deriveEnrichmentState(
   {
     sensitivityNoul,
     sensitivityAcknowledgedAt,
     enrichmentVersions,
     failure,
+    failureVersion,
   }: EnrichmentStateInputs,
   { schemaVersion, sensitiveWarnThreshold, attemptLimit }: EnrichmentStatePolicy,
 ): EnrichmentState {
+  if (failureVersion !== schemaVersion) {
+    throw new Error(
+      `Enrichment state inputs were read at schema version ${failureVersion}, not ${schemaVersion}`,
+    );
+  }
   // A bookmark that was never checked is not Held. The enrichment module checks it first.
   if (
     sensitivityNoul !== null &&

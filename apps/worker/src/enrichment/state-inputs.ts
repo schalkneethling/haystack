@@ -8,14 +8,57 @@ export interface BookmarkEnrichmentStateInputs extends EnrichmentStateInputs {
   bookmarkId: string;
 }
 
-interface CollectedInputs extends BookmarkEnrichmentStateInputs {
-  enrichmentVersions: number[];
+/**
+ * A row of a query that joins each bookmark to its enrichments, and to its failure record at
+ * one schema version. A bookmark with no enrichment has one row, with `enrichmentVersion` NULL.
+ */
+export interface StateInputRow {
+  bookmarkId: string;
+  sensitivityNoul: number | null;
+  sensitivityAcknowledgedAt: number | null;
+  enrichmentVersion: number | null;
+  failedAttempts: number | null;
+}
+
+type CollectedInputs<Row extends StateInputRow> = Omit<
+  Row,
+  "enrichmentVersion" | "failedAttempts"
+> &
+  BookmarkEnrichmentStateInputs & { enrichmentVersions: number[] };
+
+/**
+ * One set of inputs per bookmark, in the order the rows first name each bookmark.
+ * `failureVersion` is the schema version the query joined the failure record at. Any other
+ * column the query selected, such as the sweep's backoff columns, is kept from the bookmark's
+ * first row, so it must have one value per bookmark.
+ */
+export function collectStateInputs<Row extends StateInputRow>(
+  rows: readonly Row[],
+  failureVersion: number,
+): CollectedInputs<Row>[] {
+  const collected = new Map<string, CollectedInputs<Row>>();
+  for (const { enrichmentVersion, failedAttempts, ...columns } of rows) {
+    let inputs = collected.get(columns.bookmarkId);
+    if (inputs === undefined) {
+      inputs = {
+        ...columns,
+        enrichmentVersions: [],
+        failure: failedAttempts === null ? null : { attempts: failedAttempts },
+        failureVersion,
+      };
+      collected.set(columns.bookmarkId, inputs);
+    }
+    if (enrichmentVersion !== null) {
+      inputs.enrichmentVersions.push(enrichmentVersion);
+    }
+  }
+  return [...collected.values()];
 }
 
 /**
  * The state inputs of each of the user's bookmarks, oldest first, in one query. Only the
- * failure record at `schemaVersion` is read, so pass the same version to
- * deriveEnrichmentState.
+ * failure record at `schemaVersion` is read, and deriveEnrichmentState refuses the inputs
+ * with any other version.
  */
 export async function readEnrichmentStateInputs(
   db: Db,
@@ -43,22 +86,5 @@ export async function readEnrichmentStateInputs(
     )
     .where(eq(bookmarks.userId, userId))
     .orderBy(asc(bookmarks.createdAt), asc(bookmarks.id), asc(enrichments.schemaVersion));
-  const collected = new Map<string, CollectedInputs>();
-  for (const row of rows) {
-    let inputs = collected.get(row.bookmarkId);
-    if (inputs === undefined) {
-      inputs = {
-        bookmarkId: row.bookmarkId,
-        sensitivityNoul: row.sensitivityNoul,
-        sensitivityAcknowledgedAt: row.sensitivityAcknowledgedAt,
-        enrichmentVersions: [],
-        failure: row.failedAttempts === null ? null : { attempts: row.failedAttempts },
-      };
-      collected.set(row.bookmarkId, inputs);
-    }
-    if (row.enrichmentVersion !== null) {
-      inputs.enrichmentVersions.push(row.enrichmentVersion);
-    }
-  }
-  return [...collected.values()];
+  return collectStateInputs(rows, schemaVersion);
 }

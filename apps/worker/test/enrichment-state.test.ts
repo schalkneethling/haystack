@@ -19,6 +19,7 @@ function state(inputs: Partial<EnrichmentStateInputs>) {
       sensitivityAcknowledgedAt: null,
       enrichmentVersions: [],
       failure: null,
+      failureVersion: policy.schemaVersion,
       ...inputs,
     },
     policy,
@@ -26,6 +27,14 @@ function state(inputs: Partial<EnrichmentStateInputs>) {
 }
 
 describe("deriveEnrichmentState", () => {
+  it("refuses inputs read at another schema version", () => {
+    // The failure record at version 1 says nothing about version 2, so with it the bookmark
+    // could never be Failed.
+    expect(() => state({ failure: { attempts: 3 }, failureVersion: 1 })).toThrow(
+      "Enrichment state inputs were read at schema version 1, not 2",
+    );
+  });
+
   describe("held", () => {
     it("is a noul above the threshold without an acknowledgment", () => {
       expect(state({ sensitivityNoul: 0.9 })).toBe("held");
@@ -65,6 +74,7 @@ describe("deriveEnrichmentState", () => {
         sensitivityAcknowledgedAt: null,
         enrichmentVersions: [2],
         failure: null,
+        failureVersion: 2,
       };
       expect(deriveEnrichmentState(inputs, policy)).toBe("current");
       expect(deriveEnrichmentState(inputs, { ...policy, sensitiveWarnThreshold: 0.5 })).toBe(

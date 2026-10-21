@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
 import { createTestHarness } from "wrangler";
 import { createDb } from "../src/db/client.ts";
-import { readEnrichmentStateInputs } from "../src/enrichment/state-inputs.ts";
+import { collectStateInputs, readEnrichmentStateInputs } from "../src/enrichment/state-inputs.ts";
 import {
   seedBookmark,
   seedEnrichment,
@@ -59,6 +59,7 @@ describe("readEnrichmentStateInputs", () => {
         sensitivityAcknowledgedAt: null,
         enrichmentVersions: [],
         failure: null,
+        failureVersion: SCHEMA_VERSION,
       },
     ]);
   });
@@ -112,5 +113,45 @@ describe("readEnrichmentStateInputs", () => {
 
   it("reads nothing for a user with no bookmarks", async () => {
     expect(await read()).toEqual([]);
+  });
+});
+
+describe("collectStateInputs", () => {
+  // The sweep's query selects the backoff columns as well.
+  const row = {
+    bookmarkId: "bookmark-1",
+    sensitivityNoul: 0.2,
+    sensitivityAcknowledgedAt: null,
+    enrichmentVersion: 1,
+    failedAttempts: 0,
+    consecutiveFailures: 4,
+  };
+
+  it("keeps the other columns the query selected, once per bookmark", () => {
+    expect(
+      collectStateInputs(
+        [row, { ...row, enrichmentVersion: 2 }, { ...row, bookmarkId: "bookmark-2" }],
+        3,
+      ),
+    ).toEqual([
+      {
+        bookmarkId: "bookmark-1",
+        sensitivityNoul: 0.2,
+        sensitivityAcknowledgedAt: null,
+        enrichmentVersions: [1, 2],
+        failure: { attempts: 0 },
+        failureVersion: 3,
+        consecutiveFailures: 4,
+      },
+      {
+        bookmarkId: "bookmark-2",
+        sensitivityNoul: 0.2,
+        sensitivityAcknowledgedAt: null,
+        enrichmentVersions: [1],
+        failure: { attempts: 0 },
+        failureVersion: 3,
+        consecutiveFailures: 4,
+      },
+    ]);
   });
 });
