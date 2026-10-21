@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { describeUrlForJudgment, type UrlDescription } from "../src/index.ts";
+import {
+  CAPTURE_CAPS,
+  describeUrlForJudgment,
+  truncate,
+  type UrlDescription,
+} from "../src/index.ts";
 
 function describeUrl(url: string, title?: string, flag = false): UrlDescription {
   return describeUrlForJudgment(new URL(url), title, flag);
@@ -309,28 +314,33 @@ describe("describeUrlForJudgment", () => {
       }
     });
 
-    it("leaves out a title that is the address cut off anywhere past its host", () => {
-      // The first `/` after the scheme ends the host. A title that stops at that `/` holds only
-      // the site's address, so it is kept like a title that names the site.
-      const hostEnd = fixture.url.indexOf("/", "https://".length);
-      for (let length = 1; length <= fixture.url.length; length += 1) {
-        const title = fixture.url.slice(0, length);
-        const description = describeUrl(fixture.url, title);
-        if (length > hostEnd + 1) {
-          expect("title" in description, title).toBe(false);
-        } else if (length <= "https://".length) {
-          expect(description.title).toBe(title);
-        } else {
-          // Within the host, which holds credentials when the URL has them.
-          const kept = description.title ?? "";
-          for (const secret of secretsOf(fixture)) {
-            for (let prefix = 4; prefix <= secret.length; prefix += 1) {
-              expect(kept.includes(secret.slice(0, prefix)), `${kept} has ${secret}`).toBe(false);
+    it.each([
+      ["with its scheme", fixture.url],
+      ["without its scheme", fixture.url.replace(/^https:\/\//, "")],
+    ])(
+      "leaves out a title that is the address %s, cut off anywhere past its host",
+      (_, address) => {
+        // The first `/` after the scheme ends the host, which holds credentials when the URL has
+        // them. Up to there, a cut can only keep the start of the host or of a short credential.
+        const schemeLength = address.startsWith("https://") ? "https://".length : 0;
+        const hostEnd = address.indexOf("/", schemeLength);
+        for (let length = 1; length <= address.length; length += 1) {
+          const title = address.slice(0, length);
+          const description = describeUrl(fixture.url, title);
+          if (length > hostEnd) {
+            expect("title" in description, title).toBe(false);
+          } else {
+            // The scheme is no secret, though a value can start with it.
+            const kept = (description.title ?? "").slice(schemeLength);
+            for (const secret of secretsOf(fixture)) {
+              for (let prefix = 4; prefix <= secret.length; prefix += 1) {
+                expect(kept.includes(secret.slice(0, prefix)), `${kept} has ${secret}`).toBe(false);
+              }
             }
           }
         }
-      }
-    });
+      },
+    );
 
     it("masks every value, as written or decoded, in a title of ordinary text", () => {
       // Each secret of four or more characters, in every form, as words in a title.
@@ -541,9 +551,9 @@ describe("describeUrlForJudgment", () => {
   });
 
   it("masks credentials where the title has them", () => {
-    expect(describeUrl("https://alice:hunter2@example.com/", "alice:hunter2 at work").title).toBe(
-      "<word:5>:<word:7> at work",
-    );
+    expect(
+      describeUrl("https://alice:hunter2@example.com/", "alice signed in with hunter2").title,
+    ).toBe("<word:5> signed in with <word:7>");
   });
 
   it("masks the longest part first, and never a part inside a placeholder", () => {
@@ -592,6 +602,74 @@ describe("describeUrlForJudgment", () => {
     const description = describeUrl(url, title);
     expect("title" in description).toBe(false);
     expect(JSON.stringify(description)).not.toContain("123");
+  });
+
+  const wwwUrl = "https://www.example.com/x?pin=123&token=Zx9Kq2Lm8Np4Rt6Vw3Yb5";
+  it.each([
+    ["without www.", wwwUrl, "example.com/x?pin=123&token=Zx9Kq2Lm8Np4Rt6Vw3Yb5"],
+    ["with www. added", "https://example.com/x?pin=123", "www.example.com/x?pin=123"],
+    ["on the mobile host", wwwUrl, "m.example.com/x?pin=123"],
+    [
+      "from the mobile host on the main one",
+      "https://m.example.com/x?pin=123",
+      "example.com/x?pin=123",
+    ],
+    ["without its port", "https://example.com:8443/x?pin=123", "example.com/x?pin=123"],
+    ["with a port added", wwwUrl, "www.example.com:443/x?pin=123"],
+    ["with a trailing dot on the host", wwwUrl, "https://www.example.com./x?pin=123"],
+    ["glued to a key", wwwUrl, "url=https://www.example.com/x?pin=123"],
+    ["glued to a label", wwwUrl, "Link:https://www.example.com/x?pin=123"],
+    ["as a Markdown link", wwwUrl, "[doc](https://www.example.com/x?pin=123)"],
+    [
+      "with an IPv6 host and no scheme",
+      "http://[2001:db8::1]:8080/x?pin=123",
+      "[2001:db8::1]:8080/x?pin=123",
+    ],
+    ["with only a fragment after the host", "https://example.com/#pin=123", "example.com#pin=123"],
+    ["on another subdomain", "https://zoom.us/j/1?pin=123", "https://us02web.zoom.us/j/1?pin=123"],
+    [
+      "with a percent-encoded host",
+      "https://example.com/x?pin=123",
+      "https://%65xample.com/x?pin=123",
+    ],
+    [
+      "with a backslash for the slash",
+      "https://example.com/x?pin=123",
+      "https://example.com\\x?pin=123",
+    ],
+  ])("leaves out a title that holds the address %s", (_, url, title) => {
+    const description = describeUrl(url, title);
+    expect("title" in description).toBe(false);
+    expect(JSON.stringify(description)).not.toContain("123");
+  });
+
+  it("leaves out a title that is the start of the credentials, without the scheme", () => {
+    const url = "https://alice:hunter2-Secret@intranet.example.com/wiki/Home";
+    expect("title" in describeUrl(url, "alice:hunter2-Sec")).toBe(false);
+    expect("title" in describeUrl(url, "Signed in as alice:hunter2-Sec")).toBe(false);
+    expect("title" in describeUrl(url, "(alic")).toBe(false);
+  });
+
+  it("masks the start of a value where a title at its cap was cut inside it", () => {
+    const fixture = fixtures.find(({ name }) => name === "a magic sign-in link");
+    if (fixture === undefined) {
+      throw new Error("The magic sign-in link fixture is missing");
+    }
+    const token = new URL(fixture.url).searchParams.get("token") ?? "";
+    const full = `Sign in to Example. Your one-time sign-in code for this session, which you can also paste into the app if the link does not open, is shown here for your convenience: ${token}`;
+    const title = truncate(full, CAPTURE_CAPS.title);
+    expect(title.length).toBe(CAPTURE_CAPS.title);
+    const kept = title.slice(0, title.indexOf("eyJ"));
+    expect(describeUrl(fixture.url, title).title).toBe(`${kept}<random:80>`);
+  });
+
+  it("masks the start of a value at the end of a title one short of its cap", () => {
+    // `truncate` stops one code unit short when the cut would split a surrogate pair.
+    const title = `${"😀".repeat(96)} Zx9Kq2`;
+    expect(title.length).toBe(CAPTURE_CAPS.title - 1);
+    expect(describeUrl("https://example.com/?t=Zx9Kq2Lm8Np4", title).title).toBe(
+      `${"😀".repeat(96)} <random:12>`,
+    );
   });
 
   it.each([

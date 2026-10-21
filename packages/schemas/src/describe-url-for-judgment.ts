@@ -5,6 +5,7 @@
 // placeholder, and so does every path segment, parameter name and anchor that is not word-like.
 // A borderline part is masked, because a lost word costs Jev some evidence, while a kept secret
 // cannot be taken back.
+import { CAPTURE_CAPS } from "./capture-payload.ts";
 
 /**
  * A query or fragment parameter. The name is kept when it is word-like and is a placeholder
@@ -58,7 +59,9 @@ export interface UrlDescription {
 //   three letters (`iPhone`, `SignedHeaders`, `McDonald`). A random mix of cases or of letters
 //   and digits, as in `1aBcD9xQ`, `k3j9x2m1` or `AbCdEf`, fails this. Requiring three letters
 //   in each later word is what masks alternating case: with two, about 11 in 100 random
-//   8-letter mixed-case strings passed, and with three, about 5 in 100 do.
+//   8-letter mixed-case strings passed, and with three, about 5 in 100 do. The rule masks
+//   `LinkedIn` and `OpenAI`, and the piece rule masks `Q3Report`, on purpose: loosening it to
+//   keep such names would keep random tokens too.
 // - A piece has at most 20 characters, the whole part at most 80, and the whole part at most 8
 //   digits, so a long token, a long number and a number split by separators are masked.
 // - No piece has more than four consonants in a row (`y` counts as a vowel), which catches many
@@ -243,14 +246,16 @@ function describeFragment(fragment: string, masked: Masked): DescribedFragment |
 // has no title, and a browser can show an untitled page's address as its tab title. Such a title
 // may also be cut to its cap partway through a value. Masking it piece by piece would mean
 // reading it as a URL a second time, short values such as `?pin=123` included, and it would
-// still tell Jev nothing the description does not. So a title with a word that looks like the
-// address is left out.
+// still tell Jev nothing the description does not. So a title that holds the address is left
+// out.
 //
-// Any other title is ordinary text, and only whole masked parts of four or more characters are
-// replaced in it. A shorter part would match ordinary words (`?page=2` in "Page 2 of 10"), and
-// the start of a part would match a word that merely begins the same way (`?q=how+to+cook` in
-// "Results for how to"). A secret that is in the title but not, whole, in the URL, such as a
-// token inside an encoded redirect value, is not caught (#136).
+// Any other title is ordinary text, and only masked parts of four or more characters are
+// replaced in it. A shorter part would match ordinary words (`?page=2` in "Page 2 of 10"). Only
+// whole parts are replaced, because the start of a part would match a word that merely begins
+// the same way (`?q=how+to+cook` in "Results for how to"). The one exception is the end of a
+// title at its cap, which may have been cut partway through a part. A secret that is in the
+// title but not, whole, in the URL, such as a token inside an encoded redirect value, is not
+// caught (#136).
 
 const TITLE_MATCH_MIN_LENGTH = 4;
 
@@ -258,60 +263,130 @@ const TITLE_MATCH_MIN_LENGTH = 4;
 // https://….". Trimming them only shortens a word, so the start of the address stays its start.
 const WRAPPING_PUNCTUATION = /^[("'<[]+|[)"'>\],.;:!?]+$/g;
 
-const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
+// A host, an IPv6 address in brackets, or a run of text that could be one, with an optional
+// port, right before the `/`, `?` or `#` that starts a path, query or fragment. The URL parser
+// reads `\` as `/` in a web address, so it counts too, and `%` is included because the parser
+// decodes a percent-encoded host.
+const HOST_BEFORE_PATH = /(\[[0-9A-Fa-f:.]+\]|[\p{L}\p{N}%._-]+)(?::[0-9]*)?(?=[/?#\\])/gu;
 
-// A word looks like the address when it is either of these:
-//
-// - The start of the address as the parser writes it, or percent-decoded. With the scheme, the
-//   word must go past `https://`. Without it, the word must go past the host, so that a title
-//   that only names the site ("example.com") is still a title.
-// - An address with the same host and something after it, read as an https address when it has
-//   no scheme. This covers a form the first test can't compare, such as an internationalized
-//   host in Unicode (`bücher.example/…`) or a host in capitals.
-function looksLikeTheAddress(word: string, url: URL): boolean {
-  const schemeLength = url.protocol.length + 2;
-  for (const form of [url.href, percentDecoded(url.href)]) {
-    if (word.length > schemeLength && form.startsWith(word)) {
-      return true;
-    }
-    const withoutScheme = form.slice(schemeLength);
-    const hostEnd = withoutScheme.indexOf(url.host) + url.host.length;
-    if (word.length > hostEnd && withoutScheme.startsWith(word)) {
+// The host as a person may write it: without the trailing dot of a fully qualified name, and
+// without a leading `www.` or `m.`, which many sites serve the same pages under.
+function siteOf(hostname: string): string {
+  return hostname.replace(/\.$/, "").replace(/^(?:www|m)\./, "");
+}
+
+// Whether two sites are the same, or one is a subdomain of the other, as `us02web.zoom.us` is
+// of `zoom.us`. The parent must have a dot, so that a bare word such as `com` is not taken for
+// every `.com` site.
+function sameSite(a: string, b: string): boolean {
+  const isWithin = (child: string, parent: string) =>
+    parent.includes(".") && child.endsWith(`.${parent}`);
+  return a === b || isWithin(a, b) || isWithin(b, a);
+}
+
+// Whether the title holds the URL's host, or a subdomain or parent of it, followed by a path,
+// query or fragment, anywhere in it, so an address glued to other text (`url=https://…`,
+// `[doc](https://…)`) counts too. Each candidate is read by the URL parser, so a host in
+// capitals, in Unicode or percent-encoded compares equal to the parser's own, and the port is
+// ignored. A host on its own ("example.com", "Welcome to example.com") only names the site, so
+// such a title is still a title.
+function holdsTheHost(title: string, url: URL): boolean {
+  const site = siteOf(url.hostname);
+  for (const [, candidate] of title.matchAll(HOST_BEFORE_PATH)) {
+    const parsed = URL.parse(`https://${candidate}/`);
+    if (parsed !== null && sameSite(siteOf(parsed.hostname), site)) {
       return true;
     }
   }
-  const parsed = URL.parse(HAS_SCHEME.test(word) ? word : `https://${word}`);
+  return false;
+}
+
+// Whether a word is the start of the address, cut before the host's end, where holdsTheHost
+// can't see it: a word from the scheme on that goes past `https://`. Without the scheme, the
+// start of the address is the credentials, when the URL has them, and a word counts once it
+// goes past the user name, so a word that is only the user name is masked like any other part.
+function startsTheAddress(word: string, url: URL): boolean {
+  const schemeLength = url.protocol.length + 2;
+  const schemeStart = word.toLowerCase().indexOf(`${url.protocol}//`);
+  if (schemeStart !== -1) {
+    const fromScheme = word.slice(schemeStart).replace(WRAPPING_PUNCTUATION, "");
+    if (fromScheme.length > schemeLength && url.href.startsWith(fromScheme)) {
+      return true;
+    }
+  }
+  const trimmed = word.replace(WRAPPING_PUNCTUATION, "");
+  return trimmed.length > url.username.length && startsTheCredentials(trimmed, url);
+}
+
+// Whether text is the start of the URL's credentials, as the parser writes them, without the
+// scheme. A URL without credentials has none to start.
+function startsTheCredentials(text: string, url: URL): boolean {
+  if (url.username === "" && url.password === "") {
+    return false;
+  }
+  return url.href.slice(url.protocol.length + 2).startsWith(text);
+}
+
+// A whole title of four or more characters that starts the credentials is the address cut
+// inside them, even before it goes past the user name.
+function holdsTheAddress(title: string, url: URL): boolean {
+  const trimmed = title.trim().replace(WRAPPING_PUNCTUATION, "");
   return (
-    parsed !== null &&
-    parsed.host === url.host &&
-    (parsed.pathname !== "/" || parsed.search !== "" || parsed.hash !== "")
+    holdsTheHost(title, url) ||
+    title.split(/\s+/).some((word) => startsTheAddress(word, url)) ||
+    (trimmed.length >= TITLE_MATCH_MIN_LENGTH && startsTheCredentials(trimmed, url))
   );
 }
 
-function holdsTheAddress(title: string, url: URL): boolean {
-  return title
-    .split(/\s+/)
-    .map((word) => word.replace(WRAPPING_PUNCTUATION, ""))
-    .some((word) => word !== "" && looksLikeTheAddress(word, url));
+// A title is at its cap when it is as long as CAPTURE_CAPS.title allows, or one code unit
+// shorter, which is where `truncate` stops when the cut would split a surrogate pair.
+function isAtCap(title: string): boolean {
+  return title.length >= CAPTURE_CAPS.title - 1;
 }
 
-// The title with every whole masked part of four or more characters replaced by its placeholder.
-// The title is read once from the start, and at each position the longest masked part found
-// there is replaced, so a part inside a longer one, or inside a placeholder, is never matched.
+type MaskedPart = readonly [text: string, shape: string];
+
+// The longest masked part at this position, as its length and placeholder. In a title at its
+// cap, the rest of the title also matches when it is the start of a masked part, since the cut
+// may have fallen inside that part. That match reaches the end, so nothing is longer, and a
+// whole part of the same length is preferred, because its placeholder describes the text.
+function matchAt(
+  title: string,
+  index: number,
+  parts: readonly MaskedPart[],
+  cut: boolean,
+): readonly [length: number, shape: string] | undefined {
+  const rest = title.length - index;
+  if (cut && rest >= TITLE_MATCH_MIN_LENGTH) {
+    const ending = title.slice(index);
+    const reachesEnd =
+      parts.find(([text]) => text === ending) ?? parts.find(([text]) => text.startsWith(ending));
+    if (reachesEnd !== undefined) {
+      return [rest, reachesEnd[1]];
+    }
+  }
+  const part = parts.find(([text]) => title.startsWith(text, index));
+  return part === undefined ? undefined : [part[0].length, part[1]];
+}
+
+// The title with its masked parts replaced by their placeholders. The title is read once from
+// the start, and at each position the longest match is replaced, so a part inside a longer one,
+// or inside a placeholder, is never matched.
 function titleWithoutMaskedText(title: string, masked: Masked): string {
-  const parts = [...masked]
+  const parts: MaskedPart[] = [...masked]
     .filter(([text]) => text.length >= TITLE_MATCH_MIN_LENGTH)
     .sort(([a], [b]) => b.length - a.length);
+  const cut = isAtCap(title);
   let result = "";
   let index = 0;
   while (index < title.length) {
-    const part = parts.find(([text]) => title.startsWith(text, index));
-    if (part === undefined) {
+    const match = matchAt(title, index, parts, cut);
+    if (match === undefined) {
       result += title.charAt(index);
       index += 1;
     } else {
-      result += part[1];
-      index += part[0].length;
+      result += match[1];
+      index += match[0];
     }
   }
   return result;
