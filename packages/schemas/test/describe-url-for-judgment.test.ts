@@ -655,15 +655,19 @@ describe("describeUrlForJudgment", () => {
   });
 
   it.each([
-    ["percent signs", "%".repeat(10_000)],
-    ["exclamation marks followed by a letter", `${"!".repeat(10_000)}a`],
-    ["hosts with no path after them", "a.".repeat(5_000)],
-    ["opening brackets", "[0".repeat(5_000)],
+    ["percent signs", "%".repeat(100_000)],
+    ["exclamation marks followed by a letter", `${"!".repeat(100_000)}a`],
+    ["hosts with no path after them", "a.".repeat(50_000)],
+    ["opening brackets", "[0".repeat(50_000)],
   ])("reads a long title of %s in linear time", (_, title) => {
-    // The function is exported, so a caller may pass a title longer than the cap.
+    // The function is exported, so a caller may pass a title longer than the cap. At this
+    // length a linear scan takes about 10 ms and a quadratic one takes 15 seconds or more, so
+    // the limit leaves room for a busy runner and still fails on a regression. The first call
+    // warms the function up, so the timed call doesn't include compiling it.
+    describeUrl("https://example.com/x?pin=123", title.slice(0, 1_000));
     const start = performance.now();
     describeUrl("https://example.com/x?pin=123", title);
-    expect(performance.now() - start).toBeLessThan(50);
+    expect(performance.now() - start).toBeLessThan(1_000);
   });
 
   it("leaves out a title that is the start of the credentials, without the scheme", () => {
