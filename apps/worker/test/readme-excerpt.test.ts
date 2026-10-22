@@ -18,20 +18,22 @@ describe("readmeExcerpt", () => {
         "Task done",
         "Feature Status",
         "Watch Done",
-        "See the guide and .",
+        "See the guide and https://vitest.test/docs.",
         "Escaped *stars* stay, and so do <angle brackets> & entities.",
         "More Hidden details",
       ].join("\n"),
     );
   });
 
-  it("is at most README_EXCERPT_LENGTH characters", () => {
+  it("is at most 2,000 characters", () => {
+    // The issue's limit, written out, so a change to the constant fails here.
+    expect(README_EXCERPT_LENGTH).toBe(2000);
     const long = Array.from({ length: 400 }, (_, index) => `Paragraph ${index} of prose.`).join(
       "\n\n",
     );
     const excerpt = readmeExcerpt(long);
-    expect(excerpt.length).toBeLessThanOrEqual(README_EXCERPT_LENGTH);
-    expect(excerpt.length).toBeGreaterThan(README_EXCERPT_LENGTH - 30);
+    expect(excerpt.length).toBeLessThanOrEqual(2000);
+    expect(excerpt.length).toBeGreaterThan(2000 - 30);
     expect(excerpt.startsWith("Paragraph 0 of prose.\nParagraph 1 of prose.")).toBe(true);
   });
 
@@ -50,18 +52,75 @@ describe("readmeExcerpt", () => {
     expect(readmeExcerpt('<p align="center"><img src="logo.svg"></p>\n\n---\n')).toBe("");
   });
 
-  // Each of these is about 16 KiB, the client's read limit, of a construct that opens again and
-  // again and never closes. Each takes under a millisecond. A pattern that scanned to the end
-  // from every opening would take tens of milliseconds or more, so 50 ms catches that and
-  // still leaves room for a slow machine.
+  it("keeps the prose after a `![` that nothing closes on its line", () => {
+    // An image's alternative text can't span lines here, so this is text, as its author wrote it.
+    expect(readmeExcerpt("Use ![ to insert. More prose here.\nThen ] end.")).toBe(
+      "Use ![ to insert. More prose here.\nThen ] end.",
+    );
+  });
+
+  it("keeps an autolink's address", () => {
+    expect(readmeExcerpt("Docs: <https://example.test/docs>, mail <mailto:hi@example.test>.")).toBe(
+      "Docs: https://example.test/docs, mail hi@example.test.",
+    );
+    expect(readmeExcerpt("Write to <team@example.test>.")).toBe("Write to team@example.test.");
+  });
+
+  it("removes a backslash hard line break", () => {
+    expect(readmeExcerpt("First line\\\nSecond line\\")).toBe("First line\nSecond line");
+  });
+
+  it("keeps a code span's text, even when it looks like a comment or a tag", () => {
+    expect(
+      readmeExcerpt("Write `<!--` to start a comment.\nKeep this line. `<div>` and `**`."),
+    ).toBe("Write <!-- to start a comment.\nKeep this line. <div> and **.");
+    expect(readmeExcerpt("Two ``with ` inside`` and `unclosed")).toBe(
+      "Two with ` inside and unclosed",
+    );
+  });
+
+  it("keeps a link's text that holds brackets", () => {
+    expect(readmeExcerpt("See [the [b] guide](https://example.test/guide) now.")).toBe(
+      "See the [b] guide now.",
+    );
+  });
+
+  it("removes YAML front matter", () => {
+    expect(readmeExcerpt("---\ntitle: Vitest\nlayout: home\n---\n# Vitest\nText.")).toBe(
+      "Vitest\nText.",
+    );
+    // Without a closing line, the first `---` is a rule.
+    expect(readmeExcerpt("---\ntitle: Vitest")).toBe("title: Vitest");
+  });
+
+  it("keeps a heading's text that ends in #", () => {
+    expect(readmeExcerpt("# Notes on C#\n## Install ##")).toBe("Notes on C#\nInstall");
+  });
+
+  // Each of these is about 16 KiB, the client's read limit, of a shape that a backtracking
+  // pattern takes quadratic time over: a construct that opens again and again and never closes,
+  // or a long run that two parts of a pattern could share. Measured in Node 24 on an Apple
+  // silicon Mac, each took under 0.5 ms, and the slowest shape found, 16 KiB of short code spans,
+  // took 1.7 ms. The first four took 120 to 300 ms each with the patterns of 09bad9d. 50 ms
+  // catches that and leaves room for a slow machine.
   const hostile: [string, string][] = [
+    ["a run of backticks after text", `a${"`".repeat(16383)}`],
+    ["spaces before text", `${" ".repeat(16383)}x`],
+    ["spaces before a list marker", `${" ".repeat(16382)}-x`],
+    ["spaces inside a heading", `# a${" ".repeat(16380)}x`],
+    [
+      "backtick runs of many lengths",
+      Array.from({ length: 180 }, (_, i) => `${"`".repeat(i + 1)}a`).join(""),
+    ],
     ["unclosed links", "[a](".repeat(4096)],
+    ["unclosed nested links", `[${"[a]".repeat(5461)}`],
     ["unclosed images", "![a](b ".repeat(2340)],
     ["unclosed emphasis", "**a ".repeat(4096)],
     ["unclosed underscores", " __a".repeat(4096)],
     ["unclosed inline code", "`a ".repeat(5461)],
     ["unclosed tags", "<a b='".repeat(2730)],
     ["unclosed script tags", "<script ".repeat(2048)],
+    ["unclosed email autolinks", "<a@".repeat(5461)],
     ["unclosed brackets", "[".repeat(16384)],
     ["nested parentheses", `[a](${"(".repeat(16380)}`],
     ["unclosed fences", "```\n~~~~\n".repeat(1820)],

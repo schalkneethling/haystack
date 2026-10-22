@@ -71,10 +71,47 @@ describe("matchGitHubRepository", () => {
     ).toBeUndefined();
   });
 
-  it("reserves the routes the plan names", () => {
-    for (const route of ["features", "orgs", "settings", "marketplace", "topics", "sponsors"]) {
-      expect(RESERVED_GITHUB_ROUTES.has(route)).toBe(true);
-    }
+  // The test's own list, so that removing a route from the code fails here. The first six are the
+  // ones the issue and the plan name.
+  const mustBeReserved = [
+    "features",
+    "orgs",
+    "settings",
+    "marketplace",
+    "topics",
+    "sponsors",
+    "about",
+    "apps",
+    "biztools",
+    "codespaces",
+    "copilot",
+    "customer-stories",
+    "enterprise",
+    "explore",
+    "issues",
+    "join",
+    "login",
+    "logout",
+    "new",
+    "notifications",
+    "pricing",
+    "pulls",
+    "security",
+    "site",
+  ];
+  it.each(mustBeReserved)("reserves %s", (route) => {
+    expect(RESERVED_GITHUB_ROUTES.has(route)).toBe(true);
+    expect(matchGitHubRepository(`https://github.com/${route}/anything`)).toBeUndefined();
+  });
+
+  // robots.txt disallows `/account-login`, but an account of that name has public repositories.
+  it("does not reserve account-login, which has repositories", () => {
+    expect(RESERVED_GITHUB_ROUTES.has("account-login")).toBe(false);
+    expect(matchGitHubRepository("https://github.com/account-login/bashrc")).toEqual({
+      owner: "account-login",
+      repo: "bashrc",
+      bookmark: "repository",
+    });
   });
 
   it("does not reserve GitHub's own organization, which has repositories", () => {

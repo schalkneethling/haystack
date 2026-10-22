@@ -103,7 +103,7 @@ export interface GitHubEvidence {
  * - `network`: the request failed, or the response's body stopped before its end.
  * - `not-found`: GitHub answered 404. For the repository, that includes a private one, which the
  *   token can't read. For the README, the repository has none.
- * - `rate-limited`: a 429, or a 403 that GitHub marks as a rate limit.
+ * - `rate-limited`: a 403 or a 429. The caller asks GitHub nothing more for the rest of the run.
  * - `status`: any other answer that isn't 2xx, including a redirect, which `status` holds.
  * - `invalid-response`: a 2xx response that isn't what the endpoint documents.
  * - `private`: GitHub answered for a repository that isn't public, so the token can read more
@@ -142,9 +142,12 @@ export type GitHubResult = GitHubSuccess | GitHubFailure;
 
 // The fields of "Get a repository" that Haystack reads. Fields it doesn't read aren't checked, so
 // a change to them can't fail the read. `private` is required, and `description` and `language`
-// are required but may be null. `topics` is optional.
+// are required but may be null. `topics` is optional, and so is `visibility`, which the OpenAPI
+// description (github/rest-api-description, `full-repository`) gives as "public, private, or
+// internal".
 const RepositoryResponse = v.object({
   private: v.boolean(),
+  visibility: v.optional(v.string()),
   description: v.nullable(v.string()),
   language: v.nullable(v.string()),
   topics: v.optional(v.array(v.string())),
@@ -160,18 +163,17 @@ function discard(response: Response): void {
   });
 }
 
-// GitHub answers a rate limit with a 429, or a 403 with `x-ratelimit-remaining: 0` or a
-// `retry-after` ("Exceeding the rate limit"). Any other 403 is a refusal.
-function failureForStatus(response: Response): GitHubRequestFailure {
-  const { status, headers } = response;
+// GitHub answers a rate limit with a 403 or a 429 ("Exceeding the rate limit"). A secondary rate
+// limit may come with neither `retry-after` nor `x-ratelimit-remaining: 0`, so the headers can't
+// tell it apart, and for a public repository read with a token that reads public repositories,
+// GitHub documents no other 403. So every 403 and 429 counts as a rate limit, and the caller
+// stops asking GitHub for the rest of the run. A 403 for another reason costs only that run's
+// GitHub data.
+function failureForStatus(status: number): GitHubRequestFailure {
   if (status === 404) {
     return { reason: "not-found", status };
   }
-  const rateLimited =
-    status === 429 ||
-    (status === 403 &&
-      (headers.get("x-ratelimit-remaining")?.trim() === "0" || headers.has("retry-after")));
-  return { reason: rateLimited ? "rate-limited" : "status", status };
+  return { reason: status === 403 || status === 429 ? "rate-limited" : "status", status };
 }
 
 // The body as UTF-8 text, up to `limit` bytes. The rest is cancelled, never downloaded, and a
@@ -210,7 +212,7 @@ async function request(
     const response = await fetch(url, { method: "GET", headers, redirect: "manual", signal });
     if (!response.ok) {
       discard(response);
-      return { ok: false, ...failureForStatus(response) };
+      return { ok: false, ...failureForStatus(response.status) };
     }
     if (response.body === null) {
       return { ok: true, text: "", complete: true };
@@ -299,9 +301,13 @@ export async function readGitHubRepository(
   if (repository === undefined) {
     return { ok: false, reason: "invalid-response", requests: 1 };
   }
-  // The token should only read public repositories, and then GitHub answers 404 for a private
-  // one. If it can read more, this keeps a private README from being fetched or sent on.
-  if (repository.private) {
+  // The token should only read public repositories, and then GitHub answers 404 for any other.
+  // If it can read more, this keeps a private or internal README from being fetched or sent on.
+  // A repository is public only when `private` is false and `visibility`, if present, says so.
+  if (
+    repository.private ||
+    (repository.visibility !== undefined && repository.visibility !== "public")
+  ) {
     return { ok: false, reason: "private", requests: 1 };
   }
   const evidence = repositoryEvidence(match, repository);

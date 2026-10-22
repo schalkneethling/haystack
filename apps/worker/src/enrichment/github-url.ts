@@ -10,21 +10,26 @@
  * - the first segments of every page in GitHub's marketing sitemap
  *   (https://github.com/sitemap_marketing.xml), except `github`, which is GitHub's organization;
  * - the first segments that GitHub's robots.txt (https://github.com/robots.txt) disallows, except
- *   the accounts it names;
+ *   the accounts it names and `account-login` (below);
  * - the routes the issue names, and other routes of the github.com app.
  *
  * Each one was checked against the REST API's `GET /users/{username}`, which answered 404, so no
- * account has the name and reserving it can't hide a repository. `customer-stories` is the one
- * exception: an account has that name, but the sitemap shows GitHub's own stories at
- * `github.com/customer-stories/<customer>`. Names that GitHub serves a page at but that are also
- * accounts, such as `watching` and `achievements`, are left out, because a repository could be
- * under them. A route that is missing here costs only the 2 GitHub requests, which answer 404.
+ * account has the name and reserving it can't hide a repository. Two are exceptions, because an
+ * account has the name but github.com serves GitHub's own pages under it: the sitemap shows
+ * GitHub's stories at `github.com/customer-stories/<customer>`, and `github.com/biztools`
+ * redirects to `/biztools/coupons`, which asks for sign-in, while that account has no public
+ * repository. robots.txt also disallows `/account-login`, but that one is left out:
+ * `github.com/account-login/bashrc` is a public repository of the account of that name. So are
+ * other names that GitHub serves a page at but that are also accounts, such as `watching` and
+ * `achievements`, because a repository could be under them. A route that is missing here costs
+ * only the 2 GitHub requests, which answer 404.
  */
 export const RESERVED_GITHUB_ROUTES: ReadonlySet<string> = new Set([
   "about",
   "account",
   "advisories",
   "apps",
+  "biztools",
   "businesses",
   "codespaces",
   "collections",

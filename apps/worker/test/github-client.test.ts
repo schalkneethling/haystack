@@ -23,7 +23,6 @@ import {
   readGitHubRepository,
 } from "../src/enrichment/github-client.ts";
 import { type GitHubRepositoryMatch, matchGitHubRepository } from "../src/enrichment/github-url.ts";
-import { README_EXCERPT_LENGTH } from "../src/enrichment/readme-excerpt.ts";
 import {
   GITHUB_ORIGIN,
   type GitHubFixture,
@@ -184,18 +183,19 @@ describe("readGitHubRepository", () => {
   });
 
   describe("the README", () => {
-    it("is at most README_EXCERPT_LENGTH characters, with no Markdown syntax left", async () => {
+    it("is at most 2,000 characters, with no Markdown syntax left", async () => {
       const prose = Array.from({ length: 200 }, (_, index) => `Sentence ${index}.`).join(" ");
       fixture.respond(json(repositoryResponse), readme(`${SAMPLE_README}\n\n${prose}`));
       const result = await read();
       expect(result.ok).toBe(true);
       const excerpt = result.ok ? (result.evidence.readme_excerpt ?? "") : "";
-      expect(excerpt.length).toBeLessThanOrEqual(README_EXCERPT_LENGTH);
+      expect(excerpt.length).toBeLessThanOrEqual(2000);
       expect(excerpt).toContain("Vitest");
       expect(excerpt).toContain("Next generation testing framework powered by Vite.");
       expect(excerpt).toContain("Sentence 0.");
-      // Headings, emphasis, links, images, code fences and inline code, tables, rules, HTML
-      // and comments, reference definitions and footnotes all leave something behind.
+      // Each of these is what headings, emphasis, links, images, code fences and inline code,
+      // tables, rules, HTML and comments, reference definitions or footnotes would leave behind.
+      // An autolink keeps its address, so only link and image destinations are checked.
       for (const syntax of [
         "#",
         "**",
@@ -216,7 +216,11 @@ describe("readGitHubRepository", () => {
         "</",
         "<!--",
         "-->",
-        "https://",
+        "img.shields.test",
+        "npmjs.test",
+        "vite.test)",
+        "ci.test",
+        "logo.svg",
         "import {",
       ]) {
         expect(excerpt).not.toContain(syntax);
@@ -358,9 +362,29 @@ describe("readGitHubRepository", () => {
       });
     });
 
-    it("tells a 403 that isn't a rate limit apart", async () => {
+    // A secondary rate limit may come without either header, so any 403 is a rate limit.
+    it("returns nothing for a 403 without rate limit headers, as a rate limit", async () => {
       fixture.respond(status(403, { "x-ratelimit-remaining": "4999" }));
-      expect(await read()).toEqual({ ok: false, reason: "status", status: 403, requests: 1 });
+      expect(await read()).toEqual({
+        ok: false,
+        reason: "rate-limited",
+        status: 403,
+        requests: 1,
+      });
+    });
+
+    it("counts a 403 for the README as a rate limit too", async () => {
+      fixture.respond(json(repositoryResponse), status(403));
+      expect(await read()).toMatchObject({
+        ok: true,
+        readmeFailure: { reason: "rate-limited", status: 403 },
+        requests: 2,
+      });
+    });
+
+    it("returns nothing for a 401, which isn't a rate limit", async () => {
+      fixture.respond(status(401));
+      expect(await read()).toEqual({ ok: false, reason: "status", status: 401, requests: 1 });
     });
 
     for (const code of [500, 502, 503]) {
@@ -415,10 +439,24 @@ describe("readGitHubRepository", () => {
       expect(await read()).toEqual({ ok: false, reason: "not-found", status: 404, requests: 1 });
     });
 
-    it("returns nothing, and doesn't ask for the README, when the repository isn't public", async () => {
-      fixture.respond(json({ ...repositoryResponse, private: true, visibility: "private" }));
-      expect(await read()).toEqual({ ok: false, reason: "private", requests: 1 });
-      expect(fixture.requests).toHaveLength(1);
+    const notPublic: [string, Record<string, unknown>][] = [
+      ["private", { private: true, visibility: "private" }],
+      ["private without a visibility", { private: true, visibility: undefined }],
+      ["internal", { private: false, visibility: "internal" }],
+      ["of a visibility Haystack doesn't know", { private: false, visibility: "secret-preview" }],
+    ];
+    it.each(notPublic)(
+      "returns nothing, and doesn't ask for the README, when the repository is %s",
+      async (_, fields) => {
+        fixture.respond(json({ ...repositoryResponse, ...fields }));
+        expect(await read()).toEqual({ ok: false, reason: "private", requests: 1 });
+        expect(fixture.requests).toHaveLength(1);
+      },
+    );
+
+    it("reads a public repository that doesn't name its visibility", async () => {
+      fixture.respond(json({ ...repositoryResponse, visibility: undefined }), readme("# Vitest"));
+      expect(await read()).toMatchObject({ ok: true, requests: 2 });
     });
 
     const invalid: [string, string][] = [

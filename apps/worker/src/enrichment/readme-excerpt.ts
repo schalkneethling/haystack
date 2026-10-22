@@ -3,15 +3,20 @@
 // this only turns it into plain text, and never acts on what it says.
 //
 // It is not a Markdown parser. It removes the syntax that READMEs use, so that what is left reads
-// as prose: headings, emphasis, links (their text is kept), images and badges (removed), code
-// fences (removed, because code says little about what a repository is for), inline code (its
-// text is kept), block quotes, lists, tables, rules, reference definitions, footnotes, HTML tags
-// and comments, and character references. The input may have been cut off anywhere, so a
-// construct that is never closed is removed to the end.
+// as prose: front matter, headings, emphasis, links (their text is kept), autolinks (their address
+// is kept), images and badges (removed), code fences (removed, because code says little about
+// what a repository is for), inline code (its text is kept), block quotes, lists, tables, rules,
+// reference definitions, footnotes, hard line breaks, HTML tags and comments, and character
+// references. The input may have been cut off anywhere, so a construct that is never closed is
+// removed to the end. Indented code blocks are kept, because they can't be told apart from a list
+// item's continued lines without parsing.
 //
-// The CPU time is bounded as well as the input. Every pattern below either matches in one pass
-// or stops at the next character that could end it, so a hostile README of the read limit's size
-// can't make the Worker spend its 10 ms on backtracking. The tests time such a README.
+// The CPU time grows with the README's length and no faster, so a hostile README can't make the
+// Worker spend its 10 ms on backtracking. No pattern can share one run of characters between two
+// of its parts in more than one way, and none follows a run of any length with a backreference
+// to it. A pattern that isn't anchored stops at the next character that could end what it
+// matches, so it never scans the same text again from each start. readme-excerpt.test.ts times
+// 16 KiB of each shape that would break this.
 import { truncate } from "@haystack/schemas";
 import { decodeHTML } from "entities/decode";
 
@@ -23,27 +28,60 @@ export const README_EXCERPT_LENGTH = 2000;
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 
 // Lines that are only syntax: a thematic break or a setext heading's underline, a table's
-// delimiter row, and a link reference definition.
+// delimiter row, and a link reference definition. In the delimiter row, each run of spaces is
+// next to a `|`, a `:` or a `-`, never to another run of spaces.
 const RULE = /^ {0,3}([-*_=])(?:[ \t]*\1){2,}[ \t]*$/;
-const TABLE_DELIMITER = /^[ \t]*\|?(?:[ \t]*:?-+:?[ \t]*\|)+(?:[ \t]*:?-+:?[ \t]*)?$/;
+const TABLE_DELIMITER = /^[ \t]*(?:\|[ \t]*)?(?::?-+:?[ \t]*\|[ \t]*)+(?::?-+:?[ \t]*)?$/;
 const REFERENCE_DEFINITION = /^ {0,3}\[[^\]\n]+\]:/;
 
 // The markers at the start of a line: block quotes, then a heading, a list item or an alert.
 const BLOCK_QUOTE = /^(?:[ \t]*>)+[ \t]?/;
 const HEADING = /^ {0,3}#{1,6}(?:[ \t]+|$)/;
-const CLOSING_HASHES = /[ \t]+#+[ \t]*$/;
 const LIST_ITEM = /^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[[ xX]\][ \t]+)?/;
 const ALERT = /^\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*/i;
 
-// The private use characters that stand in for escaped punctuation while the syntax is removed.
+// ASCII punctuation, which is everything Markdown and HTML syntax is made of.
+const PUNCTUATION = /[!-/:-@[-`{-~]/g;
+
+// The private use characters that stand in for punctuation that must stay text: escaped with a
+// backslash, or inside a code span. Each is ESCAPE_BASE plus the character's code.
 const ESCAPE_BASE = 0xe000;
-const PLACEHOLDERS = /[-]/g;
+const PLACEHOLDERS = /[\u{e000}-\u{e07f}]/gu;
 const ESCAPED = /\\([!-/:-@[-`{-~])/g;
 
+function placeholder(character: string): string {
+  return String.fromCharCode(ESCAPE_BASE + character.charCodeAt(0));
+}
+
+// A heading's closing sequence: `#`s at the end, after a space or alone. Done by hand, because a
+// pattern for it would try every space as a start.
+function withoutClosingHashes(heading: string): string {
+  const text = heading.trimEnd();
+  let start = text.length;
+  while (start > 0 && text[start - 1] === "#") {
+    start -= 1;
+  }
+  if (start === text.length || (start > 0 && text[start - 1] !== " " && text[start - 1] !== "\t")) {
+    return text;
+  }
+  return text.slice(0, start);
+}
+
+// YAML front matter: a first line of `---`, up to the next `---` or `...`. Without a closing line,
+// the first line is a rule.
+function frontMatterEnd(lines: readonly string[]): number {
+  if (lines[0] !== "---") {
+    return 0;
+  }
+  const close = lines.findIndex((line, index) => index > 0 && (line === "---" || line === "..."));
+  return close === -1 ? 0 : close + 1;
+}
+
 function removeBlocks(markdown: string): string {
+  const source = markdown.split("\n");
   const lines: string[] = [];
   let fence: string | undefined;
-  for (const line of markdown.split("\n")) {
+  for (const line of source.slice(frontMatterEnd(source))) {
     if (fence !== undefined) {
       if (line.trim().startsWith(fence) && line.trim().replaceAll(fence[0] ?? "", "") === "") {
         fence = undefined;
@@ -60,7 +98,7 @@ function removeBlocks(markdown: string): string {
     }
     let text = line.replace(BLOCK_QUOTE, "");
     if (HEADING.test(text)) {
-      text = text.replace(HEADING, "").replace(CLOSING_HASHES, "");
+      text = withoutClosingHashes(text.replace(HEADING, ""));
     }
     text = text.replace(LIST_ITEM, "").replace(ALERT, "");
     // A table row's cells become words separated by spaces.
@@ -72,26 +110,74 @@ function removeBlocks(markdown: string): string {
   return lines.join("\n");
 }
 
+// Code spans, found as CommonMark finds them: a run of backticks opens one, and the next run of
+// exactly the same length closes it. A run that nothing closes is only backticks. The span's
+// text is kept, with its punctuation turned into placeholders, so no later pattern reads it as
+// syntax: `<!--` or `<div>` in a code span is text. Done by hand, because a pattern with a
+// backreference to a run of backticks would try every length of every run.
+function protectCodeSpans(text: string): string {
+  const runs = [...text.matchAll(/`+/g)].map((run) => ({
+    start: run.index,
+    length: run[0].length,
+  }));
+  // For each length, where its runs are, and how far the search for a closing run has got.
+  const byLength = new Map<number, { readonly at: number[]; next: number }>();
+  for (const [index, run] of runs.entries()) {
+    const same = byLength.get(run.length) ?? { at: [], next: 0 };
+    same.at.push(index);
+    byLength.set(run.length, same);
+  }
+  let result = "";
+  let copied = 0;
+  for (let index = 0; index < runs.length; index += 1) {
+    const open = runs[index];
+    const same = open === undefined ? undefined : byLength.get(open.length);
+    if (open === undefined || same === undefined) {
+      continue;
+    }
+    while ((same.at[same.next] ?? Number.POSITIVE_INFINITY) <= index) {
+      same.next += 1;
+    }
+    const closeIndex = same.at[same.next];
+    const close = closeIndex === undefined ? undefined : runs[closeIndex];
+    if (closeIndex === undefined || close === undefined) {
+      continue;
+    }
+    const code = text.slice(open.start + open.length, close.start).replaceAll("\n", " ");
+    result += text.slice(copied, open.start) + code.replace(PUNCTUATION, placeholder);
+    copied = close.start + close.length;
+    index = closeIndex;
+  }
+  return result + text.slice(copied);
+}
+
+// An autolink keeps its address as text, without `mailto:`.
+function autolinkText(_: string, address: string): string {
+  return address.replace(/^mailto:/i, "");
+}
+
 function removeInline(text: string): string {
   return (
-    text
-      // Comments, then the contents of elements that are never text, then every tag. A tag ends
-      // at the first `>`, so one with `>` inside a quoted attribute leaves the rest of the
-      // attribute behind, which is only noise.
+    protectCodeSpans(text)
+      // Comments, then the contents of elements that are never text. A tag ends at the first
+      // `>`, so one with `>` inside a quoted attribute leaves the rest of the attribute behind,
+      // which is only noise.
       .replace(/<!--[\s\S]*?(?:-->|$)/g, "")
       .replace(/<(script|style|svg)\b[^<>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, "")
       // Images and badges, inline and by reference, before links, so a linked badge leaves a
-      // link with no text, which the next pattern removes.
-      .replace(/!\[[^[\]]*\](?:\((?:[^()\n]|\([^()\n]*\))*\)|\[[^[\]\n]*\])?/g, "")
-      // Links keep their text: inline, by reference, and footnote references go entirely.
+      // link with no text, which the link pattern removes. The alternative text stays on one
+      // line, so a `![` that nothing closes doesn't take the prose after it.
+      .replace(/!\[[^[\]\n]*\](?:\((?:[^()\n]|\([^()\n]*\))*\)|\[[^[\]\n]*\])?/g, "")
+      // Links keep their text, which may hold one level of brackets: inline, by reference, and
+      // footnote references go entirely.
       .replace(/\[\^[^[\]\n]*\]/g, "")
-      .replace(/\[([^[\]]*)\]\((?:[^()\n]|\([^()\n]*\))*\)/g, "$1")
-      .replace(/\[([^[\]]*)\]\[[^[\]\n]*\]/g, "$1")
-      // Autolinks and tags, including a tag cut off at the end of the input.
-      .replace(/<(?:https?:|mailto:)[^<>\s]*>/gi, "")
+      .replace(/\[((?:[^[\]]|\[[^[\]]*\])*)\]\((?:[^()\n]|\([^()\n]*\))*\)/g, "$1")
+      .replace(/\[((?:[^[\]]|\[[^[\]]*\])*)\]\[[^[\]\n]*\]/g, "$1")
+      // Autolinks keep their address. Then every tag goes, including one cut off at the end.
+      .replace(/<((?:https?|mailto):[^<>\s]*)>/gi, autolinkText)
+      .replace(/<([^<>\s@]+@[^<>\s@]+)>/g, "$1")
       .replace(/<\/?[A-Za-z][^<>]*(?:>|$)/g, " ")
-      // Inline code keeps its text.
-      .replace(/(`+)([^`]+?)\1/g, "$2")
+      // Backticks that no code span used, and strikethrough.
       .replaceAll("`", "")
       .replaceAll("~~", "")
   );
@@ -117,12 +203,12 @@ export function readmeExcerpt(markdown: string): string {
   const escaped = markdown
     .replace(/\r\n?/g, "\n")
     .replace(PLACEHOLDERS, "")
-    .replace(ESCAPED, (_, character: string) =>
-      String.fromCharCode(ESCAPE_BASE + character.charCodeAt(0)),
-    );
+    // A backslash at the end of a line is a hard line break, which a line already is.
+    .replace(/\\$/gm, "")
+    .replace(ESCAPED, (_, character: string) => placeholder(character));
   const text = decodeHTML(removeEmphasis(removeInline(removeBlocks(escaped)))).replace(
     PLACEHOLDERS,
-    (placeholder) => String.fromCharCode(placeholder.charCodeAt(0) - ESCAPE_BASE),
+    (character) => String.fromCharCode(character.charCodeAt(0) - ESCAPE_BASE),
   );
   const lines = text
     .split("\n")
