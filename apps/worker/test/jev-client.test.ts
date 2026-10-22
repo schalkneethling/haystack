@@ -87,6 +87,7 @@ afterEach(() => {
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
   }
+  vi.restoreAllMocks();
 });
 
 describe("askJev", () => {
@@ -150,8 +151,13 @@ describe("askJev", () => {
       expect(fixture.requests).toHaveLength(3);
     });
 
-    it("doubles the delay between attempts", async () => {
-      const backoffInitialMs = 40;
+    it("doubles the delay between attempts, and takes the jitter off it", async () => {
+      // With the random draw near 1, the jitter takes almost a quarter off each delay: 75 ms
+      // before the second attempt and 150 ms before the third. Jitter added instead would make
+      // them about 125 ms and 250 ms, and no doubling would make the second 75 ms. The upper
+      // bounds leave room for slow timers, but not for either of those.
+      const backoffInitialMs = 100;
+      vi.spyOn(Math, "random").mockReturnValue(0.99);
       const arrivals: number[] = [];
       const timed = (code: number) => () => {
         arrivals.push(performance.now());
@@ -169,10 +175,11 @@ describe("askJev", () => {
         { ...timing, backoffInitialMs },
       );
       const [first = 0, second = 0, third = 0] = arrivals;
-      // Up to a quarter of each delay is taken off at random, so the first waits at least 30 ms
-      // and the second at least 60 ms. A timer can fire a millisecond early.
+      // A timer can fire a millisecond early.
       expect(second - first).toBeGreaterThanOrEqual(backoffInitialMs * 0.75 - 1);
+      expect(second - first).toBeLessThan(backoffInitialMs * 1.1);
       expect(third - second).toBeGreaterThanOrEqual(backoffInitialMs * 1.5 - 1);
+      expect(third - second).toBeLessThan(backoffInitialMs * 2.2);
     });
 
     it("waits as long as retry-after-ms asks, when that is longer than the backoff", async () => {
@@ -192,17 +199,52 @@ describe("askJev", () => {
       expect(second - first).toBeGreaterThanOrEqual(59);
     });
 
-    it("stops when Retry-After asks for a longer wait than it allows", async () => {
-      fixture.respond(status(429, { "retry-after": "120" }));
-      expect(await ask()).toEqual({
-        ok: false,
-        failure: "transient",
-        reason: "status",
-        status: 429,
-        attempts: 1,
+    const longWaits: Record<string, string>[] = [
+      { "retry-after": "120" },
+      { "retry-after": "86400000000" },
+      { "retry-after-ms": "600000" },
+    ];
+    for (const headers of longWaits) {
+      it(`stops after 1 attempt when ${JSON.stringify(headers)} asks for a longer wait than it allows`, async () => {
+        fixture.respond(status(429, headers));
+        expect(await ask()).toEqual({
+          ok: false,
+          failure: "transient",
+          reason: "status",
+          status: 429,
+          attempts: 1,
+        });
+        expect(fixture.requests).toHaveLength(1);
       });
-      expect(fixture.requests).toHaveLength(1);
-    });
+    }
+
+    // Only a whole number of seconds is read. A date, read as one, would ask for an hour and stop
+    // the question, and `1.5`, read as seconds, would wait 1.5 seconds.
+    const ignoredRetryAfter = [
+      new Date(Date.now() + 60 * 60 * 1000).toUTCString(),
+      "-5",
+      "abc",
+      "1.5",
+      "0",
+    ];
+    for (const value of ignoredRetryAfter) {
+      it(`falls back to the backoff for Retry-After: ${value}`, async () => {
+        const arrivals: number[] = [];
+        fixture.respond(
+          () => {
+            arrivals.push(performance.now());
+            return HttpResponse.json({}, { status: 429, headers: { "retry-after": value } });
+          },
+          () => {
+            arrivals.push(performance.now());
+            return HttpResponse.json(noulResponse);
+          },
+        );
+        expect(await ask()).toMatchObject({ ok: true, attempts: 2 });
+        const [first = 0, second = 0] = arrivals;
+        expect(second - first).toBeLessThan(500);
+      });
+    }
   });
 
   describe("failures", () => {
@@ -235,6 +277,36 @@ describe("askJev", () => {
         return HttpResponse.json(noulResponse);
       };
       fixture.respond(slow, slow, slow);
+      expect(await ask()).toEqual({
+        ok: false,
+        failure: "transient",
+        reason: "timeout",
+        attempts: 3,
+      });
+      expect(fixture.requests).toHaveLength(3);
+    });
+
+    it("times out a 200 whose body stops after the headers, on each of the 3 attempts", async () => {
+      // The body sends its start and then nothing until well after the time limit. It ends then,
+      // short of its declared length. Without the length, the end would complete the message
+      // that the client had already aborted, and MSW 3.0.3's socket emulation would make undici
+      // raise an unhandled AssertionError.
+      const stalled = () =>
+        new HttpResponse(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"model":"jev-1.13.0",'));
+              await delay(timing.attemptTimeoutMs * 3);
+              try {
+                controller.close();
+              } catch {
+                // The client cancelled the body when its time ran out.
+              }
+            },
+          }),
+          { headers: { "content-type": "application/json", "content-length": "100" } },
+        );
+      fixture.respond(stalled, stalled, stalled);
       expect(await ask()).toEqual({
         ok: false,
         failure: "transient",
@@ -315,18 +387,26 @@ describe("askJev", () => {
       expect(JSON.stringify([failure, success])).not.toContain(KEY);
     });
 
-    it("must not be empty, and nothing is sent without one", async () => {
-      await expect(
-        askJev(
-          { ...config, TYPESAFE_API_KEY: " " },
-          {
-            state: "x",
-            id: "billing",
-            question: { type: "noul", instructions: "?" },
-            answer: NoulAnswer,
-          },
-        ),
-      ).rejects.toThrow("TYPESAFE_API_KEY is empty");
+    // The harness and local development leave a required secret they can't find unbound, so the
+    // value can be missing although `Env` says `string`.
+    it.each([
+      ["an empty string", ""],
+      ["only whitespace", " "],
+      ["a missing value", undefined as unknown as string],
+    ])("refuses %s as the key, with a code that names it, before any request", async (_, key) => {
+      const error = await askJev(
+        { ...config, TYPESAFE_API_KEY: key },
+        {
+          state: "x",
+          id: "billing",
+          question: { type: "noul", instructions: "?" },
+          answer: NoulAnswer,
+        },
+      ).catch((caught: unknown) => caught);
+      expect(error).toMatchObject({
+        message: "TYPESAFE_API_KEY is empty",
+        code: "TYPESAFE_API_KEY_EMPTY",
+      });
       expect(fixture.requests).toEqual([]);
     });
 

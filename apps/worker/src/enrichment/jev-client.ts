@@ -289,8 +289,10 @@ export async function askJev<Answer>(
   { state, id, question, answer }: JevAsk<Answer>,
   timing: JevTiming = JEV_TIMING,
 ): Promise<JevResult<Answer>> {
-  // An empty secret is easy to store by mistake (#98), and TypeSafe would only answer 401.
-  if (config.TYPESAFE_API_KEY.trim() === "") {
+  // An empty secret is easy to store by mistake (#98), and TypeSafe would only answer 401. The
+  // value can also be missing, although `Env` says `string`: the test harness and local
+  // development don't bind a required secret they can't find.
+  if (!config.TYPESAFE_API_KEY || config.TYPESAFE_API_KEY.trim() === "") {
     throw Object.assign(new Error("TYPESAFE_API_KEY is empty"), {
       code: "TYPESAFE_API_KEY_EMPTY",
     });
