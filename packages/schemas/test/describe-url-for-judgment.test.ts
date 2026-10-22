@@ -605,6 +605,11 @@ describe("describeUrlForJudgment", () => {
   });
 
   const wwwUrl = "https://www.example.com/x?pin=123&token=Zx9Kq2Lm8Np4Rt6Vw3Yb5";
+  // Built from code points, because the combining accent (U+0301) and the zero-width non-joiner
+  // (U+200C) are invisible in the source. Persian writes the non-joiner between these two parts
+  // of one word.
+  const decomposedAddress = `https://cafe${String.fromCodePoint(0x301)}.example/r?pin=123`;
+  const nonJoinerAddress = `https://می${String.fromCodePoint(0x200c)}خواهم.example/r?pin=123`;
   it.each([
     ["without www.", wwwUrl, "example.com/x?pin=123&token=Zx9Kq2Lm8Np4Rt6Vw3Yb5"],
     ["with www. added", "https://example.com/x?pin=123", "www.example.com/x?pin=123"],
@@ -637,10 +642,28 @@ describe("describeUrlForJudgment", () => {
       "https://example.com/x?pin=123",
       "https://example.com\\x?pin=123",
     ],
+    // Combining marks, such as the Devanagari virama and vowel signs, the Thai vowel marks and
+    // a decomposed accent, are part of a host.
+    ["with an Indic host", "https://नमस्ते.example/r?pin=123", "https://नमस्ते.example/r?pin=123"],
+    ["with a Thai host", "https://สวัสดี.example/r?pin=123", "https://สวัสดี.example/r?pin=123"],
+    ["with a decomposed accent in the host", decomposedAddress, decomposedAddress],
+    ["with a zero-width non-joiner in the host", nonJoinerAddress, nonJoinerAddress],
   ])("leaves out a title that holds the address %s", (_, url, title) => {
     const description = describeUrl(url, title);
     expect("title" in description).toBe(false);
     expect(JSON.stringify(description)).not.toContain("123");
+  });
+
+  it.each([
+    ["percent signs", "%".repeat(10_000)],
+    ["exclamation marks followed by a letter", `${"!".repeat(10_000)}a`],
+    ["hosts with no path after them", "a.".repeat(5_000)],
+    ["opening brackets", "[0".repeat(5_000)],
+  ])("reads a long title of %s in linear time", (_, title) => {
+    // The function is exported, so a caller may pass a title longer than the cap.
+    const start = performance.now();
+    describeUrl("https://example.com/x?pin=123", title);
+    expect(performance.now() - start).toBeLessThan(50);
   });
 
   it("leaves out a title that is the start of the credentials, without the scheme", () => {

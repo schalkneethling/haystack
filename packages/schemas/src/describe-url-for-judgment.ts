@@ -259,15 +259,106 @@ function describeFragment(fragment: string, masked: Masked): DescribedFragment |
 
 const TITLE_MATCH_MIN_LENGTH = 4;
 
+// The title can be any length, because the function is exported and a caller may pass more
+// than the cap, so it is read with loops that look at each character a fixed number of times,
+// rather than with regular expressions that can backtrack.
+
 // Characters that often wrap an address in running text, as in "(https://…)" or "see
 // https://….". Trimming them only shortens a word, so the start of the address stays its start.
-const WRAPPING_PUNCTUATION = /^[("'<[]+|[)"'>\],.;:!?]+$/g;
+const OPENING_PUNCTUATION = new Set(["(", '"', "'", "<", "["]);
+const CLOSING_PUNCTUATION = new Set([")", '"', "'", ">", "]", ",", ".", ";", ":", "!", "?"]);
 
-// A host, an IPv6 address in brackets, or a run of text that could be one, with an optional
-// port, right before the `/`, `?` or `#` that starts a path, query or fragment. The URL parser
-// reads `\` as `/` in a web address, so it counts too, and `%` is included because the parser
-// decodes a percent-encoded host.
-const HOST_BEFORE_PATH = /(\[[0-9A-Fa-f:.]+\]|[\p{L}\p{N}%._-]+)(?::[0-9]*)?(?=[/?#\\])/gu;
+function trimWrapping(text: string): string {
+  let start = 0;
+  let end = text.length;
+  while (start < end && OPENING_PUNCTUATION.has(text.charAt(start))) {
+    start += 1;
+  }
+  while (end > start && CLOSING_PUNCTUATION.has(text.charAt(end - 1))) {
+    end -= 1;
+  }
+  return text.slice(start, end);
+}
+
+// A character that can be part of a host as a person writes it: a letter, a combining mark
+// (such as the Devanagari virama, a Thai vowel mark or a decomposed accent), a digit, `.`, `-`,
+// `_`, `%` (the parser decodes a percent-encoded host), or the zero-width non-joiner and joiner,
+// which IDNA allows in some scripts. Each test is of one character, so it can't backtrack. The
+// two joiners are built from their code points, because they are invisible in the source.
+const HOST_CHARACTER = /^[\p{L}\p{M}\p{N}%._-]$/u;
+const ZERO_WIDTH_JOINERS = new Set([String.fromCodePoint(0x200c), String.fromCodePoint(0x200d)]);
+
+function isHostCharacter(character: string | undefined): boolean {
+  return (
+    character !== undefined && (HOST_CHARACTER.test(character) || ZERO_WIDTH_JOINERS.has(character))
+  );
+}
+const IPV6_CHARACTER = /^[0-9A-Fa-f:.]$/;
+const DIGIT = /^[0-9]$/;
+// The characters that start a path, query or fragment. The URL parser reads `\` as `/` in a
+// web address, so it counts too.
+const PATH_START = new Set(["/", "?", "#", "\\"]);
+
+// Where the path, query or fragment starts, after an optional `:port`, or undefined when none
+// starts there.
+function pathStartAfter(characters: readonly string[], index: number): number | undefined {
+  if (PATH_START.has(characters[index] ?? "")) {
+    return index;
+  }
+  if (characters[index] !== ":") {
+    return undefined;
+  }
+  let end = index + 1;
+  while (DIGIT.test(characters[end] ?? "")) {
+    end += 1;
+  }
+  return PATH_START.has(characters[end] ?? "") ? end : undefined;
+}
+
+// The end of the bracketed IPv6 address that starts at this `[`, after its `]`, or undefined
+// when there is none.
+function ipv6End(characters: readonly string[], index: number): number | undefined {
+  let end = index + 1;
+  while (IPV6_CHARACTER.test(characters[end] ?? "")) {
+    end += 1;
+  }
+  return end > index + 1 && characters[end] === "]" ? end + 1 : undefined;
+}
+
+// Every host in the title that is followed by a path, query or fragment: each run of host
+// characters, or bracketed IPv6 address, with an optional port, that has `/`, `?`, `#` or `\`
+// right after it. The title is read once, by Unicode code point. Runs never overlap, and the
+// scan goes on after a found host's port, so the port's digits are not read as a host.
+function hostsBeforePaths(title: string): string[] {
+  const characters = Array.from(title);
+  const hosts: string[] = [];
+  let index = 0;
+  while (index < characters.length) {
+    if (characters[index] === "[") {
+      const end = ipv6End(characters, index);
+      const next = end === undefined ? undefined : pathStartAfter(characters, end);
+      if (end !== undefined && next !== undefined) {
+        hosts.push(characters.slice(index, end).join(""));
+        index = next;
+      } else {
+        index += 1;
+      }
+    } else if (isHostCharacter(characters[index])) {
+      let end = index + 1;
+      while (isHostCharacter(characters[end])) {
+        end += 1;
+      }
+      const next = pathStartAfter(characters, end);
+      if (next !== undefined) {
+        hosts.push(characters.slice(index, end).join(""));
+      }
+      index = next ?? end;
+    } else {
+      index += 1;
+    }
+  }
+  return hosts;
+}
 
 // The host as a person may write it: without the trailing dot of a fully qualified name, and
 // without a leading `www.` or `m.`, which many sites serve the same pages under.
@@ -292,7 +383,7 @@ function sameSite(a: string, b: string): boolean {
 // such a title is still a title.
 function holdsTheHost(title: string, url: URL): boolean {
   const site = siteOf(url.hostname);
-  for (const [, candidate] of title.matchAll(HOST_BEFORE_PATH)) {
+  for (const candidate of hostsBeforePaths(title)) {
     const parsed = URL.parse(`https://${candidate}/`);
     if (parsed !== null && sameSite(siteOf(parsed.hostname), site)) {
       return true;
@@ -309,12 +400,12 @@ function startsTheAddress(word: string, url: URL): boolean {
   const schemeLength = url.protocol.length + 2;
   const schemeStart = word.toLowerCase().indexOf(`${url.protocol}//`);
   if (schemeStart !== -1) {
-    const fromScheme = word.slice(schemeStart).replace(WRAPPING_PUNCTUATION, "");
+    const fromScheme = trimWrapping(word.slice(schemeStart));
     if (fromScheme.length > schemeLength && url.href.startsWith(fromScheme)) {
       return true;
     }
   }
-  const trimmed = word.replace(WRAPPING_PUNCTUATION, "");
+  const trimmed = trimWrapping(word);
   return trimmed.length > url.username.length && startsTheCredentials(trimmed, url);
 }
 
@@ -330,7 +421,7 @@ function startsTheCredentials(text: string, url: URL): boolean {
 // A whole title of four or more characters that starts the credentials is the address cut
 // inside them, even before it goes past the user name.
 function holdsTheAddress(title: string, url: URL): boolean {
-  const trimmed = title.trim().replace(WRAPPING_PUNCTUATION, "");
+  const trimmed = trimWrapping(title.trim());
   return (
     holdsTheHost(title, url) ||
     title.split(/\s+/).some((word) => startsTheAddress(word, url)) ||
