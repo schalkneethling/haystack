@@ -7,6 +7,12 @@ export {
   validateCapturePayload,
 } from "./capture-payload.ts";
 export {
+  type DescribedFragment,
+  type DescribedParameter,
+  describeUrlForJudgment,
+  type UrlDescription,
+} from "./describe-url-for-judgment.ts";
+export {
   AZURE_SAS_PARAMETERS,
   CREDENTIAL_PARAMETERS,
   detectSensitiveUrl,
