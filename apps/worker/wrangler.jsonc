@@ -37,7 +37,8 @@
     "JEV_MODEL": "jev-1.13.0",
   },
   // Values come from .env.schema through varlock. A secret is added here in the change
-  // that first uses it (GOOGLE_CLIENT_SECRET is the exception, see #8).
+  // whose code first reads it, even before production calls that code, as with
+  // TYPESAFE_API_KEY (#122). GOOGLE_CLIENT_SECRET is the exception, see #8.
   "secrets": {
     "required": ["GOOGLE_CLIENT_SECRET", "TYPESAFE_API_KEY"],
   },
