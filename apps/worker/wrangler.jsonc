@@ -35,12 +35,21 @@
     // in `secrets`. The model is pinned, so answers stay comparable until an upgrade is chosen.
     "JEV_BASE_URL": "https://api.typesafe.ai",
     "JEV_MODEL": "jev-1.13.0",
+    // GitHub's REST API, for the repository and README of a GitHub bookmark
+    // (https://docs.github.com/en/rest/repos/repos#get-a-repository). The token is in `secrets`.
+    "GITHUB_API_BASE_URL": "https://api.github.com",
+    // The Claude API, for a bookmark's prose enrichment
+    // (https://platform.claude.com/docs/en/api/messages). The key is in `secrets`. Schalk chose
+    // the model (#118). It is pinned, so enrichments stay comparable until an upgrade is chosen.
+    "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+    "ANTHROPIC_MODEL": "claude-haiku-5-5",
   },
   // Values come from .env.schema through varlock. A secret is added here in the change
   // whose code first reads it, even before production calls that code, as with
-  // TYPESAFE_API_KEY (#122). GOOGLE_CLIENT_SECRET is the exception, see #8.
+  // TYPESAFE_API_KEY (#122), GITHUB_TOKEN (#123) and ANTHROPIC_API_KEY (#124).
+  // GOOGLE_CLIENT_SECRET is the exception, see #8.
   "secrets": {
-    "required": ["GOOGLE_CLIENT_SECRET", "TYPESAFE_API_KEY"],
+    "required": ["GOOGLE_CLIENT_SECRET", "TYPESAFE_API_KEY", "GITHUB_TOKEN", "ANTHROPIC_API_KEY"],
   },
   // Runtime switches (plan decision 20). Only the configuration module reads this binding.
   "flagship": [{ "binding": "FLAGS", "app_id": "0166d45b-a0b5-41e5-9eef-53c0b9987d81" }],
