@@ -53,6 +53,30 @@ function placeholder(character: string): string {
   return String.fromCharCode(ESCAPE_BASE + character.charCodeAt(0));
 }
 
+// The punctuation a placeholder stands for. Only punctuation ever gets a placeholder, so any
+// other character in the range didn't come from placeholder(), and is dropped.
+function restore(character: string): string {
+  const original = String.fromCharCode(character.charCodeAt(0) - ESCAPE_BASE);
+  return /^[!-/:-@[-`{-~]$/.test(original) ? original : "";
+}
+
+// A numeric character reference, decimal or hexadecimal, with or without its `;`, as the HTML
+// decoder reads them. One that names a character in the placeholder range is removed before the
+// references are decoded, so the README can't forge a placeholder that way either.
+const PLACEHOLDER_REFERENCE = /&#(?:[xX]([0-9A-Fa-f]+)|(\d+));?/g;
+
+function withoutPlaceholderReference(
+  reference: string,
+  hexadecimal: string | undefined,
+  decimal: string | undefined,
+): string {
+  const code =
+    hexadecimal === undefined
+      ? Number.parseInt(decimal ?? "", 10)
+      : Number.parseInt(hexadecimal, 16);
+  return code >= ESCAPE_BASE && code <= ESCAPE_BASE + 0x7f ? "" : reference;
+}
+
 // A heading's closing sequence: `#`s at the end, after a space or alone. Done by hand, because a
 // pattern for it would try every space as a start.
 function withoutClosingHashes(heading: string): string {
@@ -77,6 +101,9 @@ function frontMatterEnd(lines: readonly string[]): number {
   return close === -1 ? 0 : close + 1;
 }
 
+// The lines without their block syntax. Where a block ends, at a removed line, a heading or a
+// list item, a blank line stands in for the boundary, so protectCodeSpans sees the paragraphs
+// that CommonMark would. The excerpt drops blank lines at the end, so they cost nothing.
 function removeBlocks(markdown: string): string {
   const source = markdown.split("\n");
   const lines: string[] = [];
@@ -86,21 +113,29 @@ function removeBlocks(markdown: string): string {
       if (line.trim().startsWith(fence) && line.trim().replaceAll(fence[0] ?? "", "") === "") {
         fence = undefined;
       }
+      lines.push("");
       continue;
     }
     const opening = FENCE.exec(line);
     if (opening !== null) {
       fence = opening[1];
+      lines.push("");
       continue;
     }
     if (RULE.test(line) || TABLE_DELIMITER.test(line) || REFERENCE_DEFINITION.test(line)) {
+      lines.push("");
       continue;
     }
     let text = line.replace(BLOCK_QUOTE, "");
     if (HEADING.test(text)) {
-      text = withoutClosingHashes(text.replace(HEADING, ""));
+      lines.push("", withoutClosingHashes(text.replace(HEADING, "")), "");
+      continue;
     }
-    text = text.replace(LIST_ITEM, "").replace(ALERT, "");
+    if (LIST_ITEM.test(text)) {
+      lines.push("");
+      text = text.replace(LIST_ITEM, "");
+    }
+    text = text.replace(ALERT, "");
     // A table row's cells become words separated by spaces.
     if (text.trimStart().startsWith("|")) {
       text = text.replaceAll("|", " ");
@@ -111,11 +146,20 @@ function removeBlocks(markdown: string): string {
 }
 
 // Code spans, found as CommonMark finds them: a run of backticks opens one, and the next run of
-// exactly the same length closes it. A run that nothing closes is only backticks. The span's
-// text is kept, with its punctuation turned into placeholders, so no later pattern reads it as
-// syntax: `<!--` or `<div>` in a code span is text. Done by hand, because a pattern with a
-// backreference to a run of backticks would try every length of every run.
+// exactly the same length in the same paragraph closes it. A run that nothing closes is only
+// backticks. The span's text is kept, with its punctuation turned into placeholders, so no later
+// pattern reads it as syntax: `<!--` or `<div>` in a code span is text. Done by hand, because a
+// pattern with a backreference to a run of backticks would try every length of every run.
 function protectCodeSpans(text: string): string {
+  // CommonMark reads inline content one paragraph at a time, so a code span never crosses a
+  // blank line. The separators land at the odd indexes, and are kept as they are.
+  return text
+    .split(/(\n[ \t]*\n)/)
+    .map((part, index) => (index % 2 === 0 ? protectParagraphCodeSpans(part) : part))
+    .join("");
+}
+
+function protectParagraphCodeSpans(text: string): string {
   const runs = [...text.matchAll(/`+/g)].map((run) => ({
     start: run.index,
     length: run[0].length,
@@ -206,10 +250,10 @@ export function readmeExcerpt(markdown: string): string {
     // A backslash at the end of a line is a hard line break, which a line already is.
     .replace(/\\$/gm, "")
     .replace(ESCAPED, (_, character: string) => placeholder(character));
-  const text = decodeHTML(removeEmphasis(removeInline(removeBlocks(escaped)))).replace(
-    PLACEHOLDERS,
-    (character) => String.fromCharCode(character.charCodeAt(0) - ESCAPE_BASE),
-  );
+  const stripped = removeEmphasis(removeInline(removeBlocks(escaped)));
+  const text = decodeHTML(
+    stripped.replace(PLACEHOLDER_REFERENCE, withoutPlaceholderReference),
+  ).replace(PLACEHOLDERS, restore);
   const lines = text
     .split("\n")
     .map((line) => line.replace(/\s+/g, " ").trim())

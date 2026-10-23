@@ -79,6 +79,46 @@ describe("readmeExcerpt", () => {
     );
   });
 
+  // CommonMark reads inline content one paragraph at a time, so a backtick with no closer in its
+  // paragraph is only a backtick, and goes with the other stray ones.
+  it("doesn't let a code span cross a blank line", () => {
+    expect(readmeExcerpt("don`t do it\n\nUse `code` here")).toBe("dont do it\nUse code here");
+    expect(
+      readmeExcerpt("Start `oops\n\n# Heading **bold** [link](https://x.test)\n\nEnd` done"),
+    ).toBe("Start oops\nHeading bold link\nEnd done");
+  });
+
+  it("doesn't let a code span cross a heading, a list item or a fence", () => {
+    expect(readmeExcerpt("Start `oops\n# Heading **bold**\nEnd` done")).toBe(
+      "Start oops\nHeading bold\nEnd done",
+    );
+    expect(readmeExcerpt("- one `oops\n- two **bold**\n- three` done")).toBe(
+      "one oops\ntwo bold\nthree done",
+    );
+    expect(readmeExcerpt("Start `oops\n```\ncode\n```\nEnd **bold**` done")).toBe(
+      "Start oops\nEnd bold done",
+    );
+  });
+
+  // The placeholders stand in for punctuation that must stay text. One already in the README, or
+  // written as a character reference, must not turn into that punctuation or anything else.
+  it("removes placeholder characters that are already in the README", () => {
+    expect(readmeExcerpt("a\u{e02a}b\u{e02a} *c* \u{e000}d")).toBe("ab c d");
+  });
+
+  it.each([
+    ["&#xE000;", "a&#xE000;b", "ab"],
+    ["&#xE001;", "a&#xe001;b", "ab"],
+    ["&#57388;", "a&#57388;b", "ab"],
+    ["&#xE02A without its semicolon", "a&#xE02A-b", "a-b"],
+  ])("removes a reference to the placeholder %s, rather than decode it", (_, markdown, text) => {
+    expect(readmeExcerpt(markdown)).toBe(text);
+  });
+
+  it("still decodes references outside the placeholder range", () => {
+    expect(readmeExcerpt("&#x2A;&#42;&#xDFFF;&#xE080;")).toBe("**\u{fffd}\u{e080}");
+  });
+
   it("keeps a link's text that holds brackets", () => {
     expect(readmeExcerpt("See [the [b] guide](https://example.test/guide) now.")).toBe(
       "See the [b] guide now.",
@@ -124,6 +164,8 @@ describe("readmeExcerpt", () => {
     ["unclosed brackets", "[".repeat(16384)],
     ["nested parentheses", `[a](${"(".repeat(16380)}`],
     ["unclosed fences", "```\n~~~~\n".repeat(1820)],
+    ["backticks in many paragraphs", "`a\n \n".repeat(3276)],
+    ["unclosed character references", "&#x".repeat(5461)],
   ];
   it.each(hostile)("removes the syntax of %s quickly", (_, markdown) => {
     const start = performance.now();
