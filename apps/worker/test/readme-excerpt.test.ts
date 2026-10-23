@@ -133,6 +133,17 @@ describe("readmeExcerpt", () => {
     expect(readmeExcerpt("---\ntitle: Vitest")).toBe("title: Vitest");
   });
 
+  // CommonMark 0.31.2, section 4.5: a backtick fence's info string can't hold a backtick.
+  it("reads a line of backticks with a backtick after the opener as a code span, not a fence", () => {
+    expect(readmeExcerpt("Install it:\n```npm install foo```\nThen **run** it.\n```")).toBe(
+      "Install it:\nnpm install foo\nThen run it.",
+    );
+  });
+
+  it("still opens a tilde fence whose info string holds a backtick", () => {
+    expect(readmeExcerpt("Before\n~~~ js `title`\nconst x = 1;\n~~~\nAfter")).toBe("Before\nAfter");
+  });
+
   it("keeps a heading's text that ends in #", () => {
     expect(readmeExcerpt("# Notes on C#\n## Install ##")).toBe("Notes on C#\nInstall");
   });
@@ -166,6 +177,11 @@ describe("readmeExcerpt", () => {
     ["unclosed brackets", "[".repeat(16384)],
     ["nested parentheses", `[a](${"(".repeat(16380)}`],
     ["unclosed fences", "```\n~~~~\n".repeat(1820)],
+    ["a backtick fence opener with a long info string", `${"`".repeat(8192)}${"x".repeat(8191)}\``],
+    [
+      "lines of backticks with a backtick at the end",
+      `${"`".repeat(60)}${" ".repeat(60)}\`\n`.repeat(134),
+    ],
     ["backticks in many paragraphs", "`a\n \n".repeat(3276)],
     ["unclosed character references", "&#x".repeat(5461)],
   ];

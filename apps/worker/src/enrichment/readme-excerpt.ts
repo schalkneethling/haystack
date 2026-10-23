@@ -24,8 +24,24 @@ import { decodeHTML } from "entities/decode";
 export const README_EXCERPT_LENGTH = 2000;
 
 // A fence opens with 3 or more backticks or tildes, indented by up to 3 spaces, and closes with
-// at least as many of the same character and nothing else on the line.
+// at least as many of the same character and nothing else on the line. CommonMark 0.31.2
+// (section 4.5) doesn't allow a backtick in a backtick fence's info string, so a line such as
+// ```npm install foo``` is a code span and not a fence. fenceOpening checks that by hand, because
+// a lookahead after the run would scan the line again for every shorter run it tried.
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+
+// The fence a line opens, or undefined when it opens none.
+function fenceOpening(line: string): string | undefined {
+  const opening = FENCE.exec(line);
+  const fence = opening?.[1];
+  if (opening === null || fence === undefined) {
+    return undefined;
+  }
+  if (fence.startsWith("`") && line.includes("`", opening[0].length)) {
+    return undefined;
+  }
+  return fence;
+}
 
 // Lines that are only syntax: a thematic break or a setext heading's underline, a table's
 // delimiter row, and a link reference definition. In the delimiter row, each run of spaces is
@@ -116,9 +132,9 @@ function removeBlocks(markdown: string): string {
       lines.push("");
       continue;
     }
-    const opening = FENCE.exec(line);
-    if (opening !== null) {
-      fence = opening[1];
+    const opening = fenceOpening(line);
+    if (opening !== undefined) {
+      fence = opening;
       lines.push("");
       continue;
     }
