@@ -209,18 +209,75 @@ describe("anthropicProvider", () => {
       expect(fixture.requests).toHaveLength(1);
     });
 
+    it("makes a refusal in stop_details permanent, whatever stop_reason says", async () => {
+      // The shape of the Messages API reference's example: `end_turn` with refusal details.
+      fixture.respond(
+        answer({
+          ...messageBody(JSON.stringify(VALID_OUTPUT)),
+          stop_details: {
+            type: "refusal",
+            category: "general_harms",
+            explanation: "This request was declined.",
+          },
+        }),
+      );
+      expect(await write()).toEqual({
+        ok: false,
+        failure: "permanent",
+        reason: "refused",
+        calls: 1,
+      });
+      expect(fixture.requests).toHaveLength(1);
+    });
+
+    it("reads an answer whose stop_details is null", async () => {
+      fixture.respond(answer({ ...messageBody(JSON.stringify(VALID_OUTPUT)), stop_details: null }));
+      expect(await enrich()).toMatchObject({ ok: true, output: VALID_OUTPUT });
+    });
+
     for (const stopReason of ["max_tokens", "model_context_window_exceeded"]) {
-      it(`makes output cut off by ${stopReason} permanent`, async () => {
+      it(`makes output cut off by ${stopReason} truncated`, async () => {
         fixture.respond(answer(messageBody('{"summary": "Vitest is', stopReason)));
         expect(await enrich()).toEqual({ ok: false, failure: "permanent", reason: "truncated" });
+        expect(fixture.requests).toHaveLength(1);
       });
     }
+
+    it("asks for the answer up to 16,000 tokens, so thinking has room", async () => {
+      fixture.respond(output(VALID_OUTPUT));
+      await enrich();
+      expect(ANTHROPIC_MAX_TOKENS).toBe(16_000);
+      expect(JSON.parse(fixture.requests[0]?.body ?? "")).toMatchObject({ max_tokens: 16_000 });
+    });
 
     const invalid: [string, Parameters<AnthropicFixture["respond"]>[0]][] = [
       ["a body that isn't JSON", () => HttpResponse.text("not json")],
       ["a body that isn't a Message", answer({ completion: "{}" })],
       ["text that isn't JSON", answer(messageBody("Here is the description you asked for."))],
       ["no text block", answer({ ...messageBody(""), content: [] })],
+      [
+        // The structured outputs page puts the JSON in one text block, so two halves of it in two
+        // blocks aren't joined.
+        "two text blocks",
+        answer({
+          ...messageBody(""),
+          content: [
+            { type: "thinking", thinking: "", signature: "fixture-signature" },
+            { type: "text", text: JSON.stringify(VALID_OUTPUT).slice(0, 40) },
+            { type: "text", text: JSON.stringify(VALID_OUTPUT).slice(40) },
+          ],
+        }),
+      ],
+      [
+        "two text blocks that are each valid JSON",
+        answer({
+          ...messageBody(""),
+          content: [
+            { type: "text", text: JSON.stringify(VALID_OUTPUT) },
+            { type: "text", text: JSON.stringify({}) },
+          ],
+        }),
+      ],
       ["a stop reason the request can't cause", answer(messageBody("{}", "tool_use"))],
       ["fractional tokens", answer({ ...messageBody("{}"), usage: { input_tokens: 1.5 } })],
     ];
@@ -293,6 +350,24 @@ describe("anthropicProvider", () => {
       });
       expect(fixture.requests).toEqual([]);
     });
+
+    it.each([
+      ["an empty string", ""],
+      ["only whitespace", "  "],
+      ["a missing value", undefined as unknown as string],
+    ])(
+      "refuses %s as the model, with a code that names it, before any request",
+      async (_, model) => {
+        const error = await provider
+          .enrich(REPOSITORY_INPUT, { model })
+          .catch((caught: unknown) => caught);
+        expect(error).toMatchObject({
+          message: "ANTHROPIC_MODEL is empty",
+          code: "ANTHROPIC_MODEL_EMPTY",
+        });
+        expect(fixture.requests).toEqual([]);
+      },
+    );
 
     it.each(["http://api.anthropic.test", "http://example.com", "ftp://api.anthropic.test"])(
       "is never sent to %s, which is neither https nor a loopback host",
@@ -412,5 +487,45 @@ describe("writeProseEnrichment", () => {
       calls: 1,
     });
     expect(fixture.requests).toHaveLength(1);
+  });
+
+  // Thinking counts toward `max_tokens`, and its length varies between identical requests.
+  const truncated = () => HttpResponse.json(messageBody('{"summary": "Vitest is', "max_tokens"));
+
+  it("succeeds after exactly two calls when the first answer is truncated", async () => {
+    fixture.respond(truncated, output(VALID_OUTPUT));
+    expect(await write()).toMatchObject({ ok: true, enrichment: VALID_OUTPUT, calls: 2 });
+    expect(fixture.requests).toHaveLength(2);
+    expect(fixture.requests[1]?.body).toBe(fixture.requests[0]?.body);
+  });
+
+  it("fails permanently when the answer is truncated twice", async () => {
+    fixture.respond(truncated, truncated);
+    expect(await write()).toEqual({
+      ok: false,
+      failure: "permanent",
+      reason: "truncated",
+      calls: 2,
+    });
+    expect(fixture.requests).toHaveLength(2);
+  });
+
+  it("makes at most two calls when invalid output and a truncated answer alternate", async () => {
+    fixture.respond(output({}), truncated);
+    expect(await write()).toEqual({
+      ok: false,
+      failure: "permanent",
+      reason: "truncated",
+      calls: 2,
+    });
+    fixture.reset();
+    fixture.respond(truncated, output({}));
+    expect(await write()).toMatchObject({
+      ok: false,
+      failure: "permanent",
+      reason: "invalid-output",
+      calls: 2,
+    });
+    expect(fixture.requests).toHaveLength(2);
   });
 });

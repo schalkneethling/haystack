@@ -4,8 +4,8 @@
 // An adapter, such as the Anthropic adapter (anthropic-provider.ts), makes exactly one HTTP
 // request per `enrich()` call and never retries. It returns the provider's output as `unknown`,
 // or a classified failure. writeProseEnrichment validates the output against EnrichmentV1, and
-// when it fails, asks the same provider once more. That is the only retry, so the LLM makes at
-// most 2 requests per bookmark, as Q3 counts.
+// when it fails, or the output was cut off, asks the same provider once more. That is the only
+// retry, so the LLM makes at most 2 requests per bookmark, as Q3 counts.
 import * as v from "valibot";
 import type { EnrichmentInput } from "./enrichment-prompt.ts";
 import { EnrichmentV1 } from "./enrichment-schema.ts";
@@ -20,6 +20,7 @@ import type { FailureClass } from "./failure-class.ts";
  *   the provider's response format, or output that isn't JSON.
  * - `refused`: the model declined to answer, as a policy decision.
  * - `truncated`: the output stopped at the token limit or the context window, so it is incomplete.
+ *   writeProseEnrichment asks once more, as it does for invalid output.
  */
 export type ProviderFailureReason =
   | "timeout"
@@ -90,7 +91,7 @@ export interface ProseEnrichmentSuccess {
 
 export type ProseEnrichmentResult = ProseEnrichmentSuccess | ProseEnrichmentFailure;
 
-// How many times the provider is asked when its output fails validation.
+// How many times the provider is asked when its output fails validation or is cut off.
 const CALL_LIMIT = 2;
 
 // A key the output has but the schema doesn't name is the model's own text, which could repeat
@@ -111,9 +112,11 @@ function describeIssue(issue: v.BaseIssue<unknown>): ValidationIssue {
 
 /**
  * Asks the provider for the bookmark's prose enrichment and validates it. Output that fails
- * validation is asked for once more, from the same provider with the same input, and a second
- * failure is permanent. A failure of the request itself is returned as it is: a transient one is
- * left to the sweep, and a permanent one would fail again.
+ * validation, or that was cut off at the token limit (`truncated`), is asked for once more, from
+ * the same provider with the same input, and a second failure is permanent. A truncated answer
+ * gets the retry because it is usually the thinking, whose length varies between identical
+ * requests, that used up the tokens. Any other failure of the request is returned as it is: a
+ * transient one is left to the sweep, and a permanent one would fail again.
  */
 export async function writeProseEnrichment(
   provider: EnrichmentProvider,
@@ -123,6 +126,9 @@ export async function writeProseEnrichment(
   for (let calls = 1; ; calls += 1) {
     const result = await provider.enrich(input, options);
     if (!result.ok) {
+      if (result.reason === "truncated" && calls < CALL_LIMIT) {
+        continue;
+      }
       const { failure, reason, status } = result;
       return { ok: false, failure, reason, ...(status === undefined ? {} : { status }), calls };
     }

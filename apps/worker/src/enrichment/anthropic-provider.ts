@@ -50,10 +50,14 @@ export const ANTHROPIC_REQUEST_TIMEOUT_MS = 20_000;
 
 /**
  * The most tokens the model may generate, thinking included. The longest valid output is about
- * 4,000 characters of JSON, under 2,000 tokens, so this leaves room for thinking at the low
- * effort below. An answer that reaches it is `truncated`.
+ * 4,000 characters of JSON, under 2,000 tokens, but thinking counts toward the limit too, and the
+ * Claude Haiku 5.5 migration guide warns that a small limit can stop an answer after its thinking
+ * and before any text. How long the model thinks varies between identical requests, so the limit
+ * leaves thinking plenty of room: 16,000 is the claude-api skill's default for a request that
+ * isn't streamed. Only the tokens generated are billed, not the limit, and the time limit above
+ * ends a request that would run long. An answer that still reaches it is `truncated`.
  */
-export const ANTHROPIC_MAX_TOKENS = 4096;
+export const ANTHROPIC_MAX_TOKENS = 16_000;
 
 /**
  * How much the model thinks. The task is a short extraction from a few hundred words of
@@ -76,6 +80,11 @@ export const ANTHROPIC_TIMING: AnthropicTiming = {
 const MessageResponse = v.object({
   model: v.pipe(v.string(), v.nonEmpty()),
   stop_reason: v.string(),
+  // The Messages API reference documents `stop_details` as a RefusalStopDetails (`type:
+  // "refusal"`, a category and an explanation) or null. The claude-api skill says it is set only
+  // when `stop_reason` is `refusal`, but the reference's example response has it with
+  // `stop_reason: "end_turn"`, so it is read whatever the stop reason says.
+  stop_details: v.nullish(v.object({ type: v.string() })),
   content: v.array(v.object({ type: v.string(), text: v.optional(v.string()) })),
   usage: v.object({
     input_tokens: v.pipe(v.number(), v.integer(), v.minValue(0)),
@@ -98,8 +107,12 @@ async function request(url: URL, init: RequestInit, timeoutMs: number): Promise<
     if (!response.ok) {
       discard(response);
       const { status } = response;
-      // The errors page names 429 (rate limit), 500 (api_error), 504 (timeout_error) and 529
-      // (overloaded_error) as the ones to try again later.
+      // The transient statuses are the ones #124 lists, by the Jev client's rule (408, 429, 529
+      // and any other 5xx). The errors page gives retry advice for only two statuses: "Retry the
+      // request with exponential backoff" for 500 (api_error), and "Resolve the conflict, then
+      // retry the request" for 409 (conflict_error), which stays permanent here, because the
+      // same request would conflict again. It suggests streaming for 504 (timeout_error), and
+      // gives no advice for 429 (rate_limit_error) or 529 (overloaded_error).
       return {
         ok: false,
         failure: isTransientStatus(status) ? "transient" : "permanent",
@@ -120,8 +133,10 @@ const invalidResponse: ProviderFailure = {
   reason: "invalid-response",
 };
 
-// The output in a 2xx response's body: the JSON in its text, which structured outputs put in a
-// text block. Thinking blocks come first and are skipped.
+// The output in a 2xx response's body: the JSON in its text block. Thinking blocks come first and
+// are skipped. The structured outputs page says the JSON is in "the response's text content
+// block", one block, so a response with no text block or with more than one isn't the answer it
+// describes, and isn't pieced together.
 function parseOutput(body: string): ProviderResult {
   let json: unknown;
   try {
@@ -133,13 +148,15 @@ function parseOutput(body: string): ProviderResult {
   if (!parsed.success) {
     return invalidResponse;
   }
-  const { model, stop_reason, content, usage } = parsed.output;
+  const { model, stop_reason, stop_details, content, usage } = parsed.output;
   // A refusal is a policy decision about this input, so asking again would most likely be
   // refused again. Its text may not match the schema.
-  if (stop_reason === "refusal") {
+  if (stop_reason === "refusal" || stop_details?.type === "refusal") {
     return { ok: false, failure: "permanent", reason: "refused" };
   }
-  // The output stopped early, so it is incomplete JSON, and the same request would stop again.
+  // The output stopped early, so it is incomplete JSON. Most often the thinking took the tokens,
+  // and how long the model thinks varies, so writeProseEnrichment asks once more, as it does for
+  // invalid output. The class is permanent, because a second one is.
   if (stop_reason === "max_tokens" || stop_reason === "model_context_window_exceeded") {
     return { ok: false, failure: "permanent", reason: "truncated" };
   }
@@ -147,10 +164,11 @@ function parseOutput(body: string): ProviderResult {
   if (stop_reason !== "end_turn") {
     return invalidResponse;
   }
-  const text = content
-    .filter((block) => block.type === "text")
-    .map((block) => block.text ?? "")
-    .join("");
+  const texts = content.filter((block) => block.type === "text");
+  const text = texts[0]?.text;
+  if (texts.length !== 1 || text === undefined) {
+    return invalidResponse;
+  }
   let output: unknown;
   try {
     output = JSON.parse(text);
@@ -168,9 +186,9 @@ function parseOutput(body: string): ProviderResult {
 
 /**
  * The Anthropic adapter. Each `enrich()` call sends one request to `/v1/messages` with the
- * enrichment prompt and the structured-output schema. It throws for an empty key, or a base URL
- * that is neither https nor http on a loopback host, before anything is sent, because those are
- * configuration errors rather than failures of the bookmark.
+ * enrichment prompt and the structured-output schema. It throws for an empty key, an empty model,
+ * or a base URL that is neither https nor http on a loopback host, before anything is sent,
+ * because those are configuration errors rather than failures of the bookmark.
  */
 export function anthropicProvider(
   config: AnthropicConfig,
@@ -185,6 +203,13 @@ export function anthropicProvider(
       if (!config.ANTHROPIC_API_KEY || config.ANTHROPIC_API_KEY.trim() === "") {
         throw Object.assign(new Error("ANTHROPIC_API_KEY is empty"), {
           code: "ANTHROPIC_API_KEY_EMPTY",
+        });
+      }
+      // The caller passes ANTHROPIC_MODEL. An empty one would only get a 400 for every bookmark,
+      // each counted as a permanent failure.
+      if (!model || model.trim() === "") {
+        throw Object.assign(new Error("ANTHROPIC_MODEL is empty"), {
+          code: "ANTHROPIC_MODEL_EMPTY",
         });
       }
       const url = new URL("/v1/messages", config.ANTHROPIC_BASE_URL);
