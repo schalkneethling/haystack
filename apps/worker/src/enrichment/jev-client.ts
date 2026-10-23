@@ -16,6 +16,7 @@
 //   https. Redirects are not followed, so the key can't be sent on to another address.
 // - Nothing here logs. A failure is a fixed code and a status, which are safe to log.
 import * as v from "valibot";
+import { type FailureClass, isTransientStatus } from "./failure-class.ts";
 
 /** The configuration the client reads. `Env` has these, from `vars` and `secrets.required`. */
 export interface JevConfig {
@@ -86,7 +87,7 @@ export type JevFailureReason = "timeout" | "network" | "status" | "invalid-respo
  * A transient failure may succeed later, and enrichment only records it. A permanent one
  * won't, and counts toward the attempt limit (see "Enrichment sweep" in the plan).
  */
-export type JevFailureClass = "transient" | "permanent";
+export type JevFailureClass = FailureClass;
 
 export interface JevFailure {
   readonly ok: false;
@@ -174,13 +175,6 @@ function discard(response: Response): void {
   });
 }
 
-// 429 and 529 are the statuses the errors page says to retry. A 408 is a timeout, and any other
-// 5xx is a failure on TypeSafe's side, so both are transient too, as they are for the TypeSafe
-// SDKs. A redirect and any other 4xx are permanent: the same request would get the same answer.
-function isTransientStatus(status: number): boolean {
-  return status === 408 || status === 429 || status >= 500;
-}
-
 async function attempt(url: URL, init: RequestInit, timeoutMs: number): Promise<AttemptOutcome> {
   const signal = AbortSignal.timeout(timeoutMs);
   try {
@@ -190,6 +184,8 @@ async function attempt(url: URL, init: RequestInit, timeoutMs: number): Promise<
       const { status, headers } = response;
       return {
         ok: false,
+        // 429 and 529 are the statuses the errors page says to retry. A 408 and any other 5xx are
+        // transient too, as they are for the TypeSafe SDKs.
         failure: isTransientStatus(status) ? "transient" : "permanent",
         reason: "status",
         status,
