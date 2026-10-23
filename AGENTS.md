@@ -1,5 +1,11 @@
 Read @PR.md when scoping an issue, planning a task, or starting a new implementation.
 
+# Worker types on Dependabot pull requests
+
+A Wrangler update can change the Workers runtime that `apps/worker/worker-configuration.d.ts` was generated from, and then the Quality workflow fails with "Types at worker-configuration.d.ts are out of date". On Dependabot pull requests, the Dependabot Worker types workflow (`.github/workflows/dependabot-worker-types.yml`) regenerates the file and commits it to the pull request's branch. When the types have not changed, it commits nothing. Its commit starts the pull request's next Quality run in an "approval required" state, so someone with write access has to approve that run once.
+
+If the workflow fails, regenerate the types by hand. Check out the pull request's branch, run `vp install` and `vp run @haystack/worker#types`, and check the result with `vp run @haystack/worker#types:check`. Then commit `apps/worker/worker-configuration.d.ts` to that branch with `[dependabot skip]` in the commit message, so that Dependabot can still rebase the pull request. The "Dependency updates" section of `plans/haystack-v1-implementation-plan.md` explains how the workflow works.
+
 <!--VITE PLUS START-->
 
 # Using Vite+, the Unified Toolchain for the Web
