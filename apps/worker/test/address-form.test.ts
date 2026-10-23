@@ -3,7 +3,7 @@
 // plans/haystack-v1-implementation-plan.md.
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
 import { createTestHarness } from "wrangler";
-import { mainContent } from "./main-content.ts";
+import { mainContent, signedOutMainContent } from "./main-content.ts";
 import { seedSignedInUser, type SeededUser } from "./seed.ts";
 import { expectValidHtml } from "./validate-html.ts";
 
@@ -89,12 +89,27 @@ const HINT =
 
 // The field and its form, as both places render them. The browser's own checks are off and the
 // field is not required, so every error comes from the server (address-form.ts says why).
-function expectAddressForm(markup: string): void {
+// Signed in, the form posts to the lookup (#105). Before sign-in it asks for GET /save, because a
+// POST without a session is refused, while GET /save goes through sign-in.
+function expectAddressForm(markup: string, signedIn = true): void {
   expect(markup).toMatch(
-    /<form class="panel address-form" method="get" action="\/save" novalidate[ >]/,
+    signedIn
+      ? /<form class="panel address-form" method="post" action="\/save\/address" novalidate[ >]/
+      : /<form class="panel address-form" method="get" action="\/save" novalidate[ >]/,
   );
   expect(markup).toContain(HINT);
   expect(markup).toContain('<button class="button button-primary" type="submit">Continue</button>');
+  // The live region the pending state is announced in is in the page from the start, empty. Only
+  // the form that posts looks a page up, so only its page loads the script that writes to it.
+  expect(markup).toContain(
+    '<div id="save-url-status" class="status address-status" role="status"></div>',
+  );
+  const script = '<script type="module" src="/assets/address-form.js"></script>';
+  if (signedIn) {
+    expect(markup).toContain(script);
+  } else {
+    expect(markup).not.toContain(script);
+  }
   const field = addressField(markup);
   expect(field.get("name")).toBe("url");
   expect(field.get("type")).toBe("url");
@@ -122,7 +137,7 @@ describe("the address form", () => {
     // The form is named by its label, so it is a form landmark, "Save a link", which a screen
     // reader user can reach although it comes before the heading.
     expect(markup).toContain(
-      '<form class="panel address-form" method="get" action="/save" novalidate aria-labelledby="save-url-label">',
+      '<form class="panel address-form" method="post" action="/save/address" novalidate aria-labelledby="save-url-label" data-address-form="card">',
     );
     expect(markup).toContain(
       '<label id="save-url-label" class="address-form-title" for="save-url">Save a link</label>',
@@ -146,7 +161,7 @@ describe("the address form", () => {
     expect(markup).toContain('<h1><label for="save-url">Save a link</label></h1>');
     // Not a landmark: the heading before it already names it (address-form.ts says why).
     expect(markup).toContain(
-      '<form class="panel address-form" method="get" action="/save" novalidate>',
+      '<form class="panel address-form" method="post" action="/save/address" novalidate data-address-form="page" data-idle-title="Save a link - Haystack">',
     );
     expect(markup).toContain("Do not save links that contain access tokens");
     expect(markup).not.toContain("can&#39;t be saved");
@@ -156,8 +171,9 @@ describe("the address form", () => {
     await expectValidHtml(markup);
   });
 
-  // The form submits GET /save with only `url`, which is the save form for that address.
-  it("submits to the save form for the address", async () => {
+  // GET /save with only `url` is the save form for that address. The signed-in form reaches it
+  // through the lookup's redirect (save-address.test.ts), and the form before sign-in directly.
+  it("leads to the save form for the address", async () => {
     const response = await get(saveUrl({ url: "https://example.com/typed" }));
     expect(response.status).toBe(200);
     const markup = await response.text();
@@ -354,9 +370,11 @@ describe("an address the checks reject", () => {
     expect(response.status).toBe(400);
     expect(response.headers.get("location")).toBeNull();
     const markup = await response.text();
-    expectAddressForm(markup);
+    expectAddressForm(markup, false);
     expect(addressField(markup).get("aria-invalid")).toBe("true");
-    expect(mainContent(markup)).toBe(mainContent(await (await get(saveUrl({ url }))).text()));
+    expect(mainContent(markup)).toBe(
+      signedOutMainContent(await (await get(saveUrl({ url }))).text()),
+    );
     expect(markup).not.toContain('action="/auth/sign-out"');
     expect(await rowCounts()).toEqual(before);
     await expectValidHtml(markup);

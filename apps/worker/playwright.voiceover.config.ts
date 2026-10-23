@@ -25,6 +25,19 @@ export default defineConfig({
   // pre-commit check type-checks it on its own, without Node's types.
   reporter: "list",
   use: { trace: "retain-on-failure", video: "retain-on-failure" },
-  // Playwright's WebKit, the closest Playwright browser to Safari.
-  projects: [{ name: "webkit", use: { ...devices["Desktop Safari"], headless: false } }],
+  // Playwright's WebKit, the closest Playwright browser to Safari. The sign-in check runs first,
+  // in the same WebKit on the same Mac, without VoiceOver, and the VoiceOver tests depend on it,
+  // so a session the browser does not send fails in seconds rather than in every test (#107).
+  projects: [
+    {
+      name: "webkit-session",
+      testMatch: "**/session.e2e.ts",
+      use: { ...devices["Desktop Safari"], headless: false },
+    },
+    {
+      name: "webkit",
+      dependencies: ["webkit-session"],
+      use: { ...devices["Desktop Safari"], headless: false },
+    },
+  ],
 });

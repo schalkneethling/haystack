@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vite-plus
 import { createTestHarness } from "wrangler";
 import { generateSessionId } from "../src/auth/session-token.ts";
 import { seedBookmark, seedSignedInUser, type SeededUser } from "./seed.ts";
-import { mainContent } from "./main-content.ts";
+import { mainContent, signedOutMainContent } from "./main-content.ts";
 import { expectValidHtml } from "./validate-html.ts";
 
 const server = createTestHarness({
@@ -119,7 +119,7 @@ describe("GET /save without a session", () => {
       const markup = await signedOut.text();
       expect(markup).not.toContain("secret-value");
       // The same page apart from the header, which has no navigation before sign-in.
-      expect(mainContent(markup)).toBe(mainContent(await (await getSave({ url })).text()));
+      expect(mainContent(markup)).toBe(signedOutMainContent(await (await getSave({ url })).text()));
       expect(markup).not.toContain('action="/auth/sign-out"');
       expect(await rowCounts()).toEqual(before);
       await expectValidHtml(markup);
@@ -177,7 +177,7 @@ describe("GET /save without a session", () => {
     const markup = await signedOut.text();
     expect(markup).not.toContain("secret-value");
     const signedIn = await (await getPath(path, owner.cookie)).text();
-    expect(mainContent(markup)).toBe(mainContent(signedIn));
+    expect(mainContent(markup)).toBe(signedOutMainContent(signedIn));
     expect(await rowCounts()).toEqual(before);
   });
 

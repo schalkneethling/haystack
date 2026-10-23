@@ -6,6 +6,7 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
 import { INVALID_LINK, openRefusalPage } from "./rejected-save-pages.ts";
 import { saveThroughForm } from "./save-through-form.ts";
+import { ADDRESS_FORM_STATES, bringAddressFormTo, holdLookups } from "./held-lookups.ts";
 
 // One unbroken word, with no hyphen or slash a line could break at, so only `overflow-wrap` can
 // keep it inside the page (#33). The address is under the 2,048-character cap, and the title at
@@ -72,6 +73,23 @@ test.describe("at a 320 px viewport, nothing scrolls horizontally", () => {
     });
 
     // The rejected address is put back in the field, where it scrolls inside the field.
+    // Each state the address form's script leaves the form in (#105), on both forms: a message
+    // under the row, a changed label on Continue, or the error above the field.
+    for (const state of ADDRESS_FORM_STATES) {
+      test(`the address form showing ${state}`, async ({ page, pages }) => {
+        if (state === "a timeout") {
+          await page.clock.install();
+        }
+        const lookups = await holdLookups(page);
+        for (const [index, path] of ["/", "/save"].entries()) {
+          await page.goto(path);
+          const address = pages.url(`/${"longpathwithoutabreak".repeat(20)}`);
+          await bringAddressFormTo(page, lookups, index, state, address);
+          await expectNoHorizontalScroll(page);
+        }
+      });
+    }
+
     test("the address form after a rejected long address", async ({ page }) => {
       const url = LONG_URL.replace("https:", "http:");
       await page.goto(saveUrl({ url }));
@@ -203,6 +221,21 @@ for (const [colorScheme, ground] of [
           await expectNoViolations(page);
         }
       });
+
+      // Each state the address form's script leaves the form in (#105), on both forms.
+      for (const state of ADDRESS_FORM_STATES) {
+        test(`the address form showing ${state}`, async ({ page, pages }) => {
+          if (state === "a timeout") {
+            await page.clock.install();
+          }
+          const lookups = await holdLookups(page);
+          for (const [index, path] of ["/", "/save"].entries()) {
+            await page.goto(path);
+            await bringAddressFormTo(page, lookups, index, state, pages.url("/axe-state"));
+            await expectNoViolations(page);
+          }
+        });
+      }
     });
   });
 }
@@ -321,6 +354,17 @@ test.describe("in forced colors", () => {
 
   test.beforeEach(async ({ signIn }) => {
     await signIn();
+  });
+
+  // The address form's script focuses its message (#105). An outline survives forced colors.
+  test("the address form's focused message keeps its focus ring", async ({ page, pages }) => {
+    const lookups = await holdLookups(page);
+    await page.goto("/save");
+    await bringAddressFormTo(page, lookups, 0, "processing", pages.url("/forced-colors-focus"));
+    const message = page.locator("#save-url-status > p");
+    await expect(message).toBeFocused();
+    await expect(message).toHaveCSS("outline-style", "solid");
+    await expect(message).toHaveCSS("outline-width", "3px");
   });
 
   test("only the current page's link is outlined and underlined", async ({ page }) => {

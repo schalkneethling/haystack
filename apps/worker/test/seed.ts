@@ -1,4 +1,5 @@
-// Seeds users, sessions, and bookmarks in a harness D1, for tests of signed-in routes.
+// Seeds users, sessions, bookmarks, and their enrichment rows in a harness D1, for tests that
+// need them.
 import {
   generateSessionId,
   hashSessionId,
@@ -34,6 +35,8 @@ export async function seedSignedInUser(db: D1Like, email: string): Promise<Seede
 export interface SeededBookmarkFields {
   title?: string;
   description?: string;
+  sensitivityNoul?: number;
+  sensitivityAcknowledgedAt?: number;
   createdAt?: number;
 }
 
@@ -42,14 +45,73 @@ export async function seedBookmark(
   userId: string,
   url: string,
   normalizedUrl: string,
-  { title = "Seeded", description, createdAt = Date.now() }: SeededBookmarkFields = {},
+  {
+    title = "Seeded",
+    description,
+    sensitivityNoul,
+    sensitivityAcknowledgedAt,
+    createdAt = Date.now(),
+  }: SeededBookmarkFields = {},
 ): Promise<string> {
   const id = crypto.randomUUID();
   await db
     .prepare(
-      "INSERT INTO bookmarks (id, user_id, url, normalized_url, title, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO bookmarks (id, user_id, url, normalized_url, title, description, sensitivity_noul, sensitivity_acknowledged_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
-    .bind(id, userId, url, normalizedUrl, title, description ?? null, createdAt)
+    .bind(
+      id,
+      userId,
+      url,
+      normalizedUrl,
+      title,
+      description ?? null,
+      sensitivityNoul ?? null,
+      sensitivityAcknowledgedAt ?? null,
+      createdAt,
+    )
     .run();
   return id;
+}
+
+/** An enrichment of the bookmark at `schemaVersion`, with placeholder content. */
+export async function seedEnrichment(
+  db: D1Like,
+  bookmarkId: string,
+  schemaVersion: number,
+): Promise<string> {
+  const id = crypto.randomUUID();
+  await db
+    .prepare(
+      "INSERT INTO enrichments (id, bookmark_id, schema_version, provider, model, kind, kind_probabilities, data, match_text, match_text_version, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(
+      id,
+      bookmarkId,
+      schemaVersion,
+      "seed",
+      "seed",
+      "article",
+      "{}",
+      "{}",
+      "Seeded",
+      1,
+      Date.now(),
+    )
+    .run();
+  return id;
+}
+
+/** A failure record for the bookmark at `schemaVersion`, with `attempts` permanent failures. */
+export async function seedEnrichmentFailure(
+  db: D1Like,
+  bookmarkId: string,
+  schemaVersion: number,
+  attempts: number,
+): Promise<void> {
+  await db
+    .prepare(
+      "INSERT INTO enrichment_failures (bookmark_id, schema_version, attempts, consecutive_failures, last_error, last_attempt_at) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(bookmarkId, schemaVersion, attempts, attempts, "Seeded failure", Date.now())
+    .run();
 }

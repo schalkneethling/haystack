@@ -4,9 +4,14 @@ export {
   CapturePayload,
   type CaptureValidation,
   isHttpsUrl,
-  SAVE_URL_BUDGET,
   validateCapturePayload,
 } from "./capture-payload.ts";
+export {
+  type DescribedFragment,
+  type DescribedParameter,
+  describeUrlForJudgment,
+  type UrlDescription,
+} from "./describe-url-for-judgment.ts";
 export {
   AZURE_SAS_PARAMETERS,
   CREDENTIAL_PARAMETERS,
@@ -16,6 +21,13 @@ export {
   type SensitiveUrlReason,
 } from "./detect-sensitive-url.ts";
 export { isHttpsOrLoopbackUrl, LOOPBACK_HOSTS } from "./loopback.ts";
+export {
+  capturedFieldsFromPage,
+  PAGE_METADATA_KEYS,
+  type PageMetadataKey,
+  type RawPageMetadata,
+} from "./page-metadata.ts";
 export { normalizeUrl, stripTrackingParameters, TRACKING_PARAMETERS } from "./normalize-url.ts";
+export { SAVE_URL_BUDGET, saveUrlWithinBudget } from "./save-url.ts";
 export { withoutSensitiveCanonicalUrl } from "./screen-canonical-url.ts";
 export { truncate } from "./truncate.ts";

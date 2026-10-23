@@ -1,7 +1,7 @@
 // The recent saves list at `/` (plan, Phase 4). Milestone 3 replaces it with the search page.
 import { isHttpsUrl } from "@haystack/schemas";
 import { and, count, desc, eq, gt, or } from "drizzle-orm";
-import { addressFormCard } from "./address-form.ts";
+import { ADDRESS_FORM_SCRIPT, addressFormCard } from "./address-form.ts";
 import type { Db } from "./db/client.ts";
 import { bookmarks } from "./db/schema.ts";
 import { html, type SafeHtml } from "./html.ts";
@@ -150,6 +150,11 @@ export async function showRecentSaves(
       ${SENSITIVE_NOTICE}
       ${list(saves, rows.length > RECENT_SAVES_LIMIT)}`,
     200,
-    { signedIn: true, width: "wide", current: "saved-links", scripts: [DELETE_DIALOG_SCRIPT] },
+    {
+      signedIn: true,
+      width: "wide",
+      current: "saved-links",
+      scripts: [DELETE_DIALOG_SCRIPT, ADDRESS_FORM_SCRIPT],
+    },
   );
 }

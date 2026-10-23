@@ -9,7 +9,7 @@ const status = document.getElementById("list-status");
 const emptyState = document.getElementById("empty-state");
 // How long after closing the dialog the result is written to the live region (see the confirm
 // listener).
-const ANNOUNCE_DELAY_MS = 100;
+const ANNOUNCE_DELAY_MS = 500;
 
 /**
  * @param {string} tag
@@ -165,10 +165,13 @@ if (list !== null && typeof HTMLDialogElement === "function") {
     setBusy(false);
     // Close the dialog and move focus first. VoiceOver does not speak a status message that is
     // written in the same task as the dialog closing, even after focus has moved (#56; plan,
-    // "Deleting bookmarks"). So the message is written 100 ms later, which VoiceOver does
-    // speak. 100 ms is the delay that was tested, not a measured minimum. If the dialog is
-    // opened again within those 100 ms, the page is inert again before the message is written,
-    // so the message is lost. That is accepted because it is very unlikely.
+    // "Deleting bookmarks"). So the message is written 500 ms later. 100 ms was enough until the
+    // address form's empty status region came before the list heading (#105): with it,
+    // VoiceOver read the heading that took focus and dropped a message written 100 ms after it
+    // every time, and spoke one written 500 ms after it every time (plan, "Deleting
+    // bookmarks"). If the dialog is opened again within those 500 ms, the page is inert again
+    // before the message is written, so the message is lost. That is accepted because the user
+    // would have to move to another Delete button and press it in that time.
     dialog.close();
     if (removed) {
       removeItem(item);

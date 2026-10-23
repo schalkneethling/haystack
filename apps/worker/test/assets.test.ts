@@ -14,13 +14,17 @@ afterAll(async () => {
 });
 
 describe("static assets", () => {
-  // The list page loads this script, and the CSP allows scripts from this origin only.
-  it("serves the delete dialog script as JavaScript, with nosniff and no session", async () => {
-    const response = await server.fetch("/assets/delete-dialog.js");
+  // The list page and the address form load these scripts, and the CSP allows scripts from this
+  // origin only.
+  it.each([
+    ["/assets/delete-dialog.js", "showModal"],
+    ["/assets/address-form.js", "save-url-status"],
+  ])("serves %s as JavaScript, with nosniff and no session", async (path, content) => {
+    const response = await server.fetch(path);
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toMatch(/^text\/javascript/);
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(await response.text()).toContain("showModal");
+    expect(await response.text()).toContain(content);
   });
 
   // Every page links both stylesheets, and the CSP allows styles and fonts from this origin only.
