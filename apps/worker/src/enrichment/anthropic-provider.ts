@@ -52,10 +52,15 @@ export const ANTHROPIC_REQUEST_TIMEOUT_MS = 20_000;
  * The most tokens the model may generate, thinking included. The longest valid output is about
  * 4,000 characters of JSON, under 2,000 tokens, but thinking counts toward the limit too, and the
  * Claude Haiku 5.5 migration guide warns that a small limit can stop an answer after its thinking
- * and before any text. How long the model thinks varies between identical requests, so the limit
- * leaves thinking plenty of room: 16,000 is the claude-api skill's default for a request that
- * isn't streamed. Only the tokens generated are billed, not the limit, and the time limit above
- * ends a request that would run long. An answer that still reaches it is `truncated`.
+ * and before any text. 16,000 is the claude-api skill's default for a request that isn't
+ * streamed, and only the tokens generated are billed, not the limit.
+ *
+ * In practice the time limit above is the ceiling, not this one. The request isn't streamed, so
+ * nothing arrives until the last token is generated, and 16,000 tokens in 20 seconds would take
+ * 800 tokens a second. The Anthropic SDK (1.1.0, `calculateNonstreamingTimeout` in client.js)
+ * sizes its own timeouts at 128,000 tokens an hour, about 36 a second. So thinking that runs long
+ * ends as a transient `timeout` after one request, and an answer is `truncated`, which gets the
+ * module's one retry, only if it reaches 16,000 tokens within the 20 seconds.
  */
 export const ANTHROPIC_MAX_TOKENS = 16_000;
 
@@ -157,6 +162,9 @@ function parseOutput(body: string): ProviderResult {
   // The output stopped early, so it is incomplete JSON. Most often the thinking took the tokens,
   // and how long the model thinks varies, so writeProseEnrichment asks once more, as it does for
   // invalid output. The class is permanent, because a second one is.
+  // `model_context_window_exceeded` is a property of the input, which a retry can't change, but
+  // it is folded in here because a prompt of this size, a few thousand tokens at most, can't
+  // reach Claude Haiku 5.5's 1M-token window, so the retry it would waste can't happen in practice.
   if (stop_reason === "max_tokens" || stop_reason === "model_context_window_exceeded") {
     return { ok: false, failure: "permanent", reason: "truncated" };
   }
