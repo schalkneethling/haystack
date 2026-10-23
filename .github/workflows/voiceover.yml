@@ -31,6 +31,18 @@ concurrency:
 
 jobs:
   voiceover:
+    # Not on Dependabot's pull requests, which wait a long time for a macOS runner and mostly
+    # update packages that the page doesn't read aloud differently. The push to main after the
+    # merge runs it, so a dependency that breaks a VoiceOver test is still caught there. The
+    # exceptions are updates that change the VoiceOver tests' own tooling: GitHub Actions (this
+    # file's actions) and the Guidepup and Playwright packages, whose names Dependabot puts in the
+    # branch, as in dependabot/npm_and_yarn/guidepup/setup-0.29.4.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.user.login != 'dependabot[bot]' ||
+      startsWith(github.head_ref, 'dependabot/github_actions/') ||
+      contains(github.head_ref, 'guidepup') ||
+      contains(github.head_ref, 'playwright')
     # macOS 26, because VoiceOver's wording and behavior change between macOS releases. The
     # image still gets 26.x point releases, which can change them too.
     runs-on: macos-26
