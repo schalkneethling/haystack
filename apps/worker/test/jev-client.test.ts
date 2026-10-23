@@ -62,6 +62,24 @@ function ask(): Promise<JevResult<number>> {
   );
 }
 
+// The waits the client asks for between attempts, in milliseconds, as it calls them. Only the
+// timers that jev-client.ts's `sleep` sets are recorded, because Node's fetch sets timers of its
+// own around each request. Every timer still runs as asked.
+function recordClientWaits(): number[] {
+  const waits: number[] = [];
+  const setTimeoutAsGiven = globalThis.setTimeout;
+  vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+    handler: () => void,
+    milliseconds?: number,
+  ) => {
+    if (/\bsleep \([^)]*src\/enrichment\/jev-client\.ts/.test(new Error().stack ?? "")) {
+      waits.push(milliseconds ?? 0);
+    }
+    return setTimeoutAsGiven(handler, milliseconds);
+  }) as typeof setTimeout);
+  return waits;
+}
+
 let fixture: JevFixture;
 const consoleMethods = ["debug", "error", "info", "log", "trace", "warn"] as const;
 let consoleSpies: ReturnType<typeof vi.spyOn>[];
@@ -152,12 +170,15 @@ describe("askJev", () => {
     });
 
     it("doubles the delay between attempts, and takes the jitter off it", async () => {
-      // With the random draw near 1, the jitter takes almost a quarter off each delay: 75 ms
-      // before the second attempt and 150 ms before the third. Jitter added instead would make
-      // them about 125 ms and 250 ms, and no doubling would make the second 75 ms. The upper
-      // bounds leave room for slow timers, but not for either of those.
+      // With the random draw at 0.99, the jitter takes 24.75% off each delay: 75.25 ms before the
+      // second attempt and 150.5 ms before the third. Jitter added instead would make them about
+      // 125 ms and 250 ms, and no doubling would make the second 75.25 ms. The delays the client
+      // asks for are read from its timer, because a busy machine fires a timer late by any
+      // amount (up to 310 ms was seen), so an upper bound on the time between requests fails
+      // although the client is right. The arrivals still show that it waited.
       const backoffInitialMs = 100;
       vi.spyOn(Math, "random").mockReturnValue(0.99);
+      const waits = recordClientWaits();
       const arrivals: number[] = [];
       const timed = (code: number) => () => {
         arrivals.push(performance.now());
@@ -174,12 +195,11 @@ describe("askJev", () => {
         },
         { ...timing, backoffInitialMs },
       );
+      expect(waits).toEqual([backoffInitialMs * 0.7525, backoffInitialMs * 2 * 0.7525]);
       const [first = 0, second = 0, third = 0] = arrivals;
       // A timer can fire a millisecond early.
-      expect(second - first).toBeGreaterThanOrEqual(backoffInitialMs * 0.75 - 1);
-      expect(second - first).toBeLessThan(backoffInitialMs * 1.1);
-      expect(third - second).toBeGreaterThanOrEqual(backoffInitialMs * 1.5 - 1);
-      expect(third - second).toBeLessThan(backoffInitialMs * 2.2);
+      expect(second - first).toBeGreaterThanOrEqual(backoffInitialMs * 0.7525 - 1);
+      expect(third - second).toBeGreaterThanOrEqual(backoffInitialMs * 2 * 0.7525 - 1);
     });
 
     it("waits as long as retry-after-ms asks, when that is longer than the backoff", async () => {
@@ -219,7 +239,8 @@ describe("askJev", () => {
     }
 
     // Only a whole number of seconds is read. A date, read as one, would ask for an hour and stop
-    // the question, and `1.5`, read as seconds, would wait 1.5 seconds.
+    // the question, and `1.5`, read as seconds, would wait 1.5 seconds. As above, the wait is
+    // read from the client's timer rather than timed.
     const ignoredRetryAfter = [
       new Date(Date.now() + 60 * 60 * 1000).toUTCString(),
       "-5",
@@ -229,20 +250,14 @@ describe("askJev", () => {
     ];
     for (const value of ignoredRetryAfter) {
       it(`falls back to the backoff for Retry-After: ${value}`, async () => {
-        const arrivals: number[] = [];
+        const waits = recordClientWaits();
         fixture.respond(
-          () => {
-            arrivals.push(performance.now());
-            return HttpResponse.json({}, { status: 429, headers: { "retry-after": value } });
-          },
-          () => {
-            arrivals.push(performance.now());
-            return HttpResponse.json(noulResponse);
-          },
+          () => HttpResponse.json({}, { status: 429, headers: { "retry-after": value } }),
+          () => HttpResponse.json(noulResponse),
         );
         expect(await ask()).toMatchObject({ ok: true, attempts: 2 });
-        const [first = 0, second = 0] = arrivals;
-        expect(second - first).toBeLessThan(500);
+        expect(waits).toHaveLength(1);
+        expect(waits[0]).toBeLessThanOrEqual(timing.backoffInitialMs);
       });
     }
   });
