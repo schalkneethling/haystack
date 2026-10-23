@@ -279,6 +279,9 @@ importers:
       '@types/node':
         specifier: ^25.9.9
         version: 25.9.9
+      '@valibot/to-json-schema':
+        specifier: ^1.8.0
+        version: 1.8.0(valibot@1.5.0(typescript@7.0.2))
       '@varlock/1password-plugin':
         specifier: ^2.0.5
         version: 2.0.5(varlock@1.22.0)
@@ -2163,6 +2166,11 @@ packages:
     engines: {node: '>=16.20.0'}
     cpu: [x64]
     os: [win32]
+
+  '@valibot/to-json-schema@1.8.0':
+    resolution: {integrity: sha512-a0M+uwCuQZEPAo65NYkFSJ14O5c213KoSZmPdoCfuFvUhfULi4T2Z6Tpjv6lTVMW9RoLm74RpRAjNEa43KcN+g==}
+    peerDependencies:
+      valibot: ^1.5.0
 
   '@varlock/1password-plugin@2.0.5':
     resolution: {integrity: sha512-QmthT9YxOocsp6J/EerOdeIwsm4DzKgnDoF7RdSiL8vDBy8Y0O0wSL0TWwp+3VxRfWjA7V7qGIzQkWRabu1e1Q==}
@@ -5837,6 +5845,10 @@ snapshots:
 
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
+
+  '@valibot/to-json-schema@1.8.0(valibot@1.5.0(typescript@7.0.2))':
+    dependencies:
+      valibot: 1.5.0(typescript@7.0.2)
 
   '@varlock/1password-plugin@2.0.5(varlock@1.22.0)':
     dependencies:
