@@ -24,6 +24,7 @@ import {
 } from "../src/enrichment/github-client.ts";
 import { type GitHubRepositoryMatch, matchGitHubRepository } from "../src/enrichment/github-url.ts";
 import {
+  GITHUB_LOOPBACK_ORIGIN,
   GITHUB_ORIGIN,
   type GitHubFixture,
   json,
@@ -551,11 +552,31 @@ describe("readGitHubRepository", () => {
       },
     );
 
-    it("is sent only over https", async () => {
+    it("is sent only over https, or http on a loopback host", async () => {
       await expect(
         readGitHubRepository({ ...config, GITHUB_API_BASE_URL: "http://api.github.test" }, match()),
-      ).rejects.toThrow("GITHUB_API_BASE_URL must be an https URL");
+      ).rejects.toThrow(
+        "GITHUB_API_BASE_URL must be an https URL, or an http URL on a loopback host for tests",
+      );
       expect(fixture.requests).toEqual([]);
+    });
+
+    // The integration tests' fixture server is plain http on 127.0.0.1 (Q10 in the plan).
+    it("is sent over http to a loopback host, as an integration test's server is", async () => {
+      fixture.respond(json(repositoryResponse), readme("# Vitest"));
+      const result = await readGitHubRepository(
+        { ...config, GITHUB_API_BASE_URL: GITHUB_LOOPBACK_ORIGIN },
+        match(),
+        timing,
+      );
+      expect(result).toMatchObject({ ok: true, requests: 2 });
+      expect(fixture.requests.map(({ url }) => url)).toEqual([
+        `${GITHUB_LOOPBACK_ORIGIN}/repos/vitest-dev/vitest`,
+        `${GITHUB_LOOPBACK_ORIGIN}/repos/vitest-dev/vitest/readme`,
+      ]);
+      for (const request of fixture.requests) {
+        expect(request.headers.get("authorization")).toBe(`Bearer ${TOKEN}`);
+      }
     });
   });
 });

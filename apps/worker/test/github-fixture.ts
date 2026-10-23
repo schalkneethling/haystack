@@ -1,7 +1,7 @@
 // GitHub's REST API for the GitHub client's tests (#123), in the style of jev-fixture.ts. Tests
 // make no requests to the internet: Mock Service Worker (MSW) patches `globalThis.fetch` in the
 // test's own process, and answers the client's requests at GITHUB_ORIGIN, under the reserved
-// `.test` domain, so no name is ever looked up.
+// `.test` domain, so no name is ever looked up, and at GITHUB_LOOPBACK_ORIGIN, without a socket.
 //
 // A test queues one resolver for each request it expects, in order. Any other request is one no
 // test planned for: a request beyond the queue, or to any other address, such as a redirect's
@@ -23,7 +23,7 @@ export interface GitHubRequest {
 export type GitHubResolver = (request: Request) => Response | Promise<Response>;
 
 export interface GitHubFixture {
-  /** Every request to GITHUB_ORIGIN since the fixture started or was last reset, in order. */
+  /** Every request the fixture answered since it started or was last reset, in order. */
   readonly requests: readonly GitHubRequest[];
   /** Requests no test planned for. */
   readonly unplanned: readonly string[];
@@ -110,8 +110,21 @@ export function status(code: number, headers: Record<string, string> = {}): GitH
 /** A request that fails without a response, as a refused connection does. */
 export const networkError: GitHubResolver = () => HttpResponse.error();
 
-// Any address on GITHUB_ORIGIN.
-const GITHUB_ADDRESS = new RegExp(`^${GITHUB_ORIGIN.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}/`);
+/**
+ * A plain-http address on this machine, as an integration test's local server would have, which
+ * the client accepts as GITHUB_API_BASE_URL. MSW answers it in this process like GITHUB_ORIGIN, so
+ * no socket is opened.
+ */
+export const GITHUB_LOOPBACK_ORIGIN = "http://127.0.0.1:8788";
+
+function escaped(origin: string): string {
+  return origin.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+}
+
+// Any address on GITHUB_ORIGIN or GITHUB_LOOPBACK_ORIGIN.
+const GITHUB_ADDRESS = new RegExp(
+  `^(?:${escaped(GITHUB_ORIGIN)}|${escaped(GITHUB_LOOPBACK_ORIGIN)})/`,
+);
 
 /**
  * Starts answering the client's requests in this process. Only one may run at a time, because it

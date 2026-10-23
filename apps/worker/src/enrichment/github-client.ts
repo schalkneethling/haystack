@@ -16,10 +16,11 @@
 // - Each request, from the request to the last byte read, stops after `requestTimeoutMs`. Only
 //   the first GITHUB_README_READ_LIMIT_BYTES of a README are read.
 // - The token is sent only in the `authorization` header, only to GITHUB_API_BASE_URL, and only
-//   over https. Redirects are not followed, so the token can't be sent on to another address.
+//   over https, or http on a loopback host for tests. Redirects are not followed, so the token
+//   can't be sent on to another address.
 // - The README is untrusted: it only becomes text, and nothing in it changes what this does.
 // - Nothing here logs. A failure is a fixed code and a status, which are safe to log.
-import { truncate } from "@haystack/schemas";
+import { isHttpsOrLoopbackUrl, truncate } from "@haystack/schemas";
 import * as v from "valibot";
 import type { GitHubRepositoryMatch } from "./github-url.ts";
 import { readmeExcerpt } from "./readme-excerpt.ts";
@@ -259,9 +260,9 @@ function parseRepository(text: string): v.InferOutput<typeof RepositoryResponse>
 /**
  * Reads the repository that `match` names: its description, topics and primary language, and
  * an excerpt of its README. A missing or unreadable README still returns the repository's data.
- * Any other failure returns no data, and nothing is retried. Throws for an empty token or a base
- * URL that isn't https, before anything is sent, because those are configuration errors rather
- * than failures of the bookmark.
+ * Any other failure returns no data, and nothing is retried. Throws for an empty token, or for a
+ * base URL that is neither https nor http on a loopback host, before anything is sent, because
+ * those are configuration errors rather than failures of the bookmark.
  */
 export async function readGitHubRepository(
   config: GitHubConfig,
@@ -276,8 +277,12 @@ export async function readGitHubRepository(
   }
   const path = `/repos/${encodeURIComponent(match.owner)}/${encodeURIComponent(match.repo)}`;
   const repositoryUrl = new URL(path, config.GITHUB_API_BASE_URL);
-  if (repositoryUrl.protocol !== "https:") {
-    throw new TypeError("GITHUB_API_BASE_URL must be an https URL");
+  // Integration tests point the base URL at a plain-http server on this machine (Q10), so http
+  // is allowed there, by the same rule as Google sign-in's endpoints.
+  if (!isHttpsOrLoopbackUrl(repositoryUrl)) {
+    throw new TypeError(
+      "GITHUB_API_BASE_URL must be an https URL, or an http URL on a loopback host for tests",
+    );
   }
   const headers = {
     authorization: `Bearer ${config.GITHUB_TOKEN}`,
