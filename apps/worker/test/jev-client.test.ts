@@ -64,19 +64,25 @@ function ask(): Promise<JevResult<number>> {
 
 // The waits the client asks for between attempts, in milliseconds, as it calls them. Only the
 // timers that jev-client.ts's `sleep` sets are recorded, because Node's fetch sets timers of its
-// own around each request. Every timer still runs as asked.
+// own around each request, some while the client's own frames are on the stack, so the match
+// names `sleep` and not only the file. Every timer still runs as asked, with all its arguments:
+// fetch's keep-alive timer passes its state as a third one.
 function recordClientWaits(): number[] {
   const waits: number[] = [];
   const setTimeoutAsGiven = globalThis.setTimeout;
-  vi.spyOn(globalThis, "setTimeout").mockImplementation(((
-    handler: () => void,
-    milliseconds?: number,
-  ) => {
-    if (/\bsleep \([^)]*src\/enrichment\/jev-client\.ts/.test(new Error().stack ?? "")) {
-      waits.push(milliseconds ?? 0);
-    }
-    return setTimeoutAsGiven(handler, milliseconds);
-  }) as typeof setTimeout);
+  vi.spyOn(globalThis, "setTimeout").mockImplementation(
+    (...args: Parameters<typeof setTimeout>) => {
+      // The default limit of 10 frames leaves `sleep` only a few frames from being cut off.
+      const stackTraceLimit = Error.stackTraceLimit;
+      Error.stackTraceLimit = 50;
+      const stack = new Error().stack ?? "";
+      Error.stackTraceLimit = stackTraceLimit;
+      if (/\bsleep \([^)]*src[\\/]enrichment[\\/]jev-client\.ts/.test(stack)) {
+        waits.push(args[1] ?? 0);
+      }
+      return setTimeoutAsGiven(...args);
+    },
+  );
   return waits;
 }
 
@@ -250,14 +256,15 @@ describe("askJev", () => {
     ];
     for (const value of ignoredRetryAfter) {
       it(`falls back to the backoff for Retry-After: ${value}`, async () => {
+        vi.spyOn(Math, "random").mockReturnValue(0.99);
         const waits = recordClientWaits();
         fixture.respond(
           () => HttpResponse.json({}, { status: 429, headers: { "retry-after": value } }),
           () => HttpResponse.json(noulResponse),
         );
         expect(await ask()).toMatchObject({ ok: true, attempts: 2 });
-        expect(waits).toHaveLength(1);
-        expect(waits[0]).toBeLessThanOrEqual(timing.backoffInitialMs);
+        // The backoff itself, so a client that waits what the server asked, even 0 ms, fails.
+        expect(waits).toEqual([timing.backoffInitialMs * 0.7525]);
       });
     }
   });
