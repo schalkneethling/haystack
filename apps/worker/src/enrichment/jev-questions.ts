@@ -124,8 +124,8 @@ export interface CapturedEvidence {
 /** The `kind` question's state. */
 export interface KindEvidence {
   readonly bookmark: CapturedEvidence;
-  // What GitHub says about the repository the bookmark is in, for a GitHub bookmark. The GitHub
-  // client (#123) defines its fields.
+  // What GitHub says about the repository the bookmark is in, for a GitHub bookmark: the GitHub
+  // client's `GitHubEvidence` (github-client.ts, #123).
   readonly github?: object;
 }
 
