@@ -31,18 +31,26 @@ concurrency:
 
 jobs:
   voiceover:
-    # Not on Dependabot's pull requests, which wait a long time for a macOS runner and mostly
-    # update packages that the page doesn't read aloud differently. The push to main after the
-    # merge runs it, so a dependency that breaks a VoiceOver test is still caught there. The
-    # exceptions are updates that change the VoiceOver tests' own tooling: GitHub Actions (this
-    # file's actions) and the Guidepup and Playwright packages, whose names Dependabot puts in the
-    # branch, as in dependabot/npm_and_yarn/guidepup/setup-0.29.4.
+    # The job skips Dependabot's pull requests, which wait a long time for a macOS runner and
+    # mostly update packages that change nothing VoiceOver reads. The push to main after the
+    # merge runs it, so a dependency that breaks a VoiceOver test is still caught there.
+    #
+    # The exceptions are updates to the VoiceOver tests' own tooling: GitHub Actions (this file's
+    # actions), and the @guidepup and @playwright packages. Dependabot puts a scoped package's
+    # name in the branch without the @, as in dependabot/npm_and_yarn/guidepup/setup-0.29.4.
+    # @axe-core/playwright doesn't match, because only the Chromium tests use it. A Dependabot
+    # group names the branch after the group instead (dependabot/npm_and_yarn/<group>-<hash>),
+    # so a group that holds any of these packages needs a name that starts with "guidepup".
+    #
+    # The skip also covers a person's push to a Dependabot branch, such as Update branch, which
+    # main requires before every merge. To run the tests there by hand, dispatch this workflow
+    # on the branch: a re-run of a skipped run is skipped again, because it reuses the event.
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.user.login != 'dependabot[bot]' ||
       startsWith(github.head_ref, 'dependabot/github_actions/') ||
-      contains(github.head_ref, 'guidepup') ||
-      contains(github.head_ref, 'playwright')
+      contains(github.head_ref, '/guidepup') ||
+      contains(github.head_ref, '/playwright/')
     # macOS 26, because VoiceOver's wording and behavior change between macOS releases. The
     # image still gets 26.x point releases, which can change them too.
     runs-on: macos-26
