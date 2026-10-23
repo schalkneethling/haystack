@@ -1,0 +1,179 @@
+name: Dependabot Worker types
+
+# A Wrangler update can move the Workers runtime (workerd) that Wrangler bundles, and then
+# `types:check` in the Quality workflow fails because apps/worker/worker-configuration.d.ts was
+# generated from the old runtime. On Dependabot pull requests, this workflow regenerates the file
+# and commits it to the pull request's branch. See "Dependency updates" in
+# plans/haystack-v1-implementation-plan.md, which also has the manual steps for when it fails.
+#
+# The work is split in two jobs, because installing the updated dependencies runs their code:
+# - `generate` installs and runs Wrangler with a read-only token.
+# - `commit` holds the token that can write, and never checks out or runs the pull request's code.
+on:
+  pull_request:
+    branches: [main]
+    # Every npm update that Dependabot proposes changes the lockfile, and a GitHub Actions update
+    # does not, so this skips the install on pull requests that cannot change the types.
+    paths:
+      - "pnpm-lock.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependabot-worker-types-${{ github.event.pull_request.number }}
+  # A newer push makes this run's result stale. The commit job would refuse to commit it anyway,
+  # because the branch head no longer matches `expectedHeadOid`.
+  cancel-in-progress: true
+
+jobs:
+  generate:
+    # The pull request's author, not `github.actor`: the actor is whoever caused this run, so a
+    # maintainer's follow-up push to a Dependabot branch would skip the job, while the author is
+    # always Dependabot on its pull requests. Only people with write access can push to a branch
+    # in this repository, and the same-repository check rules out a fork's pull request.
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Read-only, because `vp install` and `wrangler types` run the updated dependencies' code.
+    permissions:
+      contents: read # to check out the pull request's head commit
+    outputs:
+      # Set by actions/checkout before anything is installed, so the dependencies' code cannot
+      # change it.
+      head-sha: ${{ steps.checkout.outputs.commit }}
+      changed: ${{ steps.compare.outputs.changed }}
+    steps:
+      # The pull request's head commit, not the merge commit that `pull_request` checks out by
+      # default, because the regenerated file is committed on top of the head.
+      - id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      # Also runs `vp install`.
+      - uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        with:
+          node-version: "24"
+          cache: true
+
+      - run: vp run @haystack/worker#types
+
+      - id: compare
+        run: |
+          if git diff --quiet -- apps/worker/worker-configuration.d.ts; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Uploaded as the file itself, not a zip archive, so the commit job does not unpack an
+      # archive this job built. The artifact is named after the file.
+      - if: steps.compare.outputs.changed == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: apps/worker/worker-configuration.d.ts
+          archive: false
+          if-no-files-found: error
+          retention-days: 1
+
+  commit:
+    needs: generate
+    # No change, no commit.
+    if: needs.generate.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Dependabot's runs get a read-only token unless the workflow asks for more. This job needs to
+    # write the commit, and has no checkout and no install, so nothing from the pull request runs
+    # while it holds the token.
+    permissions:
+      contents: write # to commit the regenerated types to the pull request's branch
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: worker-configuration.d.ts
+          path: ${{ runner.temp }}/worker-types
+
+      # The generate job ran the dependencies' code, so its artifact is untrusted. Commit it only
+      # if it is that one file, a regular file and not a link, and of a plausible size: the
+      # current file is about 610 KiB.
+      - name: Check the artifact
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/worker-types"
+          file="$dir/worker-configuration.d.ts"
+          max_bytes=$((2 * 1024 * 1024))
+
+          entries=$(find "$dir" -mindepth 1 -printf '.' | wc -c)
+          if [ "$entries" -ne 1 ]; then
+            echo "::error::The artifact must contain only worker-configuration.d.ts, but it has $entries entries."
+            exit 1
+          fi
+          if [ -L "$file" ] || [ ! -f "$file" ]; then
+            echo "::error::The artifact does not contain worker-configuration.d.ts as a regular file."
+            exit 1
+          fi
+          size=$(stat --format=%s "$file")
+          if [ "$size" -eq 0 ] || [ "$size" -gt "$max_bytes" ]; then
+            echo "::error::worker-configuration.d.ts is $size bytes, outside the expected 1 to $max_bytes bytes."
+            exit 1
+          fi
+
+      # Commits through the GraphQL API, which GitHub signs, instead of a git push from a checkout.
+      # Untrusted values, such as the branch name, reach the script only through `env`, and jq
+      # passes them on as JSON strings, so none of them is parsed as shell or GraphQL.
+      - name: Commit the regenerated types
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          CHECKED_OUT_SHA: ${{ needs.generate.outputs.head-sha }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          file="$RUNNER_TEMP/worker-types/worker-configuration.d.ts"
+
+          # The generate job checked out the event's head commit, so the two must match.
+          if ! [[ "$CHECKED_OUT_SHA" =~ ^[0-9a-f]{40}$ ]] || [ "$CHECKED_OUT_SHA" != "$EVENT_HEAD_SHA" ]; then
+            echo "::error::The generate job did not report the pull request's head commit."
+            exit 1
+          fi
+
+          # The API takes the contents base64-encoded. They go through a file, because the encoded
+          # file is larger than a single command-line argument may be.
+          base64 --wrap=0 "$file" > "$RUNNER_TEMP/contents.b64"
+
+          headline="Regenerate the Worker types for this update [dependabot skip]"
+          body=$(printf '%s\n\n%s' \
+            'The Dependabot Worker types workflow (.github/workflows/dependabot-worker-types.yml) regenerated apps/worker/worker-configuration.d.ts with vp run @haystack/worker#types, because the updated dependencies changed the generated types.' \
+            'The [dependabot skip] marker in the headline lets Dependabot keep rebasing this pull request. A rebase drops this commit, and the workflow then regenerates the types again.')
+
+          # expectedHeadOid makes GitHub refuse the commit if the branch moved after the generate
+          # job checked it out, so a newer push is never overwritten.
+          jq --null-input \
+            --arg query 'mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid url } } }' \
+            --arg repository "$REPOSITORY" \
+            --arg branch "$BRANCH" \
+            --arg expectedHeadOid "$CHECKED_OUT_SHA" \
+            --arg headline "$headline" \
+            --arg body "$body" \
+            --rawfile contents "$RUNNER_TEMP/contents.b64" \
+            '{
+              query: $query,
+              variables: {
+                input: {
+                  branch: { repositoryNameWithOwner: $repository, branchName: $branch },
+                  expectedHeadOid: $expectedHeadOid,
+                  message: { headline: $headline, body: $body },
+                  fileChanges: {
+                    additions: [{ path: "apps/worker/worker-configuration.d.ts", contents: $contents }]
+                  }
+                }
+              }
+            }' > "$RUNNER_TEMP/commit-request.json"
+
+          gh api graphql --input "$RUNNER_TEMP/commit-request.json" \
+            --jq '"Committed " + .data.createCommitOnBranch.commit.url'
