@@ -142,7 +142,9 @@ describe("readmeExcerpt", () => {
   // or a long run that two parts of a pattern could share. Measured in Node 24 on an Apple
   // silicon Mac, each took under 0.5 ms, and the slowest shape found, 16 KiB of short code spans,
   // took 1.7 ms. The first four took 120 to 300 ms each with the patterns of 09bad9d. 50 ms
-  // catches that and leaves room for a slow machine.
+  // catches that and leaves room for a slow machine. Each test times 5 calls and checks the
+  // fastest, because a busy machine slows some calls down (single calls under load took up to
+  // 87 ms) but a quadratic pattern makes every call slow.
   const hostile: [string, string][] = [
     ["a run of backticks after text", `a${"`".repeat(16383)}`],
     ["spaces before text", `${" ".repeat(16383)}x`],
@@ -168,8 +170,11 @@ describe("readmeExcerpt", () => {
     ["unclosed character references", "&#x".repeat(5461)],
   ];
   it.each(hostile)("removes the syntax of %s quickly", (_, markdown) => {
-    const start = performance.now();
-    readmeExcerpt(markdown);
-    expect(performance.now() - start).toBeLessThan(50);
+    const durations = Array.from({ length: 5 }, () => {
+      const start = performance.now();
+      readmeExcerpt(markdown);
+      return performance.now() - start;
+    });
+    expect(Math.min(...durations)).toBeLessThan(50);
   });
 });
