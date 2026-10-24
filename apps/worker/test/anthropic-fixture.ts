@@ -11,8 +11,11 @@
 // and MSW fails it (`onUnhandledFrame: "error"`), so it never reaches the network.
 //
 // A request to the gateway without `cf-aig-collect-log-payload: false` is unplanned too, whatever
-// the queue holds, because the gateway would log its prompt and its response (Q7). So every test
-// that sends one through the gateway fails, the validation retry's included.
+// the queue holds, because the gateway would log its prompt and its response (Q7). So is one
+// without the Anthropic key in `x-api-key`, or with an `authorization` header, because the real
+// gateway answered a key in `authorization` with a 400 on 2026-10-24 (ai-gateway-provider.ts).
+// So every test that sends such a request through the gateway fails, the validation retry's
+// included.
 import { http, HttpResponse, type JsonBodyType } from "msw";
 import { setupServer } from "msw/node";
 
@@ -147,6 +150,10 @@ export function startAnthropicFixture(): AnthropicFixture {
     await record(request);
     if (request.headers.get("cf-aig-collect-log-payload") !== "false") {
       unplanned.push(`${request.url} without cf-aig-collect-log-payload: false`);
+      return HttpResponse.error();
+    }
+    if (!request.headers.has("x-api-key") || request.headers.has("authorization")) {
+      unplanned.push(`${request.url} without the key in x-api-key alone`);
       return HttpResponse.error();
     }
     return answerNext(request);

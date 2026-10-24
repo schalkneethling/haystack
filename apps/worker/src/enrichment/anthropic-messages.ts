@@ -20,10 +20,11 @@
 //   (enrichment-provider.ts) is the only retry, so Q3 counts at most 2 requests per bookmark.
 // - The request, from sending it to the last byte of the response, stops after
 //   `requestTimeoutMs`.
-// - The Anthropic key is sent only in the `authorization` header, and only to the URL the adapter
-//   supplies, which each adapter builds from its own base URL and checks is https, or http on a
-//   loopback host, where the integration tests' recorded server runs (see "Testing strategy" in
-//   the plan). Redirects are not followed, so no credential can be sent on to another address.
+// - The Anthropic key is sent only in the one header the adapter chooses, `authorization` or
+//   `x-api-key`, and only to the URL the adapter supplies, which each adapter builds from its own
+//   base URL and checks is https, or http on a loopback host, where the integration tests'
+//   recorded server runs (see "Testing strategy" in the plan). Redirects are not followed, so no
+//   credential can be sent on to another address.
 // - Nothing here logs. A failure is a fixed code and a status, which are safe to log.
 import * as v from "valibot";
 import { enrichmentPrompt } from "./enrichment-prompt.ts";
@@ -196,13 +197,35 @@ function parseOutput(body: string): ProviderResult {
 /** Where an adapter sends the request, and the headers it adds to the shared ones. */
 export interface MessagesEndpoint {
   readonly url: URL;
-  // The shared headers are set after these, so an adapter can't replace one of them.
+  // The shared headers are set after these, so an adapter can't replace one of them. Neither key
+  // header may be among them, in any case: the key goes only in the header `keyHeader` names.
   readonly headers?: Readonly<Record<string, string>>;
+}
+
+/**
+ * How the Anthropic key is sent. The API overview page names `authorization: Bearer` as the way
+ * to send an API key, and `x-api-key` as its legacy fallback, so Anthropic accepts either. The
+ * Anthropic adapter uses `authorization`, and the AI Gateway adapter `x-api-key`, because the
+ * gateway doesn't pass `authorization` on as Anthropic's credentials (ai-gateway-provider.ts).
+ */
+export type AnthropicKeyHeader = "authorization" | "x-api-key";
+
+const KEY_HEADERS: ReadonlySet<string> = new Set<AnthropicKeyHeader>([
+  "authorization",
+  "x-api-key",
+]);
+
+function keyHeaders(header: AnthropicKeyHeader, apiKey: string): Record<string, string> {
+  return header === "authorization"
+    ? { authorization: `Bearer ${apiKey}` }
+    : { "x-api-key": apiKey };
 }
 
 /** What an adapter supplies to the shared request. */
 export interface MessagesTransport {
   readonly apiKey: string;
+  // The one header the key is sent in.
+  readonly keyHeader: AnthropicKeyHeader;
   /**
    * Builds the URL and the adapter's headers, and throws for the adapter's own configuration
    * errors. It is called on every `enrich()` call, after the key and the model are checked and
@@ -237,6 +260,16 @@ export function messagesProvider(
         throw configurationError("ANTHROPIC_MODEL is empty", "ANTHROPIC_MODEL_EMPTY");
       }
       const { url, headers } = transport.endpoint();
+      // An adapter's own `authorization` or `x-api-key` would send a second credential, or the
+      // key in a header the provider doesn't read (#125). Header names aren't case-sensitive.
+      for (const name of Object.keys(headers ?? {})) {
+        if (KEY_HEADERS.has(name.toLowerCase())) {
+          throw configurationError(
+            `An adapter's headers can't include ${name}; use keyHeader`,
+            "MESSAGES_KEY_HEADER_IN_HEADERS",
+          );
+        }
+      }
       const { system, user } = enrichmentPrompt(input);
       const outcome = await request(
         url,
@@ -244,9 +277,7 @@ export function messagesProvider(
           method: "POST",
           headers: {
             ...headers,
-            // The overview page names `authorization: Bearer` as the way to send an API key, and
-            // `x-api-key` as its legacy fallback.
-            authorization: `Bearer ${transport.apiKey}`,
+            ...keyHeaders(transport.keyHeader, transport.apiKey),
             "anthropic-version": ANTHROPIC_VERSION,
             "content-type": "application/json",
             accept: "application/json",

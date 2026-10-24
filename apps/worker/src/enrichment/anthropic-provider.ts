@@ -33,6 +33,8 @@ export function anthropicProvider(
     "anthropic",
     {
       apiKey: config.ANTHROPIC_API_KEY,
+      // The overview page names `authorization: Bearer` as the way to send an API key.
+      keyHeader: "authorization",
       endpoint() {
         const url = new URL("/v1/messages", config.ANTHROPIC_BASE_URL);
         if (!isHttpsOrLoopbackUrl(url)) {

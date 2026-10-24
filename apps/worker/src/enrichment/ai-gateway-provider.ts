@@ -25,10 +25,18 @@
 //   `cf-aig-collect-log-payload`, which Q7's decision rests on, and its examples use the REST
 //   API, so the check in "Deploys" in the plan confirms it for this endpoint before #126 ships.
 // - The gateway is authenticated. Its token goes in `cf-aig-authorization`, and the Anthropic key
-//   stays in `authorization`, which the gateway passes on: Troubleshooting says "The
-//   `Authorization` header is reserved for provider credentials", and Unified Billing says that
-//   when a request "carries provider authentication (for example, an `Authorization` header), AI
-//   Gateway forwards it to the provider unchanged". No key is stored in the gateway.
+//   goes in `x-api-key`, which the gateway passes on to Anthropic. No key is stored in the gateway.
+//   The key isn't sent in `authorization: Bearer`, as the Anthropic adapter sends it, because the
+//   gateway doesn't treat that header as Anthropic's credentials. A request to Haystack's gateway
+//   on 2026-10-24, with Require provider credentials on and `cf-aig-no-wholesale: true`, got HTTP
+//   400 with code 2044, "Customer-provided provider credentials are required for this request",
+//   and the same request with the key in `x-api-key` got a 200. The Anthropic page's cURL examples
+//   send the key in `x-api-key` too, and Anthropic's API overview names it as the legacy fallback,
+//   so Anthropic accepts it. This is despite Troubleshooting, which says "The `Authorization`
+//   header is reserved for provider credentials", and Unified Billing, which says a request that
+//   "carries provider authentication (for example, an `Authorization` header)" is forwarded "to
+//   the provider unchanged". The contradiction is reported upstream as
+//   https://github.com/cloudflare/cloudflare-docs/issues/34593.
 // - Both credentials go only to AI_GATEWAY_BASE_URL, and only over https, or over http to a
 //   loopback host, where the integration tests' recorded server runs (see "Testing strategy").
 // - The documentation doesn't say what the gateway itself answers for a missing or wrong token or
@@ -57,7 +65,7 @@ export interface AiGatewayConfig {
   AI_GATEWAY_ID: string;
   // The gateway's authentication token, created in the gateway's settings.
   AI_GATEWAY_TOKEN: string;
-  // The gateway passes this on to Anthropic.
+  // The gateway passes this on to Anthropic, in `x-api-key`.
   ANTHROPIC_API_KEY: string;
 }
 
@@ -99,6 +107,8 @@ export function aiGatewayProvider(
     "ai-gateway",
     {
       apiKey: config.ANTHROPIC_API_KEY,
+      // The gateway answers a key in `authorization` with a 400 (see above).
+      keyHeader: "x-api-key",
       endpoint() {
         // An empty token would get the gateway's error for every bookmark (#98).
         if (!config.AI_GATEWAY_TOKEN || config.AI_GATEWAY_TOKEN.trim() === "") {
@@ -134,7 +144,11 @@ export function aiGatewayProvider(
             // credentials it can use return "an HTTP `400` response instead of using
             // Cloudflare-managed credentials", and that this header does the same for one request:
             // it "can prevent Unified Billing fallback". So the gateway can never bill a request
-            // to Cloudflare credits. The setting is on too (see "Deploys" in the plan).
+            // to Cloudflare credits. The setting is on too (see "Deploys" in the plan). On
+            // 2026-10-24 the two turned a key in the wrong header into that 400. Without them, by
+            // the credential precedence the Unified Billing page describes, the gateway would
+            // presumably have billed the request to Cloudflare credits instead, which wasn't
+            // tested.
             "cf-aig-no-wholesale": "true",
           },
         };

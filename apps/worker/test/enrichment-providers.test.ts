@@ -22,6 +22,7 @@ import {
   ANTHROPIC_MAX_TOKENS,
   ANTHROPIC_VERSION,
   type AnthropicTiming,
+  messagesProvider,
 } from "../src/enrichment/anthropic-messages.ts";
 import { anthropicProvider } from "../src/enrichment/anthropic-provider.ts";
 import { enrichmentPrompt } from "../src/enrichment/enrichment-prompt.ts";
@@ -82,6 +83,11 @@ interface Adapter {
   // Where it posts every request, and where it posts with a loopback base URL.
   readonly url: string;
   readonly loopbackUrl: string;
+  // The one header the Anthropic key goes in, its value there, and the other key header, which
+  // it never sends.
+  readonly keyHeader: string;
+  readonly keyValue: string;
+  readonly otherKeyHeader: string;
   // Every credential it sends, none of which may be in a result.
   readonly credentials: readonly string[];
 }
@@ -101,6 +107,9 @@ const ADAPTERS: readonly Adapter[] = [
     origin: ANTHROPIC_ORIGIN,
     url: MESSAGES_URL,
     loopbackUrl: `${LOOPBACK_ORIGIN}/v1/messages`,
+    keyHeader: "authorization",
+    keyValue: `Bearer ${KEY}`,
+    otherKeyHeader: "x-api-key",
     credentials: [KEY],
   },
   {
@@ -113,6 +122,10 @@ const ADAPTERS: readonly Adapter[] = [
     origin: GATEWAY_ORIGIN,
     url: GATEWAY_MESSAGES_URL,
     loopbackUrl: `${LOOPBACK_ORIGIN}${GATEWAY_PATH}`,
+    // The gateway answered a key in `authorization` with a 400 on 2026-10-24.
+    keyHeader: "x-api-key",
+    keyValue: KEY,
+    otherKeyHeader: "authorization",
     credentials: [KEY, TOKEN],
   },
 ];
@@ -360,7 +373,7 @@ for (const adapter of ADAPTERS) {
     });
 
     describe("the key", () => {
-      it("is sent only in the authorization header, only to the configured base URL", async () => {
+      it(`is sent only in the ${adapter.keyHeader} header, only to the configured base URL`, async () => {
         fixture.respond(output({}), output(VALID_OUTPUT));
         await write();
         expect(fixture.requests).toHaveLength(2);
@@ -369,10 +382,10 @@ for (const adapter of ADAPTERS) {
           expect(request.url).not.toContain(KEY);
           expect(request.body).not.toContain(KEY);
           for (const [name, value] of request.headers) {
-            expect(value.includes(KEY)).toBe(name === "authorization");
+            expect(value.includes(KEY)).toBe(name === adapter.keyHeader);
           }
-          expect(request.headers.get("authorization")).toBe(`Bearer ${KEY}`);
-          expect(request.headers.get("x-api-key")).toBeNull();
+          expect(request.headers.get(adapter.keyHeader)).toBe(adapter.keyValue);
+          expect(request.headers.get(adapter.otherKeyHeader)).toBeNull();
         }
       });
 
@@ -594,6 +607,28 @@ for (const adapter of ADAPTERS) {
   });
 }
 
+describe("messagesProvider", () => {
+  // The key goes only in the header the adapter's keyHeader names, so an adapter can't add a
+  // second credential, or the key in a header the provider doesn't read, in any letter case.
+  for (const name of ["authorization", "Authorization", "x-api-key", "X-Api-Key"]) {
+    it(`refuses an adapter whose own headers include ${name}, before sending anything`, async () => {
+      const provider = messagesProvider(
+        "test",
+        {
+          apiKey: KEY,
+          keyHeader: "authorization",
+          endpoint: () => ({ url: new URL(MESSAGES_URL), headers: { [name]: KEY } }),
+        },
+        timing,
+      );
+      await expect(provider.enrich(REPOSITORY_INPUT, { model: MODEL })).rejects.toMatchObject({
+        code: "MESSAGES_KEY_HEADER_IN_HEADERS",
+      });
+      expect(fixture.requests).toHaveLength(0);
+    });
+  }
+});
+
 describe("anthropicProvider", () => {
   it("is the provider named anthropic", () => {
     expect(
@@ -642,8 +677,10 @@ describe("aiGatewayProvider", () => {
       expect(request.headers.get("cf-aig-authorization")).toBe(`Bearer ${TOKEN}`);
       // The gateway can't bill the request to Cloudflare credits instead of the Anthropic key.
       expect(request.headers.get("cf-aig-no-wholesale")).toBe("true");
-      // The gateway passes the Anthropic key on.
-      expect(request.headers.get("authorization")).toBe(`Bearer ${KEY}`);
+      // The gateway passes the Anthropic key on from `x-api-key`. It answered a key in
+      // `authorization` with a 400 on 2026-10-24, so that header isn't sent at all.
+      expect(request.headers.get("x-api-key")).toBe(KEY);
+      expect(request.headers.get("authorization")).toBeNull();
       // No other gateway setting is sent: no retries of the gateway's own, which would break
       // the one-request rule, and no time limit of its own.
       const names = [...request.headers.keys()].filter((name) => name.startsWith("cf-aig-"));
@@ -670,12 +707,28 @@ describe("aiGatewayProvider", () => {
     }
   });
 
-  it("is checked by a fixture that fails a request whose bodies the gateway would log", async () => {
+  it.each([
+    [
+      "whose bodies the gateway would log",
+      { "x-api-key": KEY },
+      "cf-aig-collect-log-payload: false",
+    ],
+    [
+      "with the key in authorization",
+      { "cf-aig-collect-log-payload": "false", authorization: `Bearer ${KEY}` },
+      "the key in x-api-key alone",
+    ],
+    [
+      "with an authorization header beside x-api-key",
+      { "cf-aig-collect-log-payload": "false", "x-api-key": KEY, authorization: `Bearer ${KEY}` },
+      "the key in x-api-key alone",
+    ],
+  ])("is checked by a fixture that fails a request %s", async (_, headers, missing) => {
     fixture.respond(output(VALID_OUTPUT));
-    await expect(fetch(GATEWAY_MESSAGES_URL, { method: "POST", body: "{}" })).rejects.toThrow();
-    expect(fixture.unplanned).toEqual([
-      `${GATEWAY_MESSAGES_URL} without cf-aig-collect-log-payload: false`,
-    ]);
+    await expect(
+      fetch(GATEWAY_MESSAGES_URL, { method: "POST", headers, body: "{}" }),
+    ).rejects.toThrow();
+    expect(fixture.unplanned).toEqual([`${GATEWAY_MESSAGES_URL} without ${missing}`]);
     // This test made the request on purpose, so the check after it mustn't fail.
     fixture.reset();
   });
