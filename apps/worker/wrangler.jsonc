@@ -43,13 +43,29 @@
     // the model (#118). It is pinned, so enrichments stay comparable until an upgrade is chosen.
     "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
     "ANTHROPIC_MODEL": "claude-haiku-5-5",
+    // Cloudflare AI Gateway, which passes the same request on to Anthropic
+    // (https://developers.cloudflare.com/ai-gateway/usage/providers/anthropic/), so it uses
+    // ANTHROPIC_MODEL and ANTHROPIC_API_KEY. Its token is in `secrets`. The account ID isn't a
+    // secret. The gateway is created with the name `haystack` (plan, "Deploys").
+    "AI_GATEWAY_BASE_URL": "https://gateway.ai.cloudflare.com",
+    "AI_GATEWAY_ACCOUNT_ID": "369e0fbadd08f6f15efd9fb63c7f5193",
+    "AI_GATEWAY_ID": "haystack",
+    // The provider enrichment uses, by its `id`: `anthropic` or `ai-gateway`. A `var`, not a
+    // Flagship flag, so changing who receives bookmark data is a reviewed deploy (#125).
+    "ENRICHMENT_PROVIDER": "ai-gateway",
   },
   // Values come from .env.schema through varlock. A secret is added here in the change
   // whose code first reads it, even before production calls that code, as with
-  // TYPESAFE_API_KEY (#122), GITHUB_TOKEN (#123) and ANTHROPIC_API_KEY (#124).
-  // GOOGLE_CLIENT_SECRET is the exception, see #8.
+  // TYPESAFE_API_KEY (#122), GITHUB_TOKEN (#123), ANTHROPIC_API_KEY (#124) and
+  // AI_GATEWAY_TOKEN (#125). GOOGLE_CLIENT_SECRET is the exception, see #8.
   "secrets": {
-    "required": ["GOOGLE_CLIENT_SECRET", "TYPESAFE_API_KEY", "GITHUB_TOKEN", "ANTHROPIC_API_KEY"],
+    "required": [
+      "GOOGLE_CLIENT_SECRET",
+      "TYPESAFE_API_KEY",
+      "GITHUB_TOKEN",
+      "ANTHROPIC_API_KEY",
+      "AI_GATEWAY_TOKEN",
+    ],
   },
   // Runtime switches (plan decision 20). Only the configuration module reads this binding.
   "flagship": [{ "binding": "FLAGS", "app_id": "0166d45b-a0b5-41e5-9eef-53c0b9987d81" }],
