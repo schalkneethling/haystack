@@ -15,6 +15,13 @@ catalog:
   vite-plus: 1.1.0
 overrides:
   vite@*: "catalog:"
+patchedDependencies:
+  # MSW passes an idle connection that undici opens after an aborted request through to the real
+  # network, and that connection's failure (a failed DNS lookup of a .test host) then closes the
+  # socket of the mocked request sent on it next. The patch drops such a connection when the next
+  # request arrives. See #148.
+  # WORKAROUND(@mswjs/interceptors): an idle passthrough connection fails the next mocked request | upstream: https://github.com/mswjs/interceptors/issues/881
+  "@mswjs/interceptors@0.45.9": patches/@mswjs__interceptors@0.45.9.patch
 peerDependencyRules:
   allowAny:
     - vite
