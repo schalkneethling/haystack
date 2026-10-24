@@ -6,6 +6,31 @@ A Wrangler update can change the Workers runtime that `apps/worker/worker-config
 
 If the workflow fails, regenerate the types by hand. Check out the pull request's branch, run `vp install` and `vp run @haystack/worker#types`, and check the result with `vp run @haystack/worker#types:check`. Then commit `apps/worker/worker-configuration.d.ts` to that branch with `[dependabot skip]` in the commit message, so that Dependabot can still rebase the pull request. The "Dependency updates" section of `plans/haystack-v1-implementation-plan.md` explains how the workflow works.
 
+# The @mswjs/interceptors patch on msw updates
+
+Haystack patches @mswjs/interceptors 0.45.9 because an idle connection that MSW passes through to the real network can fail the mocked request sent on it next (#148, upstream in [mswjs/interceptors#881](https://github.com/mswjs/interceptors/issues/881)). msw 3.0.3 accepts `^0.45.6`, and 0.45.9 is the version the lockfile resolves. The patch is in `patches/`, and its `patchedDependencies` entry in `pnpm-workspace.yaml` is keyed to that exact version.
+
+When the lockfile would resolve another version, whether from an msw update or from `vp update`, `vp install` fails, because pnpm's default `allowUnusedPatches: false` rejects a patch that matches no installed package:
+
+```text
+Error: ERR_PNPM_UNUSED_PATCH
+  × installing dependencies
+  ╰─▶ The following patches were not used: @mswjs/interceptors@0.45.9
+```
+
+That failure is what makes someone decide about the patch, so don't set `allowUnusedPatches` to `true` to get past it. An msw update that still resolves 0.45.9 needs nothing. A fix released within msw's range, such as a 0.45.10, isn't picked up on its own, because Dependabot doesn't propose updates to dependencies of dependencies, so check #881 now and then, and add a `remove-when` field to the `WORKAROUND(@mswjs/interceptors)` marker once the fixed release is known.
+
+**Dependabot most likely opens no pull request for such an update.** It updates the lockfile with pnpm itself, which fails with the same error, and its pnpm error handling has no case for it (`pnpm_lockfile_updater.rb` in dependabot-core). If msw updates stop arriving, look for the error in the repository's Dependabot logs (Insights, then Dependency graph, then Dependabot). Then make the update on a branch of your own: change msw's version in `apps/worker/package.json`, run `vp install` to see the error above, and follow the steps below. If Dependabot did open a pull request, do the same on its branch, and commit with `[dependabot skip]` in the message, as for the Worker types above.
+
+1. **Check whether the new version fixes the bug.** Read mswjs/interceptors#881 and the [@mswjs/interceptors releases](https://github.com/mswjs/interceptors/releases), then run the standalone reproduction, [schalkneethling/msw-idle-passthrough-repro](https://github.com/schalkneethling/msw-idle-passthrough-repro), against the new versions: change `msw` and the `@mswjs/interceptors` override in its `package.json` to the versions in the update, then run `npm install` and `node repro.mjs`. Without a fix, request 3 fails with `ENOTFOUND`. With one, it gets a 200.
+2. **Either way, remove the patch first.** Delete `patches/@mswjs__interceptors@0.45.9.patch` and the whole `patchedDependencies` block in `pnpm-workspace.yaml`, with its comment and marker. Then run `vp install`, which now installs the new version and updates `pnpm-lock.yaml`. If the new version fixes the bug, that's all: run `vp check` and `vp test`.
+3. **If it doesn't fix the bug, patch the new version.** The patch can't be moved before the new version is installed: `vp pm patch` reads the installed versions, and `vp pm patch-commit` adds its entry next to any old one and then installs, which fails on the old one.
+   1. Run `vp pm patch @mswjs/interceptors@<new version>`, always with the version, because without one pnpm records an entry that applies to every future version. It prints a directory with a clean copy of the package, and a `pnpm patch-commit` command, which is the same as `vp pm patch-commit`.
+   2. Make the change from the old patch by hand in that directory. If step 2 isn't committed yet, `git show HEAD:patches/@mswjs__interceptors@0.45.9.patch` prints it; otherwise, use the last commit that still has it. The file it changes is `lib/node/net-<hash>.js`, and the hash changes with each build.
+   3. Run `vp pm patch-commit <that directory>`. It writes the patch file, the `patchedDependencies` entry and the lockfile's hash for the patch.
+   4. Put the comment and the marker back above the new entry, from `pnpm-workspace.yaml` in the same commit as the old patch, then run `vp check` and `vp test`.
+   5. Check that the patch still fixes the failure. The failure needs lookups of `.test` hosts to fail about 100 ms after they start, as they do on GitHub's Ubuntu runners, while macOS takes 30 s. A module preloaded with `NODE_OPTIONS="--import <absolute path to the module>"` can replace `dns.lookup` so that lookups of names ending in `.test` fail with `ENOTFOUND` after a set delay, as `repro.mjs` does. With delays of 105, 115 and 125 ms, `vp test run apps/worker/test/anthropic-provider.test.ts` should pass in every run with the patch, and fail without it. Don't commit the module.
+
 <!--VITE PLUS START-->
 
 # Using Vite+, the Unified Toolchain for the Web
