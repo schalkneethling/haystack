@@ -1,11 +1,12 @@
 // The provider interface, and the one place an LLM's output is validated (#124). See "The provider
 // interface", "Enrichment sweep" and Q3 in plans/haystack-v1-implementation-plan.md.
 //
-// An adapter, such as the Anthropic adapter (anthropic-provider.ts), makes exactly one HTTP
-// request per `enrich()` call and never retries. It returns the provider's output as `unknown`,
-// or a classified failure. writeProseEnrichment validates the output against EnrichmentV1, and
-// when it fails, or the output was cut off, asks the same provider once more. That is the only
-// retry, so the LLM makes at most 2 requests per bookmark, as Q3 counts.
+// An adapter, such as the Anthropic adapter (anthropic-provider.ts) or the AI Gateway adapter
+// (ai-gateway-provider.ts), makes exactly one HTTP request per `enrich()` call and never retries.
+// It returns the provider's output as `unknown`, or a classified failure. writeProseEnrichment
+// validates the output against EnrichmentV1, and when it fails, or the output was cut off, asks
+// the same provider once more. That is the only retry, so the LLM makes at most 2 requests per
+// bookmark, as Q3 counts.
 import * as v from "valibot";
 import type { EnrichmentInput } from "./enrichment-prompt.ts";
 import { EnrichmentV1 } from "./enrichment-schema.ts";
