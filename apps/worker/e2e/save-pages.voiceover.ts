@@ -7,13 +7,16 @@
 //
 // VoiceOver does not speak a page title when a script loads the page. It speaks it when the user
 // enters the web content ("In <title> web content") and when a page loads after the user's own
-// action, so the tests do the same. The error paragraph on the form is not a live announcement
-// either: it is in the page when it loads, so the user reaches it by moving to it. The field
-// reads the error as its description, which works only because the field points at a plain
-// paragraph inside the alert, not at the alert itself (see "Save flow" in the plan).
+// action, so the tests do the same. On the save link pages, the tests leave and enter the web
+// content, and check the title as the web content's name, which is what VoiceOver says. The error
+// paragraph on the form is not a live announcement either: it is in the page when it loads, so
+// the user reaches it by moving to it. The field reads the error as its description, which works
+// only because the field points at a plain paragraph inside the alert, not at the alert itself
+// (see "Save flow" in the plan).
 //
 // Since #97, GET /save shows the address form for a rejected address, so the validation page is
 // reached with a title over its cap, and the refusal page with a tampered POST.
+import type { VoiceOverPlaywright } from "@guidepup/playwright";
 import { INVALID_LINK, openRefusalPage } from "./rejected-save-pages.ts";
 import { expect, test } from "./voiceover-fixtures.ts";
 
@@ -43,6 +46,29 @@ function expectInOrder(spoken: readonly string[], parts: readonly (string | RegE
   }
 }
 
+const TITLE = /this link can't be saved - haystack/i;
+
+/**
+ * Leaves the web content and enters it again, which is how a user hears the page title, and
+ * checks the title. VoiceOver names the web content after the page title, and says that name on
+ * leaving and on entering ("Out of <title> web content", "In <title> web content"). The check
+ * reads the name of the item VoiceOver is on after leaving, which Guidepup reads from VoiceOver's
+ * cursor right after the command, rather than the spoken phrases. Guidepup records speech by
+ * polling VoiceOver's last phrase, and on entering, the hint about the banner follows the title
+ * at once: in some CI runs, Guidepup recorded only the hint (#151).
+ *
+ * Both commands capture until VoiceOver stops speaking, so the next command doesn't interrupt the
+ * announcement or its hint.
+ */
+async function leaveAndEnterWebContent(
+  voiceOver: VoiceOverPlaywright,
+  title: RegExp,
+): Promise<void> {
+  await voiceOver.stopInteracting({ capture: true });
+  expect(await voiceOver.itemText()).toMatch(title);
+  await voiceOver.interact({ capture: true });
+}
+
 test.beforeEach(async ({ signIn }) => {
   await signIn();
 });
@@ -55,15 +81,7 @@ test("an invalid save link announces its title, then the heading and the reasons
   await page.getByRole("heading", { level: 1 }).waitFor();
   await voiceOver.navigateToWebContent();
 
-  // Leaving and entering the web content again is how a user hears the page title.
-  await voiceOver.stopInteracting({ capture: true });
-  await voiceOver.clearSpokenPhraseLog();
-  await voiceOver.interact({ capture: true });
-  // The page starts with its header, so VoiceOver can end this announcement with a hint about the
-  // banner it lands on. The title is part of the same announcement, before that hint.
-  expect((await voiceOver.spokenPhraseLog()).join(" ")).toMatch(
-    /this link can't be saved - haystack/i,
-  );
+  await leaveAndEnterWebContent(voiceOver, TITLE);
 
   // Re-entering does not say where the cursor is, so start again from the first item of the page
   // before moving by heading.
@@ -88,14 +106,7 @@ test("a save link with a secret announces its title, then the heading and the re
   await openRefusalPage(page);
   await voiceOver.navigateToWebContent();
 
-  await voiceOver.stopInteracting({ capture: true });
-  await voiceOver.clearSpokenPhraseLog();
-  await voiceOver.interact({ capture: true });
-  // The page starts with its header, so VoiceOver can end this announcement with a hint about the
-  // banner it lands on. The title is part of the same announcement, before that hint.
-  expect((await voiceOver.spokenPhraseLog()).join(" ")).toMatch(
-    /this link can't be saved - haystack/i,
-  );
+  await leaveAndEnterWebContent(voiceOver, TITLE);
 
   // Re-entering does not say where the cursor is, so start again from the first item of the page
   // before moving by heading.
