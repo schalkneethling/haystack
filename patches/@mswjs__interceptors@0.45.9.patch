@@ -1,0 +1,54 @@
+diff --git a/lib/node/net-BFTPbfnG.js b/lib/node/net-BFTPbfnG.js
+index 20552b01cd0b4915e0b64ff73097eac26870d2e1..02cc5ad1fa9f39a5d28fdaba6c9231f5f0a11166 100644
+--- a/lib/node/net-BFTPbfnG.js
++++ b/lib/node/net-BFTPbfnG.js
+@@ -340,6 +340,12 @@ var TcpSocketController = class extends SocketController {
+ 	#retargetedConnectionOptions;
+ 	#realWriteGeneric;
+ 	#passthroughSocket = null;
++	/**
++	* Whether the passthrough connection has carried any client writes.
++	* One that has not (e.g. passed through by the read-before-write
++	* check) serves no exchange yet.
++	*/
++	#passthroughCarriedWrites = false;
+ 	#bufferedWrites = [];
+ 	#readsCorked = false;
+ 	#corkedReads = [];
+@@ -449,6 +455,19 @@ var TcpSocketController = class extends SocketController {
+ 		* after the parser has reset this controller at a message boundary).
+ 		*/
+ 		if (this.readyState === SocketController.PENDING) return;
++		/**
++		* @note A passthrough connection that carried none of the client's
++		* writes serves no exchange (e.g. an idle connection the client
++		* opened and only read from). The next exchange is HTTP and gets its
++		* own verdict, so drop that connection now: left attached, its
++		* teardown (e.g. a failed DNS lookup of a mocked host) is forwarded
++		* as the client socket's own and fails the next, mocked, exchange.
++		*/
++		if (this.readyState === SocketController.PASSTHROUGH && this.#passthroughSocket && !this.#passthroughCarriedWrites && !this.#realHandleSwapped) {
++			this.#removePassthroughSocketListeners?.();
++			this.#passthroughSocket.destroy();
++			this.#passthroughSocket = null;
++		}
+ 		this.#reset();
+ 	}
+ 	/**
+@@ -626,6 +645,7 @@ var TcpSocketController = class extends SocketController {
+ 				* write (with its callback) to the real socket.
+ 				*/
+ 				if (!this.#removeBufferedWrite(args)) return;
++				this.#passthroughCarriedWrites = true;
+ 				/**
+ 				* @note Until the handle swap, the client socket's own handle
+ 				* cannot carry any data (it never actually connects). Write
+@@ -1053,6 +1073,8 @@ var TcpSocketController = class extends SocketController {
+ 		const realSocket = this.#passthroughSocket && !this.#passthroughSocket.destroyed ? this.#passthroughSocket : createRealSocket();
+ 		const isNewConnection = realSocket !== this.#passthroughSocket;
+ 		this.#passthroughSocket = realSocket;
++		if (isNewConnection) this.#passthroughCarriedWrites = false;
++		if (this.#bufferedWrites.length > 0) this.#passthroughCarriedWrites = true;
+ 		if (this.#bufferedWrites.length === 0) logger$1.verbose("passthrough with empty writes buffer (state: %d)", this.readyState);
+ 		/**
+ 		* Flush any writes during the pending phase to the passthrough socket.
