@@ -237,9 +237,11 @@ function bookmarkFailure(
  * which the backoff (`backoffWindowMs` in state.ts) spreads over about two and a half days. A
  * permanent failure in the run brings that forward: after two permanent failures, the third
  * transient failure in a row is the 5th failure, so it counts, and the bookmark reaches Failed.
- * An outage still can't fail a bookmark on its own, because the sweep is to stop a run when its
- * first calls all fail transiently. The owner's decision of 2026-10-25, which chose this reading
- * over a count of transient failures alone, which would need a column of its own.
+ * The sweep is to stop a run when its first calls all fail transiently, which limits how many
+ * bookmarks an outage touches in each run, but an outage of more than about two and a half days
+ * can still fail a bookmark tried in every window. The owner's decision of 2026-10-25, which
+ * chose this reading over a count of transient failures alone, which would need a column of its
+ * own.
  */
 export const TRANSIENT_FAILURES_PER_ATTEMPT = 5;
 

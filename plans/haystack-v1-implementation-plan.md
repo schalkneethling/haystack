@@ -644,12 +644,18 @@ interface EnrichmentProvider {
 // The output is unvalidated: `unknown` until writeProseEnrichment checks it (#124).
 type ProviderResult =
   | { ok: true; output: unknown; model: string; inputTokens: number; outputTokens: number }
-  | { ok: false; failure: "transient" | "permanent"; reason: ProviderFailureReason; status?: number };
+  | {
+      ok: false;
+      failure: "transient" | "permanent" | "account";
+      reason: ProviderFailureReason;
+      status?: number;
+    };
 
 type ProviderFailureReason =
   | "timeout"
   | "network"
   | "status"
+  | "spend-limit"
   | "invalid-response"
   | "refused"
   | "truncated";
@@ -718,7 +724,7 @@ The sweep skips a bookmark whose `last_attempt_at` is within a backoff window th
 **Decisions (from the owner, 2026-10-25, #127).**
 
 - **When a provider rejects Haystack's own account, the run stops.** That covers Jev or the LLM answering `401` or `403`, the LLM answering `402` (`billing_error`), Anthropic's `400` for a spend limit set by the organization or a workspace (#154), and GitHub answering `401`. At the first such answer, the sweep stops the run, records nothing against the bookmark (no attempt and no backoff), and logs the reason without any URL or title. The next scheduled run tries again, so enrichment resumes on its own once the key, the billing or the limit is fixed. A GitHub `403` stays `rate-limited`, which pauses GitHub for the rest of the run (see "GitHub enrichment").
-- **Every 5th consecutive transient failure counts as one attempt.** With the attempt limit of 3, a bookmark that never succeeds, such as one whose LLM request always times out, reaches Failed after 15 tries and shows on `/held`. An outage can't fail a bookmark on its own, because the run stops early when its first calls all fail transiently. _How it reads (confirmed by the owner, 2026-10-25):_ the count is `consecutive_failures`, which failures of both classes raise, so a transient failure that is the 5th, 10th, 15th… failure in a row, of either class, counts as one attempt. A count of transient failures alone would need a column of its own and a migration. So permanent failures in the run bring the count forward: after two permanent failures, the third transient failure in a row is the 5th failure, so it counts, and with the attempt limit of 3 the bookmark reaches Failed.
+- **Every 5th consecutive transient failure counts as one attempt.** With the attempt limit of 3, a bookmark that never succeeds, such as one whose LLM request always times out, reaches Failed after 15 tries and shows on `/held`. Stopping a run early when its first calls all fail transiently limits how many bookmarks an outage touches in each run, but it doesn't protect a bookmark across runs: one that is tried again at the end of each backoff window during an outage reaches Failed on its 15th try, about 62 hours after its first. _How it reads (confirmed by the owner, 2026-10-25):_ the count is `consecutive_failures`, which failures of both classes raise, so a transient failure that is the 5th, 10th, 15th… failure in a row, of either class, counts as one attempt. A count of transient failures alone would need a column of its own and a migration. So permanent failures in the run bring the count forward: after two permanent failures, the third transient failure in a row is the 5th failure, so it counts, and with the attempt limit of 3 the bookmark reaches Failed.
 - **The backoff starts at 15 minutes and doubles, up to 6 hours.** A bookmark that has failed `n` times in a row waits `15 min × 2^(n−1)`, at most 6 hours, after its last attempt: 15 minutes, 30 minutes, then 1, 2 and 4 hours, then 6 hours. The windows between a never-succeeding bookmark's 15 tries add up to about 62 hours, so it reaches `/held` in about two and a half days.
 
 _Built 2026-10-25 (#127's first pull request, with #154, #155 and #157)._ How failures are classified and recorded. `enrichPending` itself is the second pull request.
