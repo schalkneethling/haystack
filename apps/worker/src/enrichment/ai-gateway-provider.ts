@@ -45,13 +45,8 @@
 //   Requests setting is off (see "Deploys" in the plan), and no `cf-aig-max-attempts` header is
 //   sent, because Request handling doesn't say whether its count includes the first request. No
 //   `cf-aig-request-timeout` is sent either: the shared time limit covers the whole request.
-import { isHttpsOrLoopbackUrl } from "@haystack/schemas";
-import {
-  type AnthropicTiming,
-  ANTHROPIC_TIMING,
-  configurationError,
-  messagesProvider,
-} from "./anthropic-messages.ts";
+import { type AnthropicTiming, ANTHROPIC_TIMING, messagesProvider } from "./anthropic-messages.ts";
+import { checkedBaseUrl, configurationError } from "./configuration.ts";
 import type { EnrichmentProvider } from "./enrichment-provider.ts";
 
 /** The configuration the adapter reads. `Env` has these, from `vars` and `secrets.required`. */
@@ -96,8 +91,9 @@ function requireId(name: "AI_GATEWAY_ACCOUNT_ID" | "AI_GATEWAY_ID", value: strin
  * The AI Gateway adapter. Each `enrich()` call sends one request through the gateway to
  * Anthropic, with the enrichment prompt and the structured-output schema. It throws for an empty
  * gateway token, Anthropic key or model, for an account or gateway ID that is empty or isn't a
- * plain ID, and for a base URL that is neither https nor http on a loopback host, before anything
- * is sent, because those are configuration errors rather than failures of the bookmark.
+ * plain ID, and for a base URL that is missing, doesn't parse, or is neither https nor http on a
+ * loopback host (`AI_GATEWAY_BASE_URL_INVALID`, #155), before anything is sent, because those are
+ * configuration errors rather than failures of the bookmark.
  */
 export function aiGatewayProvider(
   config: AiGatewayConfig,
@@ -116,17 +112,9 @@ export function aiGatewayProvider(
         }
         const account = requireId("AI_GATEWAY_ACCOUNT_ID", config.AI_GATEWAY_ACCOUNT_ID);
         const gateway = requireId("AI_GATEWAY_ID", config.AI_GATEWAY_ID);
-        const url = new URL(
-          `/v1/${account}/${gateway}/anthropic/v1/messages`,
-          config.AI_GATEWAY_BASE_URL,
-        );
-        if (!isHttpsOrLoopbackUrl(url)) {
-          throw new TypeError(
-            "AI_GATEWAY_BASE_URL must be an https URL, or http on a loopback host",
-          );
-        }
+        const base = checkedBaseUrl("AI_GATEWAY_BASE_URL", config.AI_GATEWAY_BASE_URL);
         return {
-          url,
+          url: new URL(`/v1/${account}/${gateway}/anthropic/v1/messages`, base),
           headers: {
             // Authentication: the provider endpoints take the token in this header.
             "cf-aig-authorization": `Bearer ${config.AI_GATEWAY_TOKEN}`,

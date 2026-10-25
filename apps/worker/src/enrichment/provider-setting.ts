@@ -6,12 +6,9 @@
 // receives every bookmark's data, so it should be a reviewed change that goes through a deploy,
 // like ALLOWED_EMAILS. The plan's list of runtime switches doesn't include it.
 import { type AiGatewayConfig, aiGatewayProvider } from "./ai-gateway-provider.ts";
-import {
-  type AnthropicTiming,
-  ANTHROPIC_TIMING,
-  configurationError,
-} from "./anthropic-messages.ts";
+import { type AnthropicTiming, ANTHROPIC_TIMING } from "./anthropic-messages.ts";
 import { type AnthropicConfig, anthropicProvider } from "./anthropic-provider.ts";
+import { configurationError } from "./configuration.ts";
 import type { EnrichmentProvider } from "./enrichment-provider.ts";
 
 /** The configuration the setting reads. `Env` has these, from `vars` and `secrets.required`. */

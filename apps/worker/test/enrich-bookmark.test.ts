@@ -3,7 +3,7 @@
 // the enrichment fixtures (enrichment-fixtures.ts), which fail a test that makes a request they
 // did not plan for. See "Enrichment design", "Enrichment sweep", Phase 7 and Q3 in
 // plans/haystack-v1-implementation-plan.md.
-import { describeUrlForJudgment } from "@haystack/schemas";
+import { describeUrlForJudgment, detectSensitiveUrl } from "@haystack/schemas";
 import { and, eq } from "drizzle-orm";
 import { delay, HttpResponse } from "msw";
 import * as v from "valibot";
@@ -12,10 +12,12 @@ import { createTestHarness } from "wrangler";
 import { createDb, type Db } from "../src/db/client.ts";
 import { bookmarks, enrichmentFailures, enrichments } from "../src/db/schema.ts";
 import {
+  EnrichmentAccountError,
   type EnrichmentConfig,
   type EnrichmentOutcome,
   type EnrichmentTiming,
   enrichBookmark,
+  TRANSIENT_FAILURES_PER_ATTEMPT,
 } from "../src/enrichment/enrich-bookmark.ts";
 import { ENRICHMENT_SCHEMA_VERSION, EnrichmentV1 } from "../src/enrichment/enrichment-schema.ts";
 import { KINDS } from "../src/enrichment/jev-questions.ts";
@@ -319,6 +321,33 @@ describe("enrichBookmark", () => {
       expect(message).toContain("The bookmark's kind: article");
       expect(message).toContain(`<bookmark>\n${JSON.stringify(bookmark, null, 2)}\n</bookmark>`);
     });
+
+    // The gate judges `url`, not the canonical URL, which the page chose (#157).
+    it("sends the canonical URL only as describeUrlForJudgment's description, never in full", async () => {
+      // A share link's key in the path, which the deterministic check doesn't recognize, so
+      // POST /save would have stored it.
+      const secret = "aB3xK9mQ2pL7vR5t";
+      const canonicalUrl = `https://docs.example.com/share/${secret}/view`;
+      expect(detectSensitiveUrl(new URL(canonicalUrl))).toBeUndefined();
+      const id = await save("https://example.com/post", { title: "A post", canonicalUrl });
+      fixtures.jev.respond(noul(0.02), kind("article"));
+      fixtures.llm.respond(output(VALID_OUTPUT));
+      expect(await enrich(id)).toEqual({ outcome: "enriched" });
+      const description = describeUrlForJudgment(new URL(canonicalUrl), undefined, false);
+      expect(description).toMatchObject({
+        host: "docs.example.com",
+        path: "/share/<random:16>/view",
+      });
+      expect(jevState("kind")).toEqual({
+        bookmark: { url: "https://example.com/post", title: "A post", canonical_url: description },
+      });
+      // The data section's JSON, which JSON.parse reads back with its escaped `<`.
+      const section = /<bookmark>\n(.*)\n<\/bookmark>/su.exec(llmMessages()[0] ?? "")?.[1];
+      expect(JSON.parse(section ?? "null")).toMatchObject({ canonical_url: description });
+      for (const { body } of [...fixtures.jev.requests, ...fixtures.llm.requests]) {
+        expect(body).not.toContain(secret);
+      }
+    });
   });
 
   describe("the sensitivity gate", () => {
@@ -592,6 +621,95 @@ describe("enrichBookmark", () => {
       });
     });
 
+    // Every 5th failure in a row counts as an attempt when it is transient, and a permanent one
+    // counts once, whichever count it lands on (#127).
+    it.each([
+      ["a 5th transient failure in a row", 0, 4, "transient", 1, 5],
+      ["a 10th transient failure in a row", 1, 9, "transient", 2, 10],
+      ["a 6th transient failure in a row", 1, 5, "transient", 1, 6],
+      ["a 4th transient failure in a row", 0, 3, "transient", 0, 4],
+      ["a permanent failure that is the 5th in a row", 0, 4, "permanent", 1, 5],
+    ] as const)(
+      "counts %s as the plan says",
+      async (_, attempts, consecutiveFailures, failure, expectedAttempts, expectedConsecutive) => {
+        expect(TRANSIENT_FAILURES_PER_ATTEMPT).toBe(5);
+        const id = await save("https://example.com/post", { sensitivityNoul: 0.02 });
+        await seedEnrichmentFailure(
+          await d1(),
+          id,
+          ENRICHMENT_SCHEMA_VERSION,
+          attempts,
+          consecutiveFailures,
+        );
+        if (failure === "transient") {
+          fixtures.jev.respond(kind("article"));
+          fixtures.llm.respond(llmStatus(529));
+        } else {
+          fixtures.jev.respond(jevStatus(400));
+        }
+        expect(await enrich(id)).toMatchObject({ outcome: "failed", failure });
+        expect(await failureRecord(id)).toMatchObject({
+          attempts: expectedAttempts,
+          consecutiveFailures: expectedConsecutive,
+        });
+      },
+    );
+
+    // `consecutive_failures` counts both classes, so permanent failures in the run count toward
+    // the multiple of 5: a transient failure that is the 5th failure in a row counts (#127).
+    it("counts a transient failure after two permanent ones as the 5th, and moves the bookmark to Failed", async () => {
+      const id = await save("https://example.com/post", { sensitivityNoul: 0.02 });
+      // Two permanent failures and two transient ones, in some order.
+      await seedEnrichmentFailure(await d1(), id, ENRICHMENT_SCHEMA_VERSION, 2, 4);
+      fixtures.jev.respond(kind("article"));
+      fixtures.llm.respond(llmStatus(529));
+      expect(await enrich(id)).toMatchObject({ outcome: "failed", failure: "transient" });
+      expect(await failureRecord(id)).toMatchObject({ attempts: 3, consecutiveFailures: 5 });
+      expect(await derivedState(id)).toBe("failed");
+    });
+
+    it("counts 4 transient failures, a permanent one and a transient one as 1 attempt in 6", async () => {
+      const id = await save("https://example.com/post", { sensitivityNoul: 0.02 });
+      const transient = () => {
+        fixtures.jev.respond(kind("article"));
+        fixtures.llm.respond(llmStatus(529));
+      };
+      const permanent = () => fixtures.jev.respond(jevStatus(400));
+      for (const respond of [transient, transient, transient, transient, permanent, transient]) {
+        respond();
+        await enrich(id);
+      }
+      expect(await failureRecord(id)).toMatchObject({ attempts: 1, consecutiveFailures: 6 });
+      expect(await derivedState(id)).toBe("pending");
+    });
+
+    // #127's case: a bookmark whose LLM request always times out reaches Failed, and /held,
+    // after 15 tries, rather than being retried for good.
+    it("moves a bookmark whose LLM request always times out to Failed after 15 runs", async () => {
+      const id = await save("https://example.com/post", { sensitivityNoul: 0.02 });
+      const late = async () => {
+        await delay(500);
+        return HttpResponse.json(messageBody(JSON.stringify(VALID_OUTPUT)));
+      };
+      const shortened = { ...timing, provider: { requestTimeoutMs: 50 } };
+      for (let run = 1; run <= 15; run += 1) {
+        fixtures.jev.respond(kind("article"));
+        fixtures.llm.respond(late);
+        expect(await enrichBookmark(db, config, await bookmarkRow(id), shortened)).toEqual({
+          outcome: "failed",
+          step: "llm",
+          failure: "transient",
+          reason: "timeout",
+        });
+        expect(await failureRecord(id)).toMatchObject({
+          attempts: Math.floor(run / 5),
+          consecutiveFailures: run,
+        });
+        expect(await derivedState(id)).toBe(run < 15 ? "pending" : "failed");
+      }
+      expect(fixtures.llm.requests).toHaveLength(15);
+    });
+
     it("moves a bookmark to Failed at the attempt limit", async () => {
       const id = await save("https://example.com/post", { sensitivityNoul: 0.02 });
       await seedEnrichmentFailure(await d1(), id, ENRICHMENT_SCHEMA_VERSION, 2);
@@ -636,6 +754,118 @@ describe("enrichBookmark", () => {
           fixtures.github.requests.length +
           fixtures.llm.requests.length,
       ).toBe(10);
+    });
+  });
+
+  // A service that rejects Haystack's own account would fail every bookmark the same way, so the
+  // module records nothing against the bookmark and throws, for the sweep to stop its run (#127).
+  describe("a rejected account", () => {
+    // The error the module throws, or a failure of the test if it returned instead.
+    async function accountError(id: string): Promise<EnrichmentAccountError> {
+      const error = await enrich(id).then(
+        (outcome) => new Error(`Expected a thrown error, got ${JSON.stringify(outcome)}`),
+        (caught: unknown) => caught,
+      );
+      expect(error).toBeInstanceOf(EnrichmentAccountError);
+      return error as EnrichmentAccountError;
+    }
+
+    // A bookmark that has failed before, so a change to its record would show.
+    async function saveWithFailure(url: string, fields: SeededBookmarkFields = {}) {
+      const id = await save(url, fields);
+      await seedEnrichmentFailure(await d1(), id, ENRICHMENT_SCHEMA_VERSION, 1, 4);
+      return { id, before: await failureRecord(id) };
+    }
+
+    it("stops for Jev's 401 at the sensitivity question, recording nothing", async () => {
+      const { id, before } = await saveWithFailure(REPOSITORY_URL, REPOSITORY_FIELDS);
+      fixtures.jev.respond(jevStatus(401));
+      expect(await accountError(id)).toMatchObject({
+        code: "ENRICHMENT_ACCOUNT_REJECTED",
+        step: "sensitivity",
+        reason: "status",
+        status: 401,
+      });
+      // Not retried, and nothing more is asked.
+      expect(fixtures.jev.requests).toHaveLength(1);
+      expect(fixtures.github.requests).toEqual([]);
+      expect(fixtures.llm.requests).toEqual([]);
+      expect(await failureRecord(id)).toEqual(before);
+      expect((await bookmarkRow(id)).sensitivityNoul).toBeNull();
+      expect(await derivedState(id)).toBe("pending");
+    });
+
+    it("stops for Jev's 403 at the kind question, recording no failure", async () => {
+      const { id, before } = await saveWithFailure("https://example.com/post");
+      fixtures.jev.respond(noul(0.02), jevStatus(403));
+      expect(await accountError(id)).toMatchObject({ step: "kind", status: 403 });
+      expect(fixtures.llm.requests).toEqual([]);
+      expect(await failureRecord(id)).toEqual(before);
+      expect(await enrichmentRows(id)).toEqual([]);
+    });
+
+    it.each([
+      ["a 401", llmStatus(401), "status", 401],
+      ["a 402, a billing problem", llmStatus(402), "status", 402],
+      ["a 403", llmStatus(403), "status", 403],
+      [
+        "a spend limit's 400 (#154)",
+        () =>
+          HttpResponse.json(
+            {
+              type: "error",
+              error: {
+                type: "invalid_request_error",
+                message:
+                  "You have reached your specified workspace API usage limits. You will regain access on 2026-11-01 at 00:00 UTC.",
+              },
+              request_id: "req_fixture",
+            },
+            { status: 400 },
+          ),
+        "spend-limit",
+        400,
+      ],
+    ])("stops for the LLM's %s, recording no failure", async (_, response, reason, code) => {
+      const { id, before } = await saveWithFailure("https://example.com/post");
+      fixtures.jev.respond(noul(0.02), kind("article"));
+      fixtures.llm.respond(response);
+      expect(await accountError(id)).toMatchObject({ step: "llm", reason, status: code });
+      // Not asked again, as invalid output would be.
+      expect(fixtures.llm.requests).toHaveLength(1);
+      expect(await failureRecord(id)).toEqual(before);
+      expect(await enrichmentRows(id)).toEqual([]);
+    });
+
+    it.each([
+      ["the repository", () => fixtures.github.respond(githubStatus(401))],
+      ["the README", () => fixtures.github.respond(githubJson(REPOSITORY), githubStatus(401))],
+    ])("stops for GitHub's 401 for %s, before the kind question", async (_, respond) => {
+      const { id, before } = await saveWithFailure(REPOSITORY_URL, REPOSITORY_FIELDS);
+      fixtures.jev.respond(noul(0.02));
+      respond();
+      expect(await accountError(id)).toMatchObject({
+        step: "github",
+        reason: "unauthorized",
+        status: 401,
+      });
+      expect(jevQuestions()).toEqual(["private_access"]);
+      expect(fixtures.llm.requests).toEqual([]);
+      expect(await failureRecord(id)).toEqual(before);
+    });
+
+    it("tells the run nothing about the bookmark, so it can be logged", async () => {
+      const url = "https://docs.example.com/share/plan?token=Zx81kQ2mPa9wLr4T";
+      const id = await save(url, { title: "Title Captured-7c1e" });
+      fixtures.jev.respond(noul(0.02), kind("article"));
+      fixtures.llm.respond(llmStatus(402));
+      const error = await accountError(id);
+      expect(error.message).toBe("A service rejected Haystack's account (llm:status:402)");
+      const { code, step, reason, status, message } = error;
+      const logged = JSON.stringify({ code, step, reason, status, message });
+      for (const leaked of ["Zx81kQ2mPa9wLr4T", "Captured-7c1e", "docs.example.com", "fixture"]) {
+        expect(logged).not.toContain(leaked);
+      }
     });
   });
 
@@ -723,9 +953,9 @@ describe("enrichBookmark", () => {
         "a provider error with a body",
         () => {
           fixtures.jev.respond(noul(0.02), kind("article"));
-          fixtures.llm.respond(withBody(401));
+          fixtures.llm.respond(withBody(404));
         },
-        "llm:status:401",
+        "llm:status:404",
       ],
       [
         "LLM output with a key of captured text",
@@ -816,23 +1046,34 @@ describe("enrichBookmark", () => {
       await expectNothingSentOrStored(id);
     });
 
-    // A plain TypeError for now: #155 gives these a code.
-    it.each([
-      ["JEV_BASE_URL", { JEV_BASE_URL: "http://jev.test" }],
-      ["GITHUB_API_BASE_URL", { GITHUB_API_BASE_URL: "http://api.github.test" }],
-      ["AI_GATEWAY_BASE_URL", { AI_GATEWAY_BASE_URL: "http://gateway.ai.cloudflare.test" }],
+    // Each client's base URL, with a code that names it (#155).
+    const baseUrls: [string, (value: string) => Partial<EnrichmentConfig>][] = [
+      ["JEV_BASE_URL", (value) => ({ JEV_BASE_URL: value })],
+      ["GITHUB_API_BASE_URL", (value) => ({ GITHUB_API_BASE_URL: value })],
+      ["AI_GATEWAY_BASE_URL", (value) => ({ AI_GATEWAY_BASE_URL: value })],
       [
         "ANTHROPIC_BASE_URL",
-        { ENRICHMENT_PROVIDER: "anthropic", ANTHROPIC_BASE_URL: "http://api.anthropic.test" },
+        (value) => ({ ENRICHMENT_PROVIDER: "anthropic", ANTHROPIC_BASE_URL: value }),
       ],
-    ])(
-      "throws when %s is neither https nor http on a loopback host, before anything is sent",
-      async (name, overrides) => {
-        const id = await save(REPOSITORY_URL, REPOSITORY_FIELDS);
-        await expect(enrich(id, overrides)).rejects.toThrow(`${name} must be an https URL`);
-        await expectNothingSentOrStored(id);
-      },
-    );
+    ];
+    const badValues: [string, string][] = [
+      ["neither https nor http on a loopback host", "http://service.test"],
+      ["empty", ""],
+      ["missing", undefined as unknown as string],
+      ["not a URL", "service.test"],
+    ];
+    for (const [name, overrides] of baseUrls) {
+      it.each(badValues)(
+        `throws ${name}_INVALID when ${name} is %s, before anything is sent`,
+        async (_, value) => {
+          const id = await save(REPOSITORY_URL, REPOSITORY_FIELDS);
+          await expect(enrich(id, overrides(value))).rejects.toMatchObject({
+            code: `${name}_INVALID`,
+          });
+          await expectNothingSentOrStored(id);
+        },
+      );
+    }
 
     it("checks Jev's key for a bookmark already checked, because the kind question needs it", async () => {
       const id = await save("https://example.com/post", { sensitivityNoul: 0.02 });

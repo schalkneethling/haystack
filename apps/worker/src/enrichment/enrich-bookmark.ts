@@ -11,8 +11,10 @@
 //    module stops, nothing about it goes to GitHub, the `kind` question or the LLM, and no
 //    failure is recorded, because Held isn't a failed attempt.
 // 2. GitHub, when the bookmark is a GitHub repository or a page within one. A GitHub failure
-//    never fails the bookmark: the bookmark is enriched from what it captured.
-// 3. The `kind` question, with the same evidence the LLM gets.
+//    never fails the bookmark: the bookmark is enriched from what it captured. A 401 is the
+//    exception, below.
+// 3. The `kind` question, with the same evidence the LLM gets. The canonical URL is in it only as
+//    describeUrlForJudgment's description (#157).
 // 4. The LLM, through the provider ENRICHMENT_PROVIDER names, with writeProseEnrichment's
 //    validation and its one retry.
 // 5. `match_text` (match-text.ts).
@@ -33,10 +35,13 @@
 //   for a GitHub bookmark (assertGitHubConfig), and the provider's (checkConfiguration).
 //   Otherwise an empty Anthropic key would be found only after the Jev questions, and every run
 //   would pay for them again. The clients still run the same checks before their own requests.
+// - A service that rejects Haystack's own account, rather than the bookmark, throws
+//   EnrichmentAccountError, and nothing is recorded against the bookmark (#127). Like a
+//   configuration error, it would fail every bookmark the same way until someone fixes it.
 // - `last_error` holds fixed codes only (see `lastError`), because the /held page shows it and
 //   logs may copy it.
 // - Nothing here logs.
-import { describeUrlForJudgment } from "@haystack/schemas";
+import { describeUrlForJudgment, type UrlDescription } from "@haystack/schemas";
 import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import { bookmarks, enrichmentFailures, enrichments } from "../db/schema.ts";
@@ -48,7 +53,7 @@ import {
   writeProseEnrichment,
 } from "./enrichment-provider.ts";
 import { ENRICHMENT_SCHEMA_VERSION } from "./enrichment-schema.ts";
-import type { FailureClass } from "./failure-class.ts";
+import type { BookmarkFailureClass, FailureClass } from "./failure-class.ts";
 import {
   assertGitHubConfig,
   type GitHubConfig,
@@ -131,33 +136,114 @@ export interface HeldOutcome {
 
 /**
  * A step failed, and the failure is recorded. The class, the reason and the status are the
- * client's own, so the sweep (#127) can stop a run on an outage or on rejected credentials
- * without classifying anything again.
+ * client's own, so the sweep (#127) can stop a run on an outage without classifying anything
+ * again. A rejected account is never a failed outcome: it throws EnrichmentAccountError.
  */
 export interface FailedOutcome {
   readonly outcome: "failed";
   readonly step: EnrichmentStep;
-  readonly failure: FailureClass;
+  readonly failure: BookmarkFailureClass;
   readonly reason: EnrichmentFailureReason;
   // The response's status, for a `status` failure.
   readonly status?: number;
   // The schema check that the LLM's output failed, for an `invalid-output` failure.
   readonly issue?: ValidationIssue;
   // Why GitHub gave nothing, or no README, for a GitHub bookmark, so the sweep can stop asking
-  // GitHub after a `rate-limited` failure and apply its rule for rejected credentials to a 401
-  // (see "GitHub enrichment" in the plan).
+  // GitHub after a `rate-limited` failure (see "GitHub enrichment" in the plan).
   readonly github?: GitHubRequestFailure;
 }
 
 export type EnrichmentOutcome = EnrichedOutcome | HeldOutcome | FailedOutcome;
 
-// What the clients report about a failed step.
+/** The step at which a service rejected Haystack's account: a failing step, or GitHub. */
+export type AccountStep = EnrichmentStep | "github";
+
+/**
+ * A service rejected Haystack's own account rather than the bookmark (#127): Jev or the LLM
+ * answered 401 or 403, the LLM 402 or a spend limit's 400 (#154), or GitHub 401. Every bookmark
+ * would fail the same way until the key, the billing or the limit is fixed, so nothing is
+ * recorded against the bookmark, and the caller should stop its run and try again in the next.
+ * It is thrown, as a configuration error is, because both are the run's problem rather than the
+ * bookmark's, and a caller that stops its run for any thrown error handles it without knowing
+ * about it. Every field is a fixed code or a status, so the error is safe to log: it holds no
+ * URL, title, response body or key.
+ */
+export class EnrichmentAccountError extends Error {
+  // Like a configuration error's code, so a log reader can match on it.
+  readonly code = "ENRICHMENT_ACCOUNT_REJECTED";
+  readonly step: AccountStep;
+  readonly reason: EnrichmentFailureReason | "unauthorized";
+  // The response's status. The clients type theirs as optional, but every account failure comes
+  // from a response, so it is set.
+  readonly status: number | undefined;
+
+  constructor(
+    step: AccountStep,
+    reason: EnrichmentFailureReason | "unauthorized",
+    status: number | undefined,
+  ) {
+    const detail = [step, reason, status].filter((part) => part !== undefined).join(":");
+    super(`A service rejected Haystack's account (${detail})`);
+    this.name = "EnrichmentAccountError";
+    this.step = step;
+    this.reason = reason;
+    this.status = status;
+  }
+}
+
+// What the clients report about a failed step, once an account failure has been thrown.
 interface StepFailure {
-  readonly failure: FailureClass;
+  readonly failure: BookmarkFailureClass;
   readonly reason: EnrichmentFailureReason;
   readonly status?: number;
   readonly issue?: ValidationIssue;
 }
+
+// A client's failure as the bookmark records it. An `account` failure isn't the bookmark's, so
+// it throws instead, before anything is recorded.
+function bookmarkFailure(
+  step: EnrichmentStep,
+  {
+    failure,
+    reason,
+    status,
+    issue,
+  }: {
+    readonly failure: FailureClass;
+    readonly reason: EnrichmentFailureReason;
+    readonly status?: number;
+    readonly issue?: ValidationIssue;
+  },
+): StepFailure {
+  if (failure === "account") {
+    throw new EnrichmentAccountError(step, reason, status);
+  }
+  return {
+    failure,
+    reason,
+    ...(status === undefined ? {} : { status }),
+    ...(issue === undefined ? {} : { issue }),
+  };
+}
+
+/**
+ * Every how many failures in a row a transient failure counts as one attempt (#127). A transient
+ * failure on its own doesn't count, so that an outage can't move bookmarks to Failed. But then a
+ * bookmark that never succeeds, such as one whose LLM request always times out, would be tried
+ * after every backoff window for good, with a paid request each time, and never reach /held.
+ * So a transient failure that is the 5th, 10th, 15th… failure in a row, of either class, counts
+ * as one attempt: the count is `consecutive_failures`, which every failure raises. With the
+ * attempt limit of 3, a bookmark that only ever fails transiently reaches Failed after 15 tries,
+ * which the backoff (`backoffWindowMs` in state.ts) spreads over about two and a half days. A
+ * permanent failure in the run brings that forward: after two permanent failures, the third
+ * transient failure in a row is the 5th failure, so it counts, and the bookmark reaches Failed.
+ * The sweep is to stop a run when its first calls all fail transiently, which limits how many
+ * bookmarks an outage touches in each run, but an outage of more than about two and a half days
+ * can still fail a bookmark tried in every window. The owner's decision of 2026-10-25, which
+ * chose this reading over a count of transient failures alone, which would need a column of its
+ * own.
+ */
+export const TRANSIENT_FAILURES_PER_ATTEMPT = 5;
 
 /**
  * The failure as `last_error` stores it: `<step>:<reason>`, then `:<status>` when the response
@@ -171,14 +257,32 @@ function lastError(step: EnrichmentStep, { reason, status, issue }: StepFailure)
   return [step, reason, status, issue].filter((part) => part !== undefined).join(":");
 }
 
+// The canonical URL as the `kind` question and the LLM get it: describeUrlForJudgment's
+// description, never the URL itself (#157). The gate judges `url`, not the canonical URL, which
+// the page chose, so a secret in it that detectSensitiveUrl doesn't recognize would otherwise
+// reach TypeSafe and the LLM provider in full. The description keeps the host and the word-like
+// parts of the path as evidence. It gets no title, because the page's titles are evidence of
+// their own, and no flag, because the flag is about a canonical URL that was dropped.
+function describedCanonicalUrl(canonicalUrl: string | null): UrlDescription | undefined {
+  // POST /save stores only an http or https URL, as the capture payload's schema requires, so
+  // this only leaves out a value written some other way, which would otherwise throw for the
+  // bookmark on every run, as `withoutSensitiveCanonicalUrl` leaves out one that doesn't parse.
+  const url = canonicalUrl === null ? null : URL.parse(canonicalUrl);
+  if (url === null || (url.protocol !== "http:" && url.protocol !== "https:")) {
+    return undefined;
+  }
+  return describeUrlForJudgment(url, undefined, false);
+}
+
 // What the bookmark records about the page, as the `kind` question and the LLM get it: a key is
 // absent when the row has no value for it.
 function capturedEvidence(bookmark: BookmarkToEnrich): CapturedEvidence {
+  const canonicalUrl = describedCanonicalUrl(bookmark.canonicalUrl);
   return {
     url: bookmark.url,
     title: bookmark.title,
     ...(bookmark.description === null ? {} : { description: bookmark.description }),
-    ...(bookmark.canonicalUrl === null ? {} : { canonical_url: bookmark.canonicalUrl }),
+    ...(canonicalUrl === undefined ? {} : { canonical_url: canonicalUrl }),
     ...(bookmark.capturedTitle === null ? {} : { captured_title: bookmark.capturedTitle }),
     ...(bookmark.capturedDescription === null
       ? {}
@@ -195,7 +299,7 @@ interface GitHubRead {
 }
 
 // What GitHub says about the bookmark's repository, when the URL is in one. A failure only
-// leaves the evidence out.
+// leaves the evidence out, except a 401, from either request, which is the token's (#127).
 async function readGitHub(
   config: GitHubConfig,
   match: GitHubRepositoryMatch | undefined,
@@ -205,6 +309,10 @@ async function readGitHub(
     return {};
   }
   const result = await readGitHubRepository(config, match, timing);
+  const failure = result.ok ? result.readmeFailure : result;
+  if (failure?.reason === "unauthorized") {
+    throw new EnrichmentAccountError("github", failure.reason, failure.status);
+  }
   if (!result.ok) {
     const { reason, status } = result;
     return { failure: { reason, ...(status === undefined ? {} : { status }) } };
@@ -215,9 +323,13 @@ async function readGitHub(
   };
 }
 
-// Records a failed attempt at the current schema version, in one statement. Every failure adds
-// one to `consecutive_failures`, which the sweep's backoff grows with, and only a permanent one
-// adds one to `attempts`, which decides the Failed state (see "Enrichment sweep" in the plan).
+// Records a failed attempt at the current schema version, in one statement. Every failure, of
+// either class, adds one to `consecutive_failures`, which the sweep's backoff grows with. A
+// permanent one adds one to `attempts`, which decides the Failed state, and so does a transient
+// one that brings `consecutive_failures` to a multiple of TRANSIENT_FAILURES_PER_ATTEMPT, so
+// earlier permanent failures in the run count toward that multiple (see "Enrichment sweep" in the
+// plan). A permanent failure at such a multiple still adds one, not two: the rule is there for
+// transient failures, which otherwise never count, and a permanent one counts already.
 async function recordFailure(
   db: Db,
   bookmarkId: string,
@@ -225,15 +337,21 @@ async function recordFailure(
   stepFailure: StepFailure,
   github: GitHubRequestFailure | undefined,
 ): Promise<FailedOutcome> {
-  const attempts = stepFailure.failure === "permanent" ? 1 : 0;
+  const permanent = stepFailure.failure === "permanent";
   const lastAttemptAt = Date.now();
   const error = lastError(step, stepFailure);
+  // SQLite evaluates every expression in an update against the row before it, so this is the
+  // count that this failure brings `consecutive_failures` to.
+  const consecutive = sql`(${enrichmentFailures.consecutiveFailures} + 1)`;
+  const reachesMultiple = sql`${consecutive} % ${TRANSIENT_FAILURES_PER_ATTEMPT} = 0`;
   await db
     .insert(enrichmentFailures)
     .values({
       bookmarkId,
       schemaVersion: ENRICHMENT_SCHEMA_VERSION,
-      attempts,
+      // A new record's 1 failure in a row is below TRANSIENT_FAILURES_PER_ATTEMPT, so only a
+      // permanent one counts.
+      attempts: permanent ? 1 : 0,
       consecutiveFailures: 1,
       lastError: error,
       lastAttemptAt,
@@ -241,8 +359,10 @@ async function recordFailure(
     .onConflictDoUpdate({
       target: [enrichmentFailures.bookmarkId, enrichmentFailures.schemaVersion],
       set: {
-        attempts: sql`${enrichmentFailures.attempts} + ${attempts}`,
-        consecutiveFailures: sql`${enrichmentFailures.consecutiveFailures} + 1`,
+        attempts: permanent
+          ? sql`${enrichmentFailures.attempts} + 1`
+          : sql`${enrichmentFailures.attempts} + CASE WHEN ${reachesMultiple} THEN 1 ELSE 0 END`,
+        consecutiveFailures: consecutive,
         lastError: error,
         lastAttemptAt,
       },
@@ -262,9 +382,10 @@ async function recordFailure(
 /**
  * Enriches one bookmark: the sensitivity gate, GitHub, the `kind` question, the LLM, and the
  * write, in that order. Resolves to the outcome, having stored it: the enrichment, or the failure
- * record. Throws for a configuration error, before anything is sent or stored, and for a D1
- * error, without recording a failure for either. The caller should treat a thrown error as a
- * problem with the run, not with the bookmark.
+ * record. Throws for a configuration error, before anything is sent or stored, for a service that
+ * rejects Haystack's account (EnrichmentAccountError), and for a D1 error, without recording a
+ * failure for any of them. The caller should treat a thrown error as a problem with the run, not
+ * with the bookmark, and stop the run.
  */
 export async function enrichBookmark(
   db: Db,
@@ -297,7 +418,13 @@ export async function enrichBookmark(
     );
     const sensitivity = await askSensitivity(config, description, timing.jev);
     if (!sensitivity.ok) {
-      return recordFailure(db, bookmark.id, "sensitivity", sensitivity, undefined);
+      return recordFailure(
+        db,
+        bookmark.id,
+        "sensitivity",
+        bookmarkFailure("sensitivity", sensitivity),
+        undefined,
+      );
     }
     noul = sensitivity.answer;
     await db
@@ -319,7 +446,7 @@ export async function enrichBookmark(
     timing.jev,
   );
   if (!kind.ok) {
-    return recordFailure(db, bookmark.id, "kind", kind, github.failure);
+    return recordFailure(db, bookmark.id, "kind", bookmarkFailure("kind", kind), github.failure);
   }
   const input: EnrichmentInput = {
     bookmark: evidence,
@@ -328,7 +455,7 @@ export async function enrichBookmark(
   };
   const prose = await writeProseEnrichment(provider, input, { model });
   if (!prose.ok) {
-    return recordFailure(db, bookmark.id, "llm", prose, github.failure);
+    return recordFailure(db, bookmark.id, "llm", bookmarkFailure("llm", prose), github.failure);
   }
 
   // D1 runs a batch as one transaction ("Data model" in the plan), so the enrichment and the

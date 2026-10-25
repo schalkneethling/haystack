@@ -17,6 +17,8 @@ import type { FailureClass } from "./failure-class.ts";
  * - `timeout`: the request took longer than its time limit, body included.
  * - `network`: the request failed, or the response's body stopped before its end.
  * - `status`: the provider answered with a status other than 2xx, which `status` holds.
+ * - `spend-limit`: Anthropic answered `400` because a spend limit that the organization or a
+ *   workspace set for itself was reached (#154). Its class is `account`.
  * - `invalid-response`: a 2xx response that isn't a complete answer, such as a body that isn't
  *   the provider's response format, or output that isn't JSON.
  * - `refused`: the model declined to answer, as a policy decision.
@@ -27,6 +29,7 @@ export type ProviderFailureReason =
   | "timeout"
   | "network"
   | "status"
+  | "spend-limit"
   | "invalid-response"
   | "refused"
   | "truncated";
@@ -123,7 +126,8 @@ function describeIssue(issue: v.BaseIssue<unknown>): ValidationIssue {
  * the same provider with the same input, and a second failure is permanent. A truncated answer
  * gets the retry because it is usually the thinking, whose length varies between identical
  * requests, that used up the tokens. Any other failure of the request is returned as it is: a
- * transient one is left to the sweep, and a permanent one would fail again.
+ * transient one is left to the sweep, a permanent one would fail again, and an `account` one
+ * would fail for every bookmark.
  */
 export async function writeProseEnrichment(
   provider: EnrichmentProvider,
