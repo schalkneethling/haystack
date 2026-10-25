@@ -9,30 +9,6 @@ import {
 } from "../src/pages.ts";
 import { expectValidHtml } from "./validate-html.ts";
 
-const EXPECTED_HEADERS = {
-  "content-type": "text/html; charset=utf-8",
-  "content-security-policy":
-    "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
-  "x-content-type-options": "nosniff",
-  "referrer-policy": "strict-origin-when-cross-origin",
-};
-
-function expectHtmlHeaders(response: Response) {
-  for (const [name, value] of Object.entries(EXPECTED_HEADERS)) {
-    expect(response.headers.get(name), name).toBe(value);
-  }
-}
-
-function directives(response: Response): Map<string, string> {
-  const policy = response.headers.get("content-security-policy") ?? "";
-  return new Map(
-    policy.split(";").map((directive) => {
-      const [name = "", ...sources] = directive.trim().split(/\s+/);
-      return [name, sources.join(" ")];
-    }),
-  );
-}
-
 describe.each([
   ["sign-in link expired", signInLinkExpiredPage, 400, false],
   ["sign-in failed", signInFailedPage, 400, false],
@@ -41,19 +17,12 @@ describe.each([
   ["signed-out not found", () => notFoundPage(false), 404, false],
   ["signed-in not found", () => notFoundPage(true), 404, true],
 ])("the %s page", (_, render, status, signedIn) => {
-  it("has the status and the security headers", () => {
+  // The Worker's entry point adds the security headers to every answer, and
+  // security-headers.test.ts checks them on each kind.
+  it("has the status and the HTML content type", () => {
     const response = render();
     expect(response.status).toBe(status);
-    expectHtmlHeaders(response);
-  });
-
-  // The stylesheets and fonts are static assets on this origin (plan, "Design"), and nothing
-  // broader is allowed, such as 'unsafe-inline' or another host.
-  it("allows styles and fonts from this origin only", () => {
-    const policy = directives(render());
-    expect(policy.get("style-src")).toBe("'self'");
-    expect(policy.get("font-src")).toBe("'self'");
-    expect(policy.get("default-src")).toBe("'none'");
+    expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
   });
 
   it("links the tokens, then the stylesheet, and has no inline styles", async () => {
@@ -98,7 +67,7 @@ describe("routes serve the pages", () => {
   ])("GET %s", async (path, status, heading) => {
     const response = await server.fetch(path);
     expect(response.status).toBe(status);
-    expectHtmlHeaders(response);
+    expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
     expect(await response.text()).toContain(`<h1>${heading}</h1>`);
   });
 });

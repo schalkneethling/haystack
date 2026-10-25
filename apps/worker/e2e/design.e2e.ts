@@ -26,6 +26,13 @@ async function expectNoHorizontalScroll(page: Page): Promise<void> {
   expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
 }
 
+// The save links that sign-in returns to after a save whose session had ended (#34): with the
+// values the user entered, and with the note that they did not fit in the link.
+const RETURNED_FORMS = [
+  ["with what was entered", { confirmed_title: LONG_TITLE, confirmed_description: "My notes" }],
+  ["without what was entered", { confirmed_values: "not-kept" }],
+] as const;
+
 async function rejectTitle(page: Page): Promise<void> {
   // Only spaces pass the browser's `required` check and fail on the server, after trimming.
   await page.getByLabel("Title").fill("   ");
@@ -69,6 +76,15 @@ test.describe("at a 320 px viewport, nothing scrolls horizontally", () => {
       await rejectTitle(page);
       await expectNoHorizontalScroll(page);
     });
+
+    for (const [state, returned] of RETURNED_FORMS) {
+      test(`the save form after sign-in, ${state}`, async ({ page }) => {
+        await page.goto(saveUrl({ url: LONG_URL, ...returned }));
+        await expect(page).toHaveTitle("Not saved yet - Haystack");
+        await page.waitForLoadState("load");
+        await expectNoHorizontalScroll(page);
+      });
+    }
 
     test("the saved links page with the address form", async ({ page }) => {
       await page.goto("/");
@@ -192,6 +208,15 @@ for (const [colorScheme, ground] of [
         await rejectTitle(page);
         await expectNoViolations(page);
       });
+
+      // The form that sign-in returns to after a save whose session had ended (#34).
+      for (const [state, returned] of RETURNED_FORMS) {
+        test(`the save form after sign-in, ${state}`, async ({ page }) => {
+          await page.goto(saveUrl({ url: "https://example.com/article", ...returned }));
+          await expect(page).toHaveTitle("Not saved yet - Haystack");
+          await expectNoViolations(page);
+        });
+      }
 
       test("the recent saves list with the delete dialog open", async ({ page }) => {
         await openDeleteDialog(page, `https://example.com/axe-${colorScheme}`, "A guide");

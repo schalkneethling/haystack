@@ -161,6 +161,7 @@ async function db() {
 beforeEach(async () => {
   const DB = await db();
   await DB.batch([
+    DB.prepare("DELETE FROM bookmarks"),
     DB.prepare("DELETE FROM sessions"),
     DB.prepare("DELETE FROM users"),
     DB.prepare("DELETE FROM auth_flows"),
@@ -368,6 +369,55 @@ describe("signing in from a signed-out save link", () => {
     expect(markup).toContain('<form class="panel" method="post" action="/save">');
     expect(markup.includes('name="canonical_url"')).toBe("canonical_url" in expected);
     expect(markup).not.toContain("secret-value");
+  });
+});
+
+// The save form submitted after the session ended (#34): the user signs in and lands on the same
+// form, with what they entered, and pressing Save there saves it.
+describe("signing in from the save form submitted without a session", () => {
+  it("returns to the form with the values entered, which then save", async () => {
+    const fields = {
+      url: "https://example.com/article",
+      title: "An article",
+      confirmed_title: "My title",
+      confirmed_description: "My notes",
+    };
+    const submitted = await server.fetch("/save", {
+      method: "POST",
+      headers: { origin: workerOrigin, accept: "text/html,application/xhtml+xml" },
+      body: new URLSearchParams(fields),
+      redirect: "manual",
+    });
+    expect(submitted.status).toBe(303);
+    const location = new URL(submitted.headers.get("location") ?? "", workerOrigin);
+    const returnTo = location.searchParams.get("return_to") ?? "";
+    expect(returnTo).toBe(`/save?${new URLSearchParams(fields).toString()}`);
+
+    // Sign-in screens the save link again, and stores the same target.
+    const start = await startSignIn(returnTo);
+    const { results } = await (await db()).prepare("SELECT return_to FROM auth_flows").all();
+    expect(results).toEqual([{ return_to: returnTo }]);
+    const signedIn = await callBack(start);
+    expect(signedIn.headers.get("location")).toBe(returnTo);
+
+    const cookie = (signedIn.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+    const form = await (
+      await server.fetch(returnTo, { headers: { accept: "text/html", cookie }, redirect: "manual" })
+    ).text();
+    expect(form).toContain("This link is not saved yet.");
+    expect(form).toContain('value="My title"');
+    expect(form).toContain(">My notes</textarea>");
+
+    // The form posts its own fields, which the browser sends as it did the first time.
+    const saved = await server.fetch("/save", {
+      method: "POST",
+      headers: { origin: workerOrigin, accept: "text/html", cookie },
+      body: new URLSearchParams(fields),
+      redirect: "manual",
+    });
+    expect(await saved.text()).toContain("<h1>Saved</h1>");
+    const bookmark = await (await db()).prepare("SELECT title, description FROM bookmarks").first();
+    expect(bookmark).toEqual({ title: "My title", description: "My notes" });
   });
 });
 

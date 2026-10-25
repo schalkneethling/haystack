@@ -1,4 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
+import type { Route } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
 import { INVALID_LINK, openRefusalPage } from "./rejected-save-pages.ts";
 
@@ -37,6 +38,69 @@ test("the form after a rejected title has no axe violations", async ({ page }) =
   await page.waitForLoadState("load");
   const results = await new AxeBuilder({ page }).analyze();
   expect(results.violations).toEqual([]);
+});
+
+// The session can end between opening the form and pressing Save (#34). The browser's form
+// submission asks for HTML, so the Worker sends it through sign-in and back to the form with what
+// the user entered, rather than the 401 that a script's request gets.
+test("a save after the session ended comes back to the form with what was entered", async ({
+  page,
+  baseURL,
+  signIn,
+  signOut,
+  query,
+}) => {
+  const url = "https://example.com/session-ended";
+  await page.goto(saveUrl({ url, og_title: "The page's title" }));
+  await page.getByLabel("Title").fill("My own title");
+  await page.getByLabel("Description").fill("My notes");
+  await signOut();
+
+  // The Worker's answer is read here, without following it, because the redirect after it goes on
+  // to Google's sign-in, which a test must not reach. The navigation is answered here instead.
+  let submission: { accept: string | null; status: number; location: string | null } | undefined;
+  const isSave = (address: URL) => address.pathname === "/save";
+  const answerSave = async (route: Route) => {
+    if (route.request().method() !== "POST") {
+      await route.fallback();
+      return;
+    }
+    const response = await route.fetch({ maxRedirects: 0 });
+    submission = {
+      accept: await route.request().headerValue("accept"),
+      status: response.status(),
+      location: response.headers()["location"] ?? null,
+    };
+    await route.fulfill({ contentType: "text/plain", body: "Sent to sign-in" });
+  };
+  await page.route(isSave, answerSave);
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Sent to sign-in")).toBeVisible();
+  await page.unroute(isSave, answerSave);
+
+  expect(submission?.accept).toContain("text/html");
+  expect(submission?.status).toBe(303);
+  const location = new URL(submission?.location ?? "", baseURL);
+  expect(location.pathname).toBe("/auth/sign-in");
+  const returnTo = location.searchParams.get("return_to") ?? "";
+
+  // Sign-in sends the browser back to the return target, which sign-in.test.ts follows through
+  // the callback. Here the browser opens it once it has a session again.
+  await signIn();
+  await page.goto(returnTo);
+  await expect(page).toHaveTitle("Not saved yet - Haystack");
+  await expect(page.getByRole("status")).toHaveText(
+    "This link is not saved yet. Check the title and description, then press Save.",
+  );
+  await expect(page.getByLabel("Title")).toHaveValue("My own title");
+  await expect(page.getByLabel("Description")).toHaveValue("My notes");
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Saved");
+  expect(await query("SELECT title, description FROM bookmarks WHERE url = ?", url)).toEqual([
+    { title: "My own title", description: "My notes" },
+  ]);
 });
 
 // A rejected address gets the address form (#97), which address-form.e2e.ts scans. These pages

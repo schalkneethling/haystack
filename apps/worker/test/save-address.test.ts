@@ -697,6 +697,37 @@ describe("an address the checks reject", () => {
   });
 });
 
+// Without JavaScript, the address form's submission asks for HTML. Without a session it gets the
+// answer the form shown before sign-in gets for the address, which asks for GET /save (#34).
+describe("the address form's submission without a session, without JavaScript", () => {
+  const HTML = { accept: "text/html,application/xhtml+xml", cookie: null };
+
+  it("is sent through sign-in to the save form for the address, and fetches nothing", async () => {
+    fixture.page("/signed-out", FULL_PAGE);
+    const url = fixture.url("/signed-out");
+    const response = await postAddress(url, HTML);
+    expect(response.status).toBe(303);
+    const location = new URL(response.headers.get("location") ?? "", origin);
+    expect(location.pathname).toBe("/auth/sign-in");
+    expect(location.searchParams.get("return_to")).toBe(
+      `/save?${new URLSearchParams({ url }).toString()}`,
+    );
+    expect(fixture.requests).toHaveLength(0);
+  });
+
+  it("gets the address form's error for a flagged address, with no redirect", async () => {
+    const response = await postAddress("https://example.com/cb?access_token=secret-value", HTML);
+    expect(response.status).toBe(400);
+    expect(response.headers.get("location")).toBeNull();
+    const markup = await response.text();
+    expect(markup).toContain("This link contains an access token, key, or password");
+    expect(markup).not.toContain("secret-value");
+    // The signed-out form asks for GET /save.
+    expect(markup).toContain('method="get" action="/save"');
+    expect(fixture.requests).toHaveLength(0);
+  });
+});
+
 describe("only a signed-in POST from Haystack looks a page up", () => {
   it.each([
     ["signed out", { cookie: null }, 401],
@@ -740,12 +771,9 @@ describe("an answer in JSON, for the address form's script", () => {
   async function expectJsonAnswer(response: Response, status: number): Promise<unknown> {
     expect(response.status).toBe(status);
     expect(response.headers.get("location")).toBeNull();
-    // The HTML pages' security headers, and no-store, because the answer is one user's.
+    // The security headers of a JSON answer are checked with every other answer's, in
+    // security-headers.test.ts.
     expect(response.headers.get("content-type")).toBe("application/json; charset=utf-8");
-    expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(response.headers.get("referrer-policy")).toBe("strict-origin-when-cross-origin");
-    expect(response.headers.get("content-security-policy")).toContain("default-src 'none'");
     return response.json();
   }
 

@@ -1,21 +1,6 @@
-// The shared page layout and the headers every HTML response carries.
+// The shared page layout. The security headers every answer carries are added by the Worker's
+// entry point (security-headers.ts), so the answers built here set only their content type.
 import { html, type SafeHtml } from "./html.ts";
-
-// Each phase that adds a kind of resource widens this on purpose. Scripts, stylesheets and fonts
-// come only from this origin's static assets, never inline, and scripts may call only this
-// origin (#43). Without 'unsafe-inline', no page can carry a style attribute or a <style>
-// block. form-action allows posting only to this origin, and frame-ancestors prevents framing.
-const CONTENT_SECURITY_POLICY =
-  "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
-
-const HTML_HEADERS: Readonly<Record<string, string>> = {
-  "content-type": "text/html; charset=utf-8",
-  "content-security-policy": CONTENT_SECURITY_POLICY,
-  "x-content-type-options": "nosniff",
-  // Not no-referrer: with it, browsers send `Origin: null` on same-origin form posts, which the
-  // Origin check rejects (plan, "Rules that hold everywhere").
-  "referrer-policy": "strict-origin-when-cross-origin",
-};
 
 // Static assets in apps/web/public. The tokens come first, because the page's stylesheet uses
 // them. The popup imports the same tokens file into its build.
@@ -95,18 +80,16 @@ export function htmlResponse(
   status: number,
   options: PageOptions,
 ): Response {
-  return new Response(page(title, content, options).toString(), { status, headers: HTML_HEADERS });
+  return new Response(page(title, content, options).toString(), {
+    status,
+    headers: { "content-type": "text/html; charset=utf-8" },
+  });
 }
-
-// The headers of a JSON answer to the site's own script: the HTML pages' security headers, and
-// no-store, because each answer belongs to one user and one request, and must not be reused.
-const JSON_HEADERS: Readonly<Record<string, string>> = {
-  ...HTML_HEADERS,
-  "content-type": "application/json; charset=utf-8",
-  "cache-control": "no-store",
-};
 
 /** A JSON answer to one of the site's own scripts. */
 export function jsonResponse(body: unknown, status: number): Response {
-  return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8" },
+  });
 }

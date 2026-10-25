@@ -7,6 +7,7 @@ import {
   type CapturePayload,
   detectSensitiveUrl,
   normalizeUrl,
+  SAVE_URL_BUDGET,
   SENSITIVE_URL_EXPLANATIONS,
   type SensitiveUrlReason,
   stripTrackingParameters,
@@ -120,12 +121,41 @@ function hiddenInputs(payload: CapturePayload, url: string) {
 
 type ConfirmedField = "title" | "description";
 
+// The form's editable fields. A save link that returns to the form after sign-in carries them
+// too, so a user whose session ended before they pressed Save gets back what they entered (#34).
+const CONFIRMED_FIELDS: Record<ConfirmedField, string> = {
+  title: "confirmed_title",
+  description: "confirmed_description",
+};
+
+// What a save link that returns after sign-in carries instead of the entered values, when they
+// would take it over SAVE_URL_BUDGET (#34).
+const NOT_KEPT = { name: "confirmed_values", value: "not-kept" } as const;
+
+/**
+ * How the form came back after sign-in, from a POST /save that had no session (#34): with the
+ * values the user entered, or without them, because they did not fit in the save link.
+ */
+type Resumed = "kept" | "not-kept";
+
 interface FormState {
   title: string;
   description: string;
   // Set when a submitted value was rejected; the form is shown again with it.
   invalid?: ConfirmedField;
+  resumed?: Resumed;
 }
+
+// The message after the heading of a form that came back after sign-in. Pressing Save did not
+// save the link, so the user needs to hear that they have to press it again. It describes the
+// page, not what the user did, because a hand-built link can carry the same fields, and because
+// the session can have expired rather than been signed out. Only an address that fills most of
+// SAVE_URL_BUDGET leaves no room for the values.
+const RESUMED_MESSAGES: Record<Resumed, string> = {
+  kept: "This link is not saved yet. Check the title and description, then press Save.",
+  "not-kept":
+    "This link is not saved yet, and its address is too long to keep the title and description with it. Enter them again, then press Save.",
+};
 
 const CONFIRMED_ERRORS: Record<ConfirmedField, string> = {
   title: `Enter a title of up to ${CAPTURE_CAPS.title} characters.`,
@@ -152,12 +182,26 @@ function errorAttributes(state: FormState, field: ConfirmedField) {
   return state.invalid === field ? html` aria-invalid="true" aria-describedby="save-error"` : "";
 }
 
+// A form that came back after sign-in says so in its title too, because a screen reader announces
+// the title when the page loads, but not a status message that arrives with it. An error's title
+// comes first, because the error is what stops the save.
+function formTitle(state: FormState): string {
+  if (state.invalid !== undefined) {
+    return "Check the form";
+  }
+  return state.resumed === undefined ? "Save a link" : "Not saved yet";
+}
+
 function formPage(payload: CapturePayload, url: string, state: FormState): Response {
   const error =
     state.invalid === undefined ? "" : fieldError("save-error", CONFIRMED_ERRORS[state.invalid]);
+  const resumed =
+    state.resumed === undefined
+      ? ""
+      : html`<div class="status" role="status"><p>${RESUMED_MESSAGES[state.resumed]}</p></div>`;
   return htmlResponse(
-    state.invalid === undefined ? "Save a link" : "Check the form",
-    html`<h1>Save a link</h1>${error}
+    formTitle(state),
+    html`<h1>Save a link</h1>${error}${resumed}
       <form class="panel" method="post" action="/save">
         <p class="address-field"><strong>Address:</strong> <span id="save-address" class="address">${url}</span></p>
         ${SENSITIVE_NOTICE}
@@ -317,7 +361,8 @@ function hasCapturedFields(captured: Record<string, string>): boolean {
  * URLs, drop a sensitive canonical URL, find duplicates, then show the form.
  */
 export async function showSaveForm(request: Request, db: Db, userId: string): Promise<Response> {
-  const captured = capturedFields(new URL(request.url).searchParams);
+  const parameters = new URL(request.url).searchParams;
+  const captured = capturedFields(parameters);
   if (!hasCapturedFields(captured)) {
     return addressFormPage({ value: "" }, true);
   }
@@ -332,8 +377,33 @@ export async function showSaveForm(request: Request, db: Db, userId: string): Pr
   if (existing !== undefined) {
     return alreadySavedPage(db, userId, existing);
   }
-  return formPage(payload, url, prefill(payload, url));
+  return formPage(payload, url, formState(parameters, prefill(payload, url)));
 }
+
+function hasConfirmedValues(parameters: URLSearchParams): boolean {
+  return Object.values(CONFIRMED_FIELDS).some((name) => parameters.has(name));
+}
+
+/**
+ * What a new form shows. A save link that returns after sign-in from a POST /save without a
+ * session (#34) carries the values the user entered, which are checked as POST /save checks
+ * them, so the form comes back as POST /save would have shown it, or it says that they were not
+ * kept, and the form starts from the prefill. A field the link does not carry starts from the
+ * prefill.
+ */
+function formState(parameters: URLSearchParams, prefilled: FormState): FormState {
+  if (hasConfirmedValues(parameters)) {
+    const read = (name: string) => parameters.get(name) ?? undefined;
+    return { ...confirmedValues(read, prefilled), resumed: "kept" };
+  }
+  if (parameters.get(NOT_KEPT.name) === NOT_KEPT.value) {
+    return { ...prefilled, resumed: "not-kept" };
+  }
+  return prefilled;
+}
+
+/** The page to show instead of signing in, or the path and query to return to after it. */
+export type SignedOutSave = { page: Response } | { returnTo: string };
 
 /**
  * GET or HEAD /save without a session: the page to show instead of signing in, or the path and
@@ -346,14 +416,16 @@ export async function showSaveForm(request: Request, db: Db, userId: string): Pr
  * leaves out, so it holds only screened values: no unknown key, no second `url`, and no empty
  * field, which validation omits. The extension builds its save URL the same way, with
  * URLSearchParams from the validated payload, so a link from the extension comes back unchanged.
+ * The values a user entered on the form are added after them, when the link carries them, as a
+ * link built for a POST /save without a session does (#34, `withConfirmedValues`).
  * A link with no captured field, such as a bare /save, returns to the bare path, which shows the
  * address form after sign-in. It holds no value at all, so it stores nothing that could be a
  * secret.
  */
-export function signedOutSave(url: URL): { page: Response } | { returnTo: string } {
+export function signedOutSave(url: URL): SignedOutSave {
   const captured = capturedFields(url.searchParams);
   if (!hasCapturedFields(captured)) {
-    // Both callers pass a URL whose path is /save. The literal shows that nothing from the
+    // Every caller passes a URL whose path is /save. The literal shows that nothing from the
     // link's query or fragment is stored.
     return { returnTo: "/save" };
   }
@@ -362,7 +434,80 @@ export function signedOutSave(url: URL): { page: Response } | { returnTo: string
     return screened;
   }
   const query = new URLSearchParams(withoutSensitiveCanonicalUrl(screened.payload));
-  return { returnTo: `${url.pathname}?${query.toString()}` };
+  return { returnTo: `${url.pathname}?${withConfirmedValues(query, url).toString()}` };
+}
+
+/**
+ * The return target's query with the values the user entered on the form, from a POST /save
+ * without a session (#34). They are the user's own text, and the plan stores and logs them as it
+ * does the captured title and description: free text, which the sensitive URL check does not
+ * apply to (plan, "Which URLs are screened"). They are normalized as POST /save normalizes them,
+ * so building the target again gives the same string. The whole save link must stay within
+ * SAVE_URL_BUDGET, which keeps the sign-in redirect under Cloudflare's URL limit. When the values
+ * would take it over, the target says that they were not kept instead, and the form after
+ * sign-in asks for them again.
+ */
+function withConfirmedValues(query: URLSearchParams, link: URL): URLSearchParams {
+  const parameters = link.searchParams;
+  if (hasConfirmedValues(parameters)) {
+    const kept = new URLSearchParams(query);
+    const title = parameters.get(CONFIRMED_FIELDS.title);
+    if (title !== null) {
+      kept.set(CONFIRMED_FIELDS.title, normalizedTitle(title));
+    }
+    const description = parameters.get(CONFIRMED_FIELDS.description);
+    if (description !== null) {
+      kept.set(CONFIRMED_FIELDS.description, normalizedDescription(description));
+    }
+    if (`${link.origin}${link.pathname}?${kept.toString()}`.length <= SAVE_URL_BUDGET) {
+      return kept;
+    }
+  } else if (parameters.get(NOT_KEPT.name) !== NOT_KEPT.value) {
+    return query;
+  }
+  const notKept = new URLSearchParams(query);
+  notKept.set(NOT_KEPT.name, NOT_KEPT.value);
+  return notKept;
+}
+
+/** The captured fields a form submission carries, with its line breaks as GET rendered them. */
+function submittedCapture(form: FormData): Record<string, string> {
+  const captured: Record<string, string> = {};
+  for (const name of Object.keys(CAPTURE_CAPS)) {
+    const value = formField(form, name);
+    if (value !== undefined) {
+      captured[name] = normalizeLineBreaks(value);
+    }
+  }
+  return captured;
+}
+
+/**
+ * POST /save from the form without a session (#34): the page to show instead of signing in, or
+ * the save link to return to after it, as for a signed-out GET /save of the link that showed the
+ * form. The hidden inputs are screened as that link would be, so a tampered submission that
+ * carries a secret gets its page, and nothing is stored or sent on in a Location header. The
+ * link also carries the values the user entered (`withConfirmedValues`). A body that is not a
+ * form carries nothing, so it returns to the address form.
+ */
+export async function signedOutSubmission(request: Request): Promise<SignedOutSave> {
+  const link = new URL("/save", request.url);
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    return signedOutSave(link);
+  }
+  for (const [name, value] of Object.entries(submittedCapture(form))) {
+    link.searchParams.set(name, value);
+  }
+  for (const name of Object.values(CONFIRMED_FIELDS)) {
+    const value = formField(form, name);
+    if (value !== undefined) {
+      link.searchParams.set(name, value);
+    }
+  }
+  return signedOutSave(link);
 }
 
 function savedPage(bookmarkId: string): Response {
@@ -386,15 +531,27 @@ function normalizeLineBreaks(value: string): string {
   return value.replaceAll("\r\n", "\n");
 }
 
+function normalizedTitle(value: string): string {
+  return collapseWhitespace(normalizeLineBreaks(value)).trim();
+}
+
+function normalizedDescription(value: string): string {
+  return normalizeLineBreaks(value).trim();
+}
+
 /**
  * The confirmed title and description, trimmed, with the rejected field if any. The title is
- * required; an empty description is stored as no description.
+ * required; an empty description is stored as no description. `read` gives a field's value, and
+ * a field that is absent takes its value from `absent`.
  */
-function confirmedValues(form: FormData): FormState {
-  const title = collapseWhitespace(
-    normalizeLineBreaks(formField(form, "confirmed_title") ?? ""),
-  ).trim();
-  const description = normalizeLineBreaks(formField(form, "confirmed_description") ?? "").trim();
+function confirmedValues(
+  read: (name: string) => string | undefined,
+  absent: Pick<FormState, ConfirmedField>,
+): FormState {
+  const title = normalizedTitle(read(CONFIRMED_FIELDS.title) ?? absent.title);
+  const description = normalizedDescription(
+    read(CONFIRMED_FIELDS.description) ?? absent.description,
+  );
   if (title === "" || title.length > CAPTURE_CAPS.title) {
     return { title, description, invalid: "title" };
   }
@@ -427,13 +584,7 @@ export async function saveBookmark(request: Request, db: Db, userId: string): Pr
     // Not a form submission: no form encoding, or a body that cannot be parsed.
     return notAFormPage();
   }
-  const captured: Record<string, string> = {};
-  for (const name of Object.keys(CAPTURE_CAPS)) {
-    const value = formField(form, name);
-    if (value !== undefined) {
-      captured[name] = normalizeLineBreaks(value);
-    }
-  }
+  const captured = submittedCapture(form);
   // The form's own hidden inputs always pass, so a rejection means a tampered or hand-built
   // submission, which gets the validation or refusal page rather than the address form.
   const screened = screenCapture(captured);
@@ -446,7 +597,10 @@ export async function saveBookmark(request: Request, db: Db, userId: string): Pr
   // Hidden inputs can be tampered with, so this runs again, and the bookmark is stored without it.
   const payload = withoutSensitiveCanonicalUrl(screened.payload);
   const url = stripTrackingParameters(payload.url);
-  const confirmed = confirmedValues(form);
+  const confirmed = confirmedValues((name) => formField(form, name), {
+    title: "",
+    description: "",
+  });
   if (confirmed.invalid !== undefined) {
     return formPage(payload, url, confirmed);
   }
