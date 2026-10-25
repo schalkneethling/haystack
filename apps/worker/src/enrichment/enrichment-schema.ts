@@ -51,7 +51,9 @@ export type EnrichmentV1 = v.InferOutput<typeof EnrichmentV1>;
  * it makes every bookmark's enrichment Outdated, and the sweep enriches each one again, so it is
  * raised with a change to the output's shape (see "Enrichment state is derived, not stored" and
  * Phase 9 in the plan). Failure records are kept per version, so raising it also gives every
- * Failed bookmark a fresh set of attempts.
+ * Failed bookmark a fresh set of attempts. The sweep's `match_text` refresh validates the rows at
+ * this version against EnrichmentV1 (match-text-refresh.ts), so a new version, with a new shape,
+ * must update the refresh too.
  */
 export const ENRICHMENT_SCHEMA_VERSION = 1;
 

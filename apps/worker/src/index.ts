@@ -20,6 +20,7 @@ import { upsertUser } from "./auth/users.ts";
 import { createDb, type Db } from "./db/client.ts";
 import { deletePathId } from "./bookmark-paths.ts";
 import { deleteBookmark } from "./delete-bookmark.ts";
+import { errorCode } from "./error-code.ts";
 import { showRecentSaves } from "./recent-saves.ts";
 import {
   saveBookmark,
@@ -108,15 +109,6 @@ async function signIn(request: Request, env: Env, db: Db): Promise<Response> {
   return redirect(location, 302, {
     "set-cookie": serializeAuthFlowCookie(state, AUTH_FLOW_LIFETIME_MS / 1000),
   });
-}
-
-// The error code is a fixed string (for example OAUTH_JWT_CLAIM_COMPARISON_FAILED). The message
-// and cause are not logged, because they can contain the callback's parameters and claims.
-function errorCode(error: unknown): string {
-  if (error instanceof Error && "code" in error && typeof error.code === "string") {
-    return error.code;
-  }
-  return error instanceof Error ? error.name : "unknown error";
 }
 
 async function completeCallback(request: Request, env: Env, db: Db): Promise<Response> {

@@ -4,7 +4,10 @@
 
 export type EnrichmentState = "held" | "current" | "failed" | "outdated" | "pending";
 
-/** What the state is derived from. `readEnrichmentStateInputs` reads it for a user's bookmarks. */
+/**
+ * What the state is derived from. `readEnrichmentStateInputs` reads it for a user's bookmarks,
+ * and the sweep's `selectBookmarksToEnrich` for every user's, both through `collectStateInputs`.
+ */
 export interface EnrichmentStateInputs {
   // Jev's probability that the URL grants private access. NULL means not yet checked.
   sensitivityNoul: number | null;
@@ -135,8 +138,8 @@ export const BACKOFF_MAX_MS = 6 * 60 * 60 * 1000;
  * waits before it is tried again: 15 minutes, doubling with each failure, up to 6 hours (#127).
  * So 15 and 30 minutes, then 1, 2 and 4 hours, then 6 hours from the 6th failure on. A bookmark
  * with no failure record has no window. The count is a column of whole numbers, so any other
- * value is a bug in the caller, and throws. Nothing calls it yet: the sweep's selection
- * (`enrichPending`, #127's second pull request) is to skip a bookmark within its window.
+ * value is a bug in the caller, and throws. The sweep's selection (selectBookmarksToEnrich in
+ * enrich-pending.ts) leaves out a bookmark within its window.
  */
 export function backoffWindowMs(consecutiveFailures: number): number {
   if (!Number.isInteger(consecutiveFailures) || consecutiveFailures < 0) {

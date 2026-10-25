@@ -99,11 +99,27 @@ export async function seedBookmark(
   return id;
 }
 
-/** An enrichment of the bookmark at `schemaVersion`, with placeholder content. */
+export interface SeededEnrichmentFields {
+  kind?: string;
+  // Stored as JSON, as the `data` column holds it.
+  data?: unknown;
+  matchText?: string;
+  matchTextVersion?: number;
+  createdAt?: number;
+}
+
+/** An enrichment of the bookmark at `schemaVersion`, with placeholder content unless given. */
 export async function seedEnrichment(
   db: D1Like,
   bookmarkId: string,
   schemaVersion: number,
+  {
+    kind = "article",
+    data = {},
+    matchText = "Seeded",
+    matchTextVersion = 1,
+    createdAt = Date.now(),
+  }: SeededEnrichmentFields = {},
 ): Promise<string> {
   const id = crypto.randomUUID();
   await db
@@ -116,12 +132,12 @@ export async function seedEnrichment(
       schemaVersion,
       "seed",
       "seed",
-      "article",
+      kind,
       "{}",
-      "{}",
-      "Seeded",
-      1,
-      Date.now(),
+      JSON.stringify(data),
+      matchText,
+      matchTextVersion,
+      createdAt,
     )
     .run();
   return id;
@@ -129,7 +145,8 @@ export async function seedEnrichment(
 
 /**
  * A failure record for the bookmark at `schemaVersion`, with `attempts` permanent failures, and
- * `consecutiveFailures` in all, which are the permanent ones unless a test says otherwise.
+ * `consecutiveFailures` in all, which are the permanent ones unless a test says otherwise. The
+ * last attempt is now unless a test says otherwise.
  */
 export async function seedEnrichmentFailure(
   db: D1Like,
@@ -137,12 +154,13 @@ export async function seedEnrichmentFailure(
   schemaVersion: number,
   attempts: number,
   consecutiveFailures = attempts,
+  lastAttemptAt = Date.now(),
 ): Promise<void> {
   await db
     .prepare(
       "INSERT INTO enrichment_failures (bookmark_id, schema_version, attempts, consecutive_failures, last_error, last_attempt_at) VALUES (?, ?, ?, ?, ?, ?)",
     )
-    .bind(bookmarkId, schemaVersion, attempts, consecutiveFailures, "Seeded failure", Date.now())
+    .bind(bookmarkId, schemaVersion, attempts, consecutiveFailures, "Seeded failure", lastAttemptAt)
     .run();
 }
 
