@@ -463,6 +463,27 @@ for (const adapter of ADAPTERS) {
         },
       );
 
+      // The enrichment module runs these checks before it asks Jev or GitHub anything (#126).
+      describe("checkConfiguration", () => {
+        it("throws what enrich() would for an empty key, an empty model or a base URL, and sends nothing", () => {
+          expect(() => adapter.withKey("").checkConfiguration({ model: MODEL })).toThrow(
+            expect.objectContaining({ code: "ANTHROPIC_API_KEY_EMPTY" }),
+          );
+          expect(() => provider.checkConfiguration({ model: "" })).toThrow(
+            expect.objectContaining({ code: "ANTHROPIC_MODEL_EMPTY" }),
+          );
+          expect(() =>
+            adapter.withBaseUrl("http://example.com").checkConfiguration({ model: MODEL }),
+          ).toThrow(`${adapter.baseUrlName} must be an https URL, or http on a loopback host`);
+          expect(fixture.requests).toEqual([]);
+        });
+
+        it("returns for a configuration enrich() accepts, and sends nothing", () => {
+          expect(() => provider.checkConfiguration({ model: MODEL })).not.toThrow();
+          expect(fixture.requests).toEqual([]);
+        });
+      });
+
       it("may be sent over http to a loopback host, where integration tests serve responses", async () => {
         fixture.respond(output(VALID_OUTPUT));
         const loopback = adapter.withBaseUrl(LOOPBACK_ORIGIN);
@@ -663,6 +684,20 @@ describe("aiGatewayProvider", () => {
 
   it("is the provider named ai-gateway", () => {
     expect(provider.id).toBe("ai-gateway");
+  });
+
+  it("checks the gateway's own configuration in checkConfiguration, and sends nothing", () => {
+    expect(() =>
+      aiGatewayProvider({ ...gatewayConfig, AI_GATEWAY_TOKEN: "" }, timing).checkConfiguration({
+        model: MODEL,
+      }),
+    ).toThrow(expect.objectContaining({ code: "AI_GATEWAY_TOKEN_EMPTY" }));
+    expect(() =>
+      aiGatewayProvider({ ...gatewayConfig, AI_GATEWAY_ID: ".." }, timing).checkConfiguration({
+        model: MODEL,
+      }),
+    ).toThrow(expect.objectContaining({ code: "AI_GATEWAY_ID_INVALID" }));
+    expect(fixture.requests).toEqual([]);
   });
 
   it("sends the gateway's headers on every request, the validation retry included", async () => {

@@ -14,6 +14,7 @@ import {
   vi,
 } from "vite-plus/test";
 import {
+  assertGitHubConfig,
   GITHUB_API_VERSION,
   GITHUB_README_READ_LIMIT_BYTES,
   GITHUB_USER_AGENT,
@@ -558,6 +559,23 @@ describe("readGitHubRepository", () => {
       ).rejects.toThrow(
         "GITHUB_API_BASE_URL must be an https URL, or an http URL on a loopback host for tests",
       );
+      expect(fixture.requests).toEqual([]);
+    });
+
+    // The enrichment module runs the same checks before it sends anything for a bookmark (#126).
+    it("is checked by assertGitHubConfig as readGitHubRepository checks it, without a request", () => {
+      expect(() => assertGitHubConfig({ ...config, GITHUB_TOKEN: "" })).toThrow(
+        expect.objectContaining({ code: "GITHUB_TOKEN_EMPTY" }),
+      );
+      expect(() =>
+        assertGitHubConfig({ ...config, GITHUB_API_BASE_URL: "http://api.github.test" }),
+      ).toThrow(
+        "GITHUB_API_BASE_URL must be an https URL, or an http URL on a loopback host for tests",
+      );
+      expect(() => assertGitHubConfig(config)).not.toThrow();
+      expect(() =>
+        assertGitHubConfig({ ...config, GITHUB_API_BASE_URL: GITHUB_LOOPBACK_ORIGIN }),
+      ).not.toThrow();
       expect(fixture.requests).toEqual([]);
     });
 

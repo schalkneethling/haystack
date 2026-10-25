@@ -8,7 +8,7 @@
 // target. The fixture records its address in `unplanned`, which the tests check, and MSW fails it
 // (`onUnhandledFrame: "error"`), so it never reaches the network.
 import { http, HttpResponse, type JsonBodyType } from "msw";
-import { setupServer } from "msw/node";
+import { type FixtureParts, serveFixtures } from "./mock-server.ts";
 
 /** The address the tests configure as GITHUB_API_BASE_URL. */
 export const GITHUB_ORIGIN = "https://api.github.test";
@@ -127,29 +127,25 @@ const GITHUB_ADDRESS = new RegExp(
 );
 
 /**
- * Starts answering the client's requests in this process. Only one may run at a time, because it
- * patches the process's `fetch`.
+ * The fixture's handlers and records, without a server, so enrichment-fixtures.ts can serve them
+ * together with the other services' fixtures.
  */
-export function startGitHubFixture(): GitHubFixture {
+export function gitHubFixtureParts(): FixtureParts<GitHubFixture> {
   const queue: GitHubResolver[] = [];
   const requests: GitHubRequest[] = [];
   const unplanned: string[] = [];
-  const mock = setupServer(
-    http.all(GITHUB_ADDRESS, ({ request }) => {
-      requests.push({ url: request.url, method: request.method, headers: request.headers });
-      const resolver = queue.shift();
-      if (resolver === undefined) {
-        unplanned.push(request.url);
-        return HttpResponse.error();
-      }
-      return resolver(request);
-    }),
-  );
-  mock.events.on("request:unhandled", ({ request }) => {
-    unplanned.push(request.url);
-  });
-  mock.listen({ onUnhandledFrame: "error" });
   return {
+    handlers: [
+      http.all(GITHUB_ADDRESS, ({ request }) => {
+        requests.push({ url: request.url, method: request.method, headers: request.headers });
+        const resolver = queue.shift();
+        if (resolver === undefined) {
+          unplanned.push(request.url);
+          return HttpResponse.error();
+        }
+        return resolver(request);
+      }),
+    ],
     requests,
     unplanned,
     respond: (...resolvers) => {
@@ -160,8 +156,14 @@ export function startGitHubFixture(): GitHubFixture {
       requests.length = 0;
       unplanned.length = 0;
     },
-    close: () => {
-      mock.close();
-    },
   };
+}
+
+/**
+ * Starts answering the client's requests in this process. Only one may run at a time, because it
+ * patches the process's `fetch`.
+ */
+export function startGitHubFixture(): GitHubFixture {
+  const parts = gitHubFixtureParts();
+  return { ...parts, close: serveFixtures(parts.handlers, parts.unplanned) };
 }

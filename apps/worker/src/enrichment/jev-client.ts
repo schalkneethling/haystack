@@ -13,8 +13,11 @@
 // - Each attempt, from the request to the last byte of the response, stops after
 //   `attemptTimeoutMs`.
 // - The key is sent only in the `authorization` header, only to JEV_BASE_URL, and only over
-//   https. Redirects are not followed, so the key can't be sent on to another address.
+//   https, or over http to a loopback host, where the integration tests' recorded server runs
+//   (see "Testing strategy" in the plan). Redirects are not followed, so the key can't be sent on
+//   to another address.
 // - Nothing here logs. A failure is a fixed code and a status, which are safe to log.
+import { isHttpsOrLoopbackUrl } from "@haystack/schemas";
 import * as v from "valibot";
 import { type FailureClass, isTransientStatus } from "./failure-class.ts";
 
@@ -274,17 +277,9 @@ export interface JevAsk<Answer> {
   readonly answer: v.GenericSchema<unknown, Answer>;
 }
 
-/**
- * Asks Jev one question. Transient failures are retried, with a backoff between attempts, up to
- * JEV_ATTEMPT_LIMIT requests in all; a permanent failure ends the question at once. Throws for
- * an empty key or a base URL that isn't https, before anything is sent, because those are
- * configuration errors rather than failures of the question.
- */
-export async function askJev<Answer>(
-  config: JevConfig,
-  { state, id, question, answer }: JevAsk<Answer>,
-  timing: JevTiming = JEV_TIMING,
-): Promise<JevResult<Answer>> {
+// The endpoint every question is posted to, once the configuration is checked. Throws for an
+// empty key, or for a base URL that is neither https nor http on a loopback host.
+function endpoint(config: JevConfig): URL {
   // An empty secret is easy to store by mistake (#98), and TypeSafe would only answer 401. The
   // value can also be missing, although `Env` says `string`: the test harness and local
   // development don't bind a required secret they can't find.
@@ -294,9 +289,38 @@ export async function askJev<Answer>(
     });
   }
   const url = new URL("/v1/systemone", config.JEV_BASE_URL);
-  if (url.protocol !== "https:") {
-    throw new TypeError("JEV_BASE_URL must be an https URL");
+  // Integration tests point the base URL at a plain-http server on this machine (Q10), so http
+  // is allowed there, by the same rule as the GitHub client, the LLM adapters and Google
+  // sign-in's endpoints (#126).
+  if (!isHttpsOrLoopbackUrl(url)) {
+    throw new TypeError(
+      "JEV_BASE_URL must be an https URL, or an http URL on a loopback host for tests",
+    );
   }
+  return url;
+}
+
+/**
+ * Throws for the configuration error that `askJev` would throw, and sends nothing. The
+ * enrichment module calls it before it sends anything for a bookmark, so a missing key is found
+ * before any other service is asked (#126).
+ */
+export function assertJevConfig(config: JevConfig): void {
+  endpoint(config);
+}
+
+/**
+ * Asks Jev one question. Transient failures are retried, with a backoff between attempts, up to
+ * JEV_ATTEMPT_LIMIT requests in all; a permanent failure ends the question at once. Throws for
+ * an empty key, or for a base URL that is neither https nor http on a loopback host, before
+ * anything is sent, because those are configuration errors rather than failures of the question.
+ */
+export async function askJev<Answer>(
+  config: JevConfig,
+  { state, id, question, answer }: JevAsk<Answer>,
+  timing: JevTiming = JEV_TIMING,
+): Promise<JevResult<Answer>> {
+  const url = endpoint(config);
   const init: RequestInit = {
     method: "POST",
     headers: {

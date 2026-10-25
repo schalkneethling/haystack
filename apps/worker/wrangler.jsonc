@@ -53,6 +53,10 @@
     // The provider enrichment uses, by its `id`: `anthropic` or `ai-gateway`. A `var`, not a
     // Flagship flag, so changing who receives bookmark data is a reviewed deploy (#125).
     "ENRICHMENT_PROVIDER": "ai-gateway",
+    // A bookmark whose sensitivity noul is at or above this, from 0 to 1, is Held until the user
+    // confirms that the link isn't private. Schalk chose 0.5 (#126). A `var`, not a Flagship
+    // flag, so changing which bookmarks are Held is a reviewed deploy.
+    "SENSITIVE_WARN_THRESHOLD": "0.5",
   },
   // Values come from .env.schema through varlock. A secret is added here in the change
   // whose code first reads it, even before production calls that code, as with

@@ -17,7 +17,7 @@
 // So every test that sends such a request through the gateway fails, the validation retry's
 // included.
 import { http, HttpResponse, type JsonBodyType } from "msw";
-import { setupServer } from "msw/node";
+import { type FixtureParts, serveFixtures } from "./mock-server.ts";
 
 /** The address the tests configure as ANTHROPIC_BASE_URL. */
 export const ANTHROPIC_ORIGIN = "https://api.anthropic.test";
@@ -119,10 +119,10 @@ export function status(code: number, headers: Record<string, string> = {}): Anth
 export const networkError: AnthropicResolver = () => HttpResponse.error();
 
 /**
- * Starts answering the adapters' requests in this process. Only one may run at a time, because
- * it patches the process's `fetch`.
+ * The fixture's handlers and records, without a server, so enrichment-fixtures.ts can serve them
+ * together with the other services' fixtures.
  */
-export function startAnthropicFixture(): AnthropicFixture {
+export function anthropicFixtureParts(): FixtureParts<AnthropicFixture> {
   const queue: AnthropicResolver[] = [];
   const requests: AnthropicRequest[] = [];
   const unplanned: string[] = [];
@@ -158,17 +158,13 @@ export function startAnthropicFixture(): AnthropicFixture {
     }
     return answerNext(request);
   };
-  const mock = setupServer(
-    http.post(MESSAGES_URL, answerAnthropic),
-    http.post(`${LOOPBACK_ORIGIN}/v1/messages`, answerAnthropic),
-    http.post(GATEWAY_MESSAGES_URL, answerGateway),
-    http.post(`${LOOPBACK_ORIGIN}${GATEWAY_PATH}`, answerGateway),
-  );
-  mock.events.on("request:unhandled", ({ request }) => {
-    unplanned.push(request.url);
-  });
-  mock.listen({ onUnhandledFrame: "error" });
   return {
+    handlers: [
+      http.post(MESSAGES_URL, answerAnthropic),
+      http.post(`${LOOPBACK_ORIGIN}/v1/messages`, answerAnthropic),
+      http.post(GATEWAY_MESSAGES_URL, answerGateway),
+      http.post(`${LOOPBACK_ORIGIN}${GATEWAY_PATH}`, answerGateway),
+    ],
     requests,
     unplanned,
     respond: (...resolvers) => {
@@ -179,8 +175,14 @@ export function startAnthropicFixture(): AnthropicFixture {
       requests.length = 0;
       unplanned.length = 0;
     },
-    close: () => {
-      mock.close();
-    },
   };
+}
+
+/**
+ * Starts answering the adapters' requests in this process. Only one may run at a time, because
+ * it patches the process's `fetch`.
+ */
+export function startAnthropicFixture(): AnthropicFixture {
+  const parts = anthropicFixtureParts();
+  return { ...parts, close: serveFixtures(parts.handlers, parts.unplanned) };
 }

@@ -228,8 +228,8 @@ export interface MessagesTransport {
   readonly keyHeader: AnthropicKeyHeader;
   /**
    * Builds the URL and the adapter's headers, and throws for the adapter's own configuration
-   * errors. It is called on every `enrich()` call, after the key and the model are checked and
-   * before anything is sent.
+   * errors. It is called on every `enrich()` and `checkConfiguration()` call, after the key and
+   * the model are checked and before anything is sent.
    */
   endpoint(): MessagesEndpoint;
 }
@@ -239,37 +239,47 @@ export interface MessagesTransport {
  * and the structured-output schema, to the transport's endpoint. It throws for an empty key or an
  * empty model, and for whatever the transport's `endpoint()` throws, before anything is sent,
  * because those are configuration errors rather than failures of the bookmark.
+ * `checkConfiguration()` runs the same checks without sending anything.
  */
 export function messagesProvider(
   id: string,
   transport: MessagesTransport,
   timing: AnthropicTiming,
 ): EnrichmentProvider {
+  // The checks every request runs first, and its endpoint. `checkConfiguration()` runs them on
+  // their own, so the enrichment module can find an error before it asks Jev or GitHub anything.
+  const prepare = (model: string): MessagesEndpoint => {
+    // An empty secret is easy to store by mistake (#98), and Anthropic would only answer 401.
+    // The value can also be missing, although `Env` says `string`: the test harness and local
+    // development don't bind a required secret they can't find.
+    if (!transport.apiKey || transport.apiKey.trim() === "") {
+      throw configurationError("ANTHROPIC_API_KEY is empty", "ANTHROPIC_API_KEY_EMPTY");
+    }
+    // The caller passes ANTHROPIC_MODEL. An empty one would only get a 400 for every bookmark,
+    // each counted as a permanent failure.
+    if (!model || model.trim() === "") {
+      throw configurationError("ANTHROPIC_MODEL is empty", "ANTHROPIC_MODEL_EMPTY");
+    }
+    const endpoint = transport.endpoint();
+    // An adapter's own `authorization` or `x-api-key` would send a second credential, or the
+    // key in a header the provider doesn't read (#125). Header names aren't case-sensitive.
+    for (const name of Object.keys(endpoint.headers ?? {})) {
+      if (KEY_HEADERS.has(name.toLowerCase())) {
+        throw configurationError(
+          `An adapter's headers can't include ${name}; use keyHeader`,
+          "MESSAGES_KEY_HEADER_IN_HEADERS",
+        );
+      }
+    }
+    return endpoint;
+  };
   return {
     id,
+    checkConfiguration({ model }) {
+      prepare(model);
+    },
     async enrich(input, { model }) {
-      // An empty secret is easy to store by mistake (#98), and Anthropic would only answer 401.
-      // The value can also be missing, although `Env` says `string`: the test harness and local
-      // development don't bind a required secret they can't find.
-      if (!transport.apiKey || transport.apiKey.trim() === "") {
-        throw configurationError("ANTHROPIC_API_KEY is empty", "ANTHROPIC_API_KEY_EMPTY");
-      }
-      // The caller passes ANTHROPIC_MODEL. An empty one would only get a 400 for every bookmark,
-      // each counted as a permanent failure.
-      if (!model || model.trim() === "") {
-        throw configurationError("ANTHROPIC_MODEL is empty", "ANTHROPIC_MODEL_EMPTY");
-      }
-      const { url, headers } = transport.endpoint();
-      // An adapter's own `authorization` or `x-api-key` would send a second credential, or the
-      // key in a header the provider doesn't read (#125). Header names aren't case-sensitive.
-      for (const name of Object.keys(headers ?? {})) {
-        if (KEY_HEADERS.has(name.toLowerCase())) {
-          throw configurationError(
-            `An adapter's headers can't include ${name}; use keyHeader`,
-            "MESSAGES_KEY_HEADER_IN_HEADERS",
-          );
-        }
-      }
+      const { url, headers } = prepare(model);
       const { system, user } = enrichmentPrompt(input);
       const outcome = await request(
         url,

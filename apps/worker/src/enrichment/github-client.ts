@@ -258,6 +258,29 @@ function parseRepository(text: string): v.InferOutput<typeof RepositoryResponse>
 }
 
 /**
+ * Throws for the configuration error that `readGitHubRepository` would throw, and sends nothing:
+ * an empty token, or a base URL that is neither https nor http on a loopback host. The
+ * enrichment module calls it before it sends anything for a GitHub bookmark, so a missing token
+ * is found before Jev is asked (#126).
+ */
+export function assertGitHubConfig(config: GitHubConfig): void {
+  // An empty secret is easy to store by mistake (#98), and GitHub would only answer 401. The
+  // value can also be missing, although `Env` says `string`: the test harness and local
+  // development don't bind a required secret they can't find.
+  if (!config.GITHUB_TOKEN || config.GITHUB_TOKEN.trim() === "") {
+    throw Object.assign(new Error("GITHUB_TOKEN is empty"), { code: "GITHUB_TOKEN_EMPTY" });
+  }
+  // Integration tests point the base URL at a plain-http server on this machine (Q10), so http
+  // is allowed there, by the same rule as Google sign-in's endpoints. Every request URL is an
+  // absolute path resolved against the base URL, so it has the base URL's scheme and host.
+  if (!isHttpsOrLoopbackUrl(new URL(config.GITHUB_API_BASE_URL))) {
+    throw new TypeError(
+      "GITHUB_API_BASE_URL must be an https URL, or an http URL on a loopback host for tests",
+    );
+  }
+}
+
+/**
  * Reads the repository that `match` names: its description, topics and primary language, and
  * an excerpt of its README. A missing or unreadable README still returns the repository's data.
  * Any other failure returns no data, and nothing is retried. Throws for an empty token, or for a
@@ -269,21 +292,9 @@ export async function readGitHubRepository(
   match: GitHubRepositoryMatch,
   timing: GitHubTiming = GITHUB_TIMING,
 ): Promise<GitHubResult> {
-  // An empty secret is easy to store by mistake (#98), and GitHub would only answer 401. The
-  // value can also be missing, although `Env` says `string`: the test harness and local
-  // development don't bind a required secret they can't find.
-  if (!config.GITHUB_TOKEN || config.GITHUB_TOKEN.trim() === "") {
-    throw Object.assign(new Error("GITHUB_TOKEN is empty"), { code: "GITHUB_TOKEN_EMPTY" });
-  }
+  assertGitHubConfig(config);
   const path = `/repos/${encodeURIComponent(match.owner)}/${encodeURIComponent(match.repo)}`;
   const repositoryUrl = new URL(path, config.GITHUB_API_BASE_URL);
-  // Integration tests point the base URL at a plain-http server on this machine (Q10), so http
-  // is allowed there, by the same rule as Google sign-in's endpoints.
-  if (!isHttpsOrLoopbackUrl(repositoryUrl)) {
-    throw new TypeError(
-      "GITHUB_API_BASE_URL must be an https URL, or an http URL on a loopback host for tests",
-    );
-  }
   const headers = {
     authorization: `Bearer ${config.GITHUB_TOKEN}`,
     "user-agent": GITHUB_USER_AGENT,
