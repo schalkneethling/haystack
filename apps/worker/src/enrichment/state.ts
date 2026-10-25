@@ -28,6 +28,55 @@ export interface EnrichmentStatePolicy {
   attemptLimit: number;
 }
 
+/** The configuration the warning threshold is read from. `Env` has it, from `vars`. */
+export interface SensitiveWarnThresholdConfig {
+  // A decimal number from 0 to 1, as a string, because every `var` is one.
+  SENSITIVE_WARN_THRESHOLD: string;
+}
+
+// From 0 to 1, written out as a decimal, such as `0.5`. Number() would also read `""` as 0,
+// `0x1` as 1 and ` 1e-1 ` as 0.1, so a mistyped value could quietly hold every bookmark.
+const THRESHOLD = /^(?:0(?:\.\d+)?|1(?:\.0+)?)$/;
+
+/**
+ * SENSITIVE_WARN_THRESHOLD as a number. Throws for any other value, before anything is sent,
+ * because a threshold that can't be read is a configuration error: it would hold every bookmark
+ * or none, whichever way it was guessed.
+ */
+export function readSensitiveWarnThreshold({
+  SENSITIVE_WARN_THRESHOLD: value,
+}: SensitiveWarnThresholdConfig): number {
+  // The value can be missing, although `Env` says `string`, when a test's configuration leaves
+  // it out.
+  if (typeof value !== "string" || !THRESHOLD.test(value)) {
+    throw Object.assign(
+      new Error(
+        `SENSITIVE_WARN_THRESHOLD is ${JSON.stringify(value)}, which isn't a decimal number from 0 to 1`,
+      ),
+      { code: "SENSITIVE_WARN_THRESHOLD_INVALID" },
+    );
+  }
+  return Number(value);
+}
+
+/**
+ * Whether a bookmark is Held: its noul is at or above the threshold, and the user hasn't
+ * confirmed that the link isn't private. The state's table and the enrichment module's gate
+ * (enrich-bookmark.ts) both use this, so they can't disagree about which bookmark is Held.
+ */
+export function isHeld(
+  sensitivityNoul: number | null,
+  sensitivityAcknowledgedAt: number | null,
+  sensitiveWarnThreshold: number,
+): boolean {
+  // A bookmark that was never checked is not Held. The enrichment module checks it first.
+  return (
+    sensitivityNoul !== null &&
+    sensitivityNoul >= sensitiveWarnThreshold &&
+    sensitivityAcknowledgedAt === null
+  );
+}
+
 /**
  * The first state in the plan's table whose condition the bookmark meets. Throws when the
  * inputs were read at another schema version, because the bookmark's failure record at this
@@ -48,12 +97,7 @@ export function deriveEnrichmentState(
       `Enrichment state inputs were read at schema version ${failureVersion}, not ${schemaVersion}`,
     );
   }
-  // A bookmark that was never checked is not Held. The enrichment module checks it first.
-  if (
-    sensitivityNoul !== null &&
-    sensitivityNoul >= sensitiveWarnThreshold &&
-    sensitivityAcknowledgedAt === null
-  ) {
+  if (isHeld(sensitivityNoul, sensitivityAcknowledgedAt, sensitiveWarnThreshold)) {
     return "held";
   }
   if (enrichmentVersions.includes(schemaVersion)) {

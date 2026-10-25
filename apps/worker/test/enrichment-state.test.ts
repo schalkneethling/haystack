@@ -3,6 +3,7 @@ import {
   deriveEnrichmentState,
   type EnrichmentStateInputs,
   type EnrichmentStatePolicy,
+  readSensitiveWarnThreshold,
 } from "../src/enrichment/state.ts";
 
 const policy: EnrichmentStatePolicy = {
@@ -138,5 +139,35 @@ describe("deriveEnrichmentState", () => {
     it("is a bookmark with no enrichment", () => {
       expect(state({})).toBe("pending");
     });
+  });
+});
+
+describe("readSensitiveWarnThreshold", () => {
+  it.each([
+    ["0.5", 0.5],
+    ["0", 0],
+    ["1", 1],
+    ["0.05", 0.05],
+    ["1.0", 1],
+  ])("reads %s as %d", (value, threshold) => {
+    expect(readSensitiveWarnThreshold({ SENSITIVE_WARN_THRESHOLD: value })).toBe(threshold);
+  });
+
+  // Number() reads each of the first four as a number, so a mistyped value would otherwise hold
+  // every bookmark or none.
+  it.each([
+    ["an empty string", ""],
+    ["whitespace", " "],
+    ["a hexadecimal number", "0x1"],
+    ["an exponent", "5e-1"],
+    ["a number above 1", "1.5"],
+    ["a negative number", "-0.5"],
+    ["a percentage", "50%"],
+    ["a value with spaces around it", " 0.5 "],
+    ["a missing value", undefined as unknown as string],
+  ])("refuses %s, with a code that names the variable", (_, value) => {
+    expect(() => readSensitiveWarnThreshold({ SENSITIVE_WARN_THRESHOLD: value })).toThrow(
+      expect.objectContaining({ code: "SENSITIVE_WARN_THRESHOLD_INVALID" }),
+    );
   });
 });

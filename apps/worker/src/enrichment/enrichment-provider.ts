@@ -59,6 +59,12 @@ export type ProviderResult = ProviderOutput | ProviderFailure;
 export interface EnrichmentProvider {
   // The provider's name, for the enrichment row's `provider`.
   readonly id: string;
+  /**
+   * Throws for the configuration error that `enrich()` would throw with these options, and sends
+   * nothing. The enrichment module calls it before it asks Jev or GitHub anything, so an empty
+   * key doesn't cost a bookmark's Jev questions on every run (#126).
+   */
+  checkConfiguration(options: { readonly model: string }): void;
   enrich(input: EnrichmentInput, options: { readonly model: string }): Promise<ProviderResult>;
 }
 

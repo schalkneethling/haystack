@@ -14,6 +14,7 @@ import {
 } from "vite-plus/test";
 import {
   askJev,
+  assertJevConfig,
   JEV_ATTEMPT_LIMIT,
   type JevConfig,
   type JevResult,
@@ -22,6 +23,7 @@ import {
 } from "../src/enrichment/jev-client.ts";
 import {
   answer,
+  JEV_LOOPBACK_ORIGIN,
   JEV_ORIGIN,
   type JevFixture,
   networkError,
@@ -432,7 +434,7 @@ describe("askJev", () => {
       expect(fixture.requests).toEqual([]);
     });
 
-    it("is sent only over https", async () => {
+    it("is sent only over https, or http on a loopback host", async () => {
       await expect(
         askJev(
           { ...config, JEV_BASE_URL: "http://jev.test" },
@@ -443,8 +445,44 @@ describe("askJev", () => {
             answer: NoulAnswer,
           },
         ),
-      ).rejects.toThrow("JEV_BASE_URL must be an https URL");
+      ).rejects.toThrow(
+        "JEV_BASE_URL must be an https URL, or an http URL on a loopback host for tests",
+      );
       expect(fixture.requests).toEqual([]);
+    });
+
+    // The enrichment module runs the same checks before it sends anything for a bookmark (#126).
+    it("is checked by assertJevConfig as askJev checks it, without a request", () => {
+      expect(() => assertJevConfig({ ...config, TYPESAFE_API_KEY: "" })).toThrow(
+        expect.objectContaining({ code: "TYPESAFE_API_KEY_EMPTY" }),
+      );
+      expect(() => assertJevConfig({ ...config, JEV_BASE_URL: "http://jev.test" })).toThrow(
+        "JEV_BASE_URL must be an https URL, or an http URL on a loopback host for tests",
+      );
+      expect(() => assertJevConfig(config)).not.toThrow();
+      expect(() => assertJevConfig({ ...config, JEV_BASE_URL: JEV_LOOPBACK_ORIGIN })).not.toThrow();
+      expect(fixture.requests).toEqual([]);
+    });
+
+    // The integration tests' fixture server is plain http on 127.0.0.1 (Q10 in the plan), so the
+    // enrichment module's tests through the Worker can reach it (#126).
+    it("is sent over http to a loopback host, as an integration test's server is", async () => {
+      fixture.respond(answer(noulResponse));
+      const result = await askJev(
+        { ...config, JEV_BASE_URL: JEV_LOOPBACK_ORIGIN },
+        {
+          state: "x",
+          id: "billing",
+          question: { type: "noul", instructions: "?" },
+          answer: NoulAnswer,
+        },
+        timing,
+      );
+      expect(result).toMatchObject({ ok: true, answer: 0.98, attempts: 1 });
+      expect(fixture.requests.map(({ url }) => url)).toEqual([
+        `${JEV_LOOPBACK_ORIGIN}/v1/systemone`,
+      ]);
+      expect(fixture.requests[0]?.headers.get("authorization")).toBe(`Bearer ${KEY}`);
     });
   });
 });
