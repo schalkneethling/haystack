@@ -18,6 +18,9 @@ test("the confirmation page has no axe violations", async ({ page }) => {
     .getByRole("button", { name: "Delete A guide" })
     .evaluate((button) => button.closest("form")?.submit());
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Delete this link?");
+  // The page can show the heading while its stylesheets are still loading, so without the wait
+  // axe could check the unstyled page, in the browser's default colors (#159, #160).
+  await page.waitForLoadState("load");
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
 
