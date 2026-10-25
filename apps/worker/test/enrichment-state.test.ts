@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  backoffWindowMs,
   deriveEnrichmentState,
   type EnrichmentStateInputs,
   type EnrichmentStatePolicy,
@@ -170,4 +171,35 @@ describe("readSensitiveWarnThreshold", () => {
       expect.objectContaining({ code: "SENSITIVE_WARN_THRESHOLD_INVALID" }),
     );
   });
+});
+
+// The owner's decision of 2026-10-25 (#127): 15 minutes, doubling, up to 6 hours.
+describe("backoffWindowMs", () => {
+  const minutes = (count: number) => count * 60 * 1000;
+
+  it.each([
+    [1, minutes(15)],
+    [2, minutes(30)],
+    [3, minutes(60)],
+    [4, minutes(120)],
+    [5, minutes(240)],
+    [6, minutes(360)],
+    [7, minutes(360)],
+    [15, minutes(360)],
+    // Past 1,023 failures, 2 ** (n - 1) is Infinity, and the cap still holds.
+    [2_000, minutes(360)],
+  ])("waits %i failures in a row out for %i ms", (consecutiveFailures, window) => {
+    expect(backoffWindowMs(consecutiveFailures)).toBe(window);
+  });
+
+  it("has no window without a failure", () => {
+    expect(backoffWindowMs(0)).toBe(0);
+  });
+
+  it.each([-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    "refuses %d, which no failure record holds",
+    (consecutiveFailures) => {
+      expect(() => backoffWindowMs(consecutiveFailures)).toThrow(RangeError);
+    },
+  );
 });

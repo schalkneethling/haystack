@@ -259,9 +259,10 @@ for (const adapter of ADAPTERS) {
         expect(fixture.requests).toHaveLength(1);
       });
 
-      // The gateway's own errors, such as a missing token, aren't documented, so they are
-      // classified by their status like Anthropic's, and these cover them too.
-      for (const code of [400, 401, 403, 404, 413]) {
+      // The gateway's own errors aren't documented, so they are classified by their status like
+      // Anthropic's: an unknown gateway's 404 is among these, while a missing or wrong token's
+      // 401 or 403 is the account's, below.
+      for (const code of [400, 404, 413]) {
         it(`makes a ${code} permanent`, async () => {
           fixture.respond(status(code));
           expect(await enrich()).toEqual({
@@ -273,6 +274,168 @@ for (const adapter of ADAPTERS) {
           expect(fixture.requests).toHaveLength(1);
         });
       }
+
+      // A rejected key, a billing problem or a key without permission is Haystack's account,
+      // which the enrichment module stops the run for, rather than counting it against the
+      // bookmark (#127).
+      for (const code of [401, 402, 403]) {
+        it(`makes a ${code} the account's failure`, async () => {
+          fixture.respond(status(code));
+          expect(await enrich()).toEqual({
+            ok: false,
+            failure: "account",
+            reason: "status",
+            status: code,
+          });
+          expect(fixture.requests).toHaveLength(1);
+        });
+      }
+
+      // The body of a 400 for a spend limit the organization or a workspace set, as Rate limits
+      // describes it on 2026-10-25: `invalid_request_error`, and a message that starts with one
+      // of two sentences and "states when access resumes". The page shows no full body, so the
+      // rest of the message here is the fixture's own.
+      const errorBody =
+        (code: number, type: string, message: string): AnthropicResolver =>
+        () =>
+          HttpResponse.json(
+            { type: "error", error: { type, message }, request_id: "req_fixture" },
+            { status: code },
+          );
+      const spendLimits: [string, string][] = [
+        [
+          "the organization's",
+          "You have reached your specified API usage limits. You will regain access on 2026-11-01 at 00:00 UTC.",
+        ],
+        [
+          "a workspace's",
+          "You have reached your specified workspace API usage limits. You will regain access on 2026-11-01 at 00:00 UTC.",
+        ],
+      ];
+      for (const [whose, message] of spendLimits) {
+        it(`makes a 400 for ${whose} spend limit the account's failure, with none of its text (#154)`, async () => {
+          fixture.respond(errorBody(400, "invalid_request_error", message));
+          const result = await enrich();
+          expect(result).toEqual({
+            ok: false,
+            failure: "account",
+            reason: "spend-limit",
+            status: 400,
+          });
+          expect(JSON.stringify(result)).not.toContain("usage limits");
+          expect(fixture.requests).toHaveLength(1);
+        });
+
+        it(`returns ${whose} spend limit from the module without asking again`, async () => {
+          fixture.respond(errorBody(400, "invalid_request_error", message));
+          expect(await write()).toEqual({
+            ok: false,
+            failure: "account",
+            reason: "spend-limit",
+            status: 400,
+            calls: 1,
+          });
+          expect(fixture.requests).toHaveLength(1);
+        });
+      }
+
+      // Only the documented status, error type and start of the message are a spend limit.
+      const otherBadRequests: [string, AnthropicResolver][] = [
+        [
+          "another invalid request",
+          errorBody(400, "invalid_request_error", "max_tokens: Field required"),
+        ],
+        [
+          "a message that only mentions a spend limit",
+          errorBody(
+            400,
+            "invalid_request_error",
+            "Request failed. You have reached your specified API usage limits.",
+          ),
+        ],
+        [
+          "the message under another error type",
+          errorBody(400, "api_error", "You have reached your specified API usage limits."),
+        ],
+        [
+          "the gateway's own error",
+          () =>
+            HttpResponse.json(
+              {
+                error: [
+                  {
+                    code: 2044,
+                    message: "Customer-provided provider credentials are required for this request",
+                  },
+                ],
+              },
+              { status: 400 },
+            ),
+        ],
+        ["a body that isn't JSON", () => new HttpResponse("Bad Request", { status: 400 })],
+      ];
+      for (const [name, resolver] of otherBadRequests) {
+        it(`keeps a 400 with ${name} permanent`, async () => {
+          fixture.respond(resolver);
+          expect(await enrich()).toEqual({
+            ok: false,
+            failure: "permanent",
+            reason: "status",
+            status: 400,
+          });
+        });
+      }
+
+      // Only the first 4 KiB are read, and a body cut there is never a spend limit, whether its
+      // start is cut JSON or parses. The padding is a fixed 8 KiB, so a higher limit fails these.
+      const padding = 8 * 1024;
+      const overCap: [string, AnthropicResolver][] = [
+        [
+          "a spend limit's message that runs past the read limit",
+          errorBody(
+            400,
+            "invalid_request_error",
+            `You have reached your specified API usage limits. ${"x".repeat(padding)}`,
+          ),
+        ],
+        [
+          "a spend limit's body followed by whitespace past the read limit",
+          () =>
+            new HttpResponse(
+              `${JSON.stringify({
+                type: "error",
+                error: {
+                  type: "invalid_request_error",
+                  message: "You have reached your specified API usage limits.",
+                },
+              })}${" ".repeat(padding)}`,
+              { status: 400, headers: { "content-type": "application/json" } },
+            ),
+        ],
+      ];
+      for (const [name, resolver] of overCap) {
+        it(`keeps ${name} permanent`, async () => {
+          fixture.respond(resolver);
+          expect(await enrich()).toEqual({
+            ok: false,
+            failure: "permanent",
+            reason: "status",
+            status: 400,
+          });
+          expect(fixture.requests).toHaveLength(1);
+        });
+      }
+
+      it("keeps the spend limit's message permanent under another status", async () => {
+        fixture.respond(
+          errorBody(
+            404,
+            "invalid_request_error",
+            "You have reached your specified API usage limits.",
+          ),
+        );
+        expect(await enrich()).toMatchObject({ failure: "permanent", status: 404 });
+      });
 
       it("makes a refusal permanent", async () => {
         fixture.respond(answer(messageBody("I can't help with that.", "refusal")));
@@ -456,9 +619,29 @@ for (const adapter of ADAPTERS) {
         async (base) => {
           await expect(
             adapter.withBaseUrl(base).enrich(REPOSITORY_INPUT, { model: MODEL }),
-          ).rejects.toThrow(
-            `${adapter.baseUrlName} must be an https URL, or http on a loopback host`,
-          );
+          ).rejects.toMatchObject({
+            message: `${adapter.baseUrlName} must be an https URL, or http on a loopback host`,
+            code: `${adapter.baseUrlName}_INVALID`,
+          });
+          expect(fixture.requests).toEqual([]);
+        },
+      );
+
+      // The harness and local development leave a value they can't find unbound, so it can be
+      // missing although `Env` says `string`. `new URL` would throw a bare TypeError (#155).
+      it.each([
+        ["an empty string", ""],
+        ["a missing value", undefined as unknown as string],
+        ["a value that isn't a URL", "api.anthropic.com"],
+      ])(
+        "refuses %s as the base URL, with a code that names it, before any request",
+        async (_, base) => {
+          await expect(
+            adapter.withBaseUrl(base).enrich(REPOSITORY_INPUT, { model: MODEL }),
+          ).rejects.toMatchObject({
+            message: `${adapter.baseUrlName} is empty or isn't a URL`,
+            code: `${adapter.baseUrlName}_INVALID`,
+          });
           expect(fixture.requests).toEqual([]);
         },
       );
@@ -474,7 +657,10 @@ for (const adapter of ADAPTERS) {
           );
           expect(() =>
             adapter.withBaseUrl("http://example.com").checkConfiguration({ model: MODEL }),
-          ).toThrow(`${adapter.baseUrlName} must be an https URL, or http on a loopback host`);
+          ).toThrow(expect.objectContaining({ code: `${adapter.baseUrlName}_INVALID` }));
+          expect(() => adapter.withBaseUrl("").checkConfiguration({ model: MODEL })).toThrow(
+            expect.objectContaining({ code: `${adapter.baseUrlName}_INVALID` }),
+          );
           expect(fixture.requests).toEqual([]);
         });
 

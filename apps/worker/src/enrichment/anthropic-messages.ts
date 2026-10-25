@@ -25,12 +25,15 @@
 //   base URL and checks is https, or http on a loopback host, where the integration tests'
 //   recorded server runs (see "Testing strategy" in the plan). Redirects are not followed, so no
 //   credential can be sent on to another address.
-// - Nothing here logs. A failure is a fixed code and a status, which are safe to log.
+// - Nothing here logs. A failure is a fixed code and a status, which are safe to log. An error
+//   response's body is read only to recognize a spend limit, and none of it is kept.
 import * as v from "valibot";
+import { readText } from "./bounded-read.ts";
+import { configurationError } from "./configuration.ts";
 import { enrichmentPrompt } from "./enrichment-prompt.ts";
 import type { EnrichmentProvider, ProviderFailure, ProviderResult } from "./enrichment-provider.ts";
 import { ENRICHMENT_JSON_SCHEMA } from "./enrichment-schema.ts";
-import { isTransientStatus } from "./failure-class.ts";
+import { statusFailureClass } from "./failure-class.ts";
 
 /**
  * The API version the request is written against. 2026-10-21 is the newest, which the Versions
@@ -77,11 +80,6 @@ export const ANTHROPIC_TIMING: AnthropicTiming = {
   requestTimeoutMs: ANTHROPIC_REQUEST_TIMEOUT_MS,
 };
 
-/** An error in the configuration, thrown before anything is sent. The code is safe to log. */
-export function configurationError(message: string, code: string): Error {
-  return Object.assign(new Error(message), { code });
-}
-
 // The fields of a Message that Haystack reads. Fields it doesn't read, such as `id` and the
 // thinking blocks' contents, aren't checked, so a change to them can't fail an answer.
 const MessageResponse = v.object({
@@ -99,6 +97,60 @@ const MessageResponse = v.object({
   }),
 });
 
+// An error response's body, in the shape the Errors page documents: "a top-level `error` object
+// that always includes a `type` and `message` value". Only what the spend-limit check reads is
+// checked. The gateway's own errors have another shape, such as `{"error":[{"code":2044,...}]}`
+// (ai-gateway-provider.ts), so they never match.
+const ErrorResponse = v.object({
+  type: v.literal("error"),
+  error: v.object({ type: v.string(), message: v.string() }),
+});
+
+/**
+ * How the message of a `400` starts when usage reaches a spend limit that the organization or a
+ * workspace set for itself (#154). "Rate limits"
+ * (https://platform.claude.com/docs/en/api/rate-limits), read on 2026-10-25, says under "Setting
+ * your own spend limit": "requests return HTTP 400 with error type `invalid_request_error`. The
+ * message starts with `You have reached your specified API usage limits`, or `You have reached
+ * your specified workspace API usage limits` for a workspace limit, and states when access
+ * resumes." "Errors" (https://platform.claude.com/docs/en/api/errors), read the same day, says
+ * "The API also returns a 400 when usage reaches an organization or workspace spend limit you
+ * set". Neither page documents a code for it, as "Rate limits" does for the tier's monthly cap (a
+ * `429` with `error.details.error_code: enforced_spend_limit_reached`, which is transient
+ * anyway). So the documented starts of the message, with the status and the error type, are the
+ * narrowest match there is. If Anthropic rewords the message, the `400` is permanent again, as it
+ * was before.
+ */
+const SPEND_LIMIT_MESSAGE_STARTS = [
+  "You have reached your specified API usage limits",
+  "You have reached your specified workspace API usage limits",
+] as const;
+
+/**
+ * How much of a `400`'s body is read to look for a spend limit. The Errors page's example body is
+ * under 200 bytes, and a spend limit's message is two sentences, so 4 KiB is many times what the
+ * error JSON needs, while a body that is something else, such as a proxy's HTML page, isn't
+ * downloaded whole. A body cut at the limit is never taken for a spend limit, even when its
+ * start parses, because a documented error body is a small fraction of that.
+ */
+export const ERROR_BODY_READ_LIMIT_BYTES = 4 * 1024;
+
+// Whether a `400`'s body says a spend limit was reached. Nothing from the body is returned.
+function isSpendLimit(body: string): boolean {
+  let json: unknown;
+  try {
+    json = JSON.parse(body);
+  } catch {
+    return false;
+  }
+  const parsed = v.safeParse(ErrorResponse, json);
+  if (!parsed.success || parsed.output.error.type !== "invalid_request_error") {
+    return false;
+  }
+  const { message } = parsed.output.error;
+  return SPEND_LIMIT_MESSAGE_STARTS.some((start) => message.startsWith(start));
+}
+
 type RequestOutcome = { readonly ok: true; readonly body: string } | ProviderFailure;
 
 function discard(response: Response): void {
@@ -112,20 +164,29 @@ async function request(url: URL, init: RequestInit, timeoutMs: number): Promise<
   try {
     const response = await fetch(url, { ...init, signal });
     if (!response.ok) {
-      discard(response);
       const { status } = response;
+      // A spend limit is Haystack's account, not the bookmark, so it stops the run like a 402
+      // (#154). The body's start is read here, inside the time limit, and one that stops
+      // arriving is a transient failure like any other.
+      if (status === 400) {
+        const read =
+          response.body === null
+            ? undefined
+            : await readText(response.body, ERROR_BODY_READ_LIMIT_BYTES);
+        if (read?.complete === true && isSpendLimit(read.text)) {
+          return { ok: false, failure: "account", reason: "spend-limit", status };
+        }
+      } else {
+        discard(response);
+      }
       // The transient statuses are the ones #124 lists, by the Jev client's rule (408, 429, 529
-      // and any other 5xx). The errors page gives retry advice for only two statuses: "Retry the
-      // request with exponential backoff" for 500 (api_error), and "Resolve the conflict, then
-      // retry the request" for 409 (conflict_error), which stays permanent here, because the
-      // same request would conflict again. It suggests streaming for 504 (timeout_error), and
-      // gives no advice for 429 (rate_limit_error) or 529 (overloaded_error).
-      return {
-        ok: false,
-        failure: isTransientStatus(status) ? "transient" : "permanent",
-        reason: "status",
-        status,
-      };
+      // and any other 5xx), and 401, 402 (billing_error) and 403 are the account (#127). The
+      // errors page gives retry advice for only two statuses: "Retry the request with
+      // exponential backoff" for 500 (api_error), and "Resolve the conflict, then retry the
+      // request" for 409 (conflict_error), which stays permanent here, because the same request
+      // would conflict again. It suggests streaming for 504 (timeout_error), and gives no advice
+      // for 429 (rate_limit_error) or 529 (overloaded_error).
+      return { ok: false, failure: statusFailureClass(status), reason: "status", status };
     }
     // Read here, inside the time limit, so a body that stops arriving times out too.
     return { ok: true, body: await response.text() };

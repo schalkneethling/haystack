@@ -312,6 +312,22 @@ describe("askJev", () => {
       expect(fixture.requests).toHaveLength(1);
     });
 
+    // The errors page's 401 is "Missing or invalid API key", which is Haystack's account, not the
+    // question. It documents no 402 or 403, which keep their HTTP meaning (#127).
+    for (const code of [401, 402, 403]) {
+      it(`makes a ${code} the account's failure, without retrying it`, async () => {
+        fixture.respond(status(code));
+        expect(await ask()).toEqual({
+          ok: false,
+          failure: "account",
+          reason: "status",
+          status: code,
+          attempts: 1,
+        });
+        expect(fixture.requests).toHaveLength(1);
+      });
+    }
+
     it("makes a network error transient", async () => {
       fixture.respond(networkError, networkError, networkError);
       expect(await ask()).toEqual({
@@ -473,11 +489,41 @@ describe("askJev", () => {
             answer: NoulAnswer,
           },
         ),
-      ).rejects.toThrow(
-        "JEV_BASE_URL must be an https URL, or an http URL on a loopback host for tests",
-      );
+      ).rejects.toMatchObject({
+        message: "JEV_BASE_URL must be an https URL, or http on a loopback host",
+        code: "JEV_BASE_URL_INVALID",
+      });
       expect(fixture.requests).toEqual([]);
     });
+
+    // `new URL` would throw a bare TypeError for each of these, with no code (#155).
+    it.each([
+      ["an empty string", ""],
+      ["a missing value", undefined as unknown as string],
+      ["a value that isn't a URL", "api.typesafe.ai"],
+    ])(
+      "refuses %s as the base URL, with a code that names it, before any request",
+      async (_, base) => {
+        expect(() => assertJevConfig({ ...config, JEV_BASE_URL: base })).toThrow(
+          expect.objectContaining({
+            message: "JEV_BASE_URL is empty or isn't a URL",
+            code: "JEV_BASE_URL_INVALID",
+          }),
+        );
+        await expect(
+          askJev(
+            { ...config, JEV_BASE_URL: base },
+            {
+              state: "x",
+              id: "billing",
+              question: { type: "noul", instructions: "?" },
+              answer: NoulAnswer,
+            },
+          ),
+        ).rejects.toMatchObject({ code: "JEV_BASE_URL_INVALID" });
+        expect(fixture.requests).toEqual([]);
+      },
+    );
 
     // The enrichment module runs the same checks before it sends anything for a bookmark (#126).
     it("is checked by assertJevConfig as askJev checks it, without a request", () => {
@@ -485,7 +531,7 @@ describe("askJev", () => {
         expect.objectContaining({ code: "TYPESAFE_API_KEY_EMPTY" }),
       );
       expect(() => assertJevConfig({ ...config, JEV_BASE_URL: "http://jev.test" })).toThrow(
-        "JEV_BASE_URL must be an https URL, or an http URL on a loopback host for tests",
+        expect.objectContaining({ code: "JEV_BASE_URL_INVALID" }),
       );
       expect(() => assertJevConfig(config)).not.toThrow();
       expect(() => assertJevConfig({ ...config, JEV_BASE_URL: JEV_LOOPBACK_ORIGIN })).not.toThrow();

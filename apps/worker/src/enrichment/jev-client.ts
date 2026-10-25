@@ -17,9 +17,9 @@
 //   (see "Testing strategy" in the plan). Redirects are not followed, so the key can't be sent on
 //   to another address.
 // - Nothing here logs. A failure is a fixed code and a status, which are safe to log.
-import { isHttpsOrLoopbackUrl } from "@haystack/schemas";
 import * as v from "valibot";
-import { type FailureClass, isTransientStatus } from "./failure-class.ts";
+import { checkedBaseUrl, configurationError } from "./configuration.ts";
+import { type FailureClass, statusFailureClass } from "./failure-class.ts";
 
 /** The configuration the client reads. `Env` has these, from `vars` and `secrets.required`. */
 export interface JevConfig {
@@ -87,8 +87,8 @@ export interface ChoiceQuestion<Option extends string> {
 export type JevFailureReason = "timeout" | "network" | "status" | "invalid-response";
 
 /**
- * A transient failure may succeed later, and enrichment only records it. A permanent one
- * won't, and counts toward the attempt limit (see "Enrichment sweep" in the plan).
+ * A transient failure may succeed later, and a permanent one won't (see "Enrichment sweep" in the
+ * plan). An `account` one is a rejected key, which the run stops for (failure-class.ts, #127).
  */
 export type JevFailureClass = FailureClass;
 
@@ -188,8 +188,9 @@ async function attempt(url: URL, init: RequestInit, timeoutMs: number): Promise<
       return {
         ok: false,
         // 429 and 529 are the statuses the errors page says to retry. A 408 and any other 5xx are
-        // transient too, as they are for the TypeSafe SDKs.
-        failure: isTransientStatus(status) ? "transient" : "permanent",
+        // transient too, as they are for the TypeSafe SDKs. A 401 is the key, the errors page's
+        // "Missing or invalid API key", so it is the account's failure (#127).
+        failure: statusFailureClass(status),
         reason: "status",
         status,
         headers,
@@ -278,26 +279,19 @@ export interface JevAsk<Answer> {
 }
 
 // The endpoint every question is posted to, once the configuration is checked. Throws for an
-// empty key, or for a base URL that is neither https nor http on a loopback host.
+// empty key, or for a base URL that is missing, doesn't parse, or is neither https nor http on a
+// loopback host.
 function endpoint(config: JevConfig): URL {
   // An empty secret is easy to store by mistake (#98), and TypeSafe would only answer 401. The
   // value can also be missing, although `Env` says `string`: the test harness and local
   // development don't bind a required secret they can't find.
   if (!config.TYPESAFE_API_KEY || config.TYPESAFE_API_KEY.trim() === "") {
-    throw Object.assign(new Error("TYPESAFE_API_KEY is empty"), {
-      code: "TYPESAFE_API_KEY_EMPTY",
-    });
+    throw configurationError("TYPESAFE_API_KEY is empty", "TYPESAFE_API_KEY_EMPTY");
   }
-  const url = new URL("/v1/systemone", config.JEV_BASE_URL);
   // Integration tests point the base URL at a plain-http server on this machine (Q10), so http
   // is allowed there, by the same rule as the GitHub client, the LLM adapters and Google
-  // sign-in's endpoints (#126).
-  if (!isHttpsOrLoopbackUrl(url)) {
-    throw new TypeError(
-      "JEV_BASE_URL must be an https URL, or an http URL on a loopback host for tests",
-    );
-  }
-  return url;
+  // sign-in's endpoints (#126). The error's code is `JEV_BASE_URL_INVALID` (#155).
+  return new URL("/v1/systemone", checkedBaseUrl("JEV_BASE_URL", config.JEV_BASE_URL));
 }
 
 /**
@@ -311,9 +305,10 @@ export function assertJevConfig(config: JevConfig): void {
 
 /**
  * Asks Jev one question. Transient failures are retried, with a backoff between attempts, up to
- * JEV_ATTEMPT_LIMIT requests in all; a permanent failure ends the question at once. Throws for
- * an empty key, or for a base URL that is neither https nor http on a loopback host, before
- * anything is sent, because those are configuration errors rather than failures of the question.
+ * JEV_ATTEMPT_LIMIT requests in all; a permanent or `account` failure ends the question at once.
+ * Throws for an empty key, or for a base URL that is missing, doesn't parse, or is neither https
+ * nor http on a loopback host, before anything is sent, because those are configuration errors
+ * rather than failures of the question.
  */
 export async function askJev<Answer>(
   config: JevConfig,
@@ -346,7 +341,8 @@ export async function askJev<Answer>(
       ...(outcome.status === undefined ? {} : { status: outcome.status }),
       attempts,
     };
-    if (outcome.failure === "permanent" || attempts === JEV_ATTEMPT_LIMIT) {
+    // An `account` failure would get the same answer again, as a permanent one would.
+    if (outcome.failure !== "transient" || attempts === JEV_ATTEMPT_LIMIT) {
       return failure;
     }
     const delay = retryDelayMs(attempts, outcome.headers, timing);

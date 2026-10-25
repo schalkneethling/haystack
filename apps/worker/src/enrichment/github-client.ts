@@ -20,8 +20,10 @@
 //   can't be sent on to another address.
 // - The README is untrusted: it only becomes text, and nothing in it changes what this does.
 // - Nothing here logs. A failure is a fixed code and a status, which are safe to log.
-import { isHttpsOrLoopbackUrl, truncate } from "@haystack/schemas";
+import { truncate } from "@haystack/schemas";
 import * as v from "valibot";
+import { type BoundedText, readText } from "./bounded-read.ts";
+import { checkedBaseUrl, configurationError } from "./configuration.ts";
 import type { GitHubRepositoryMatch } from "./github-url.ts";
 import { readmeExcerpt } from "./readme-excerpt.ts";
 
@@ -105,6 +107,8 @@ export interface GitHubEvidence {
  * - `not-found`: GitHub answered 404. For the repository, that includes a private one, which the
  *   token can't read. For the README, the repository has none.
  * - `rate-limited`: a 403 or a 429. The caller asks GitHub nothing more for the rest of the run.
+ * - `unauthorized`: a 401, so GitHub rejected the token, which is Haystack's account rather than
+ *   the bookmark. The enrichment module stops the run for it, as for Jev's or the LLM's (#127).
  * - `status`: any other answer that isn't 2xx, including a redirect, which `status` holds.
  * - `invalid-response`: a 2xx response that isn't what the endpoint documents.
  * - `private`: GitHub answered for a repository that isn't public, so the token can read more
@@ -115,6 +119,7 @@ export type GitHubFailureReason =
   | "network"
   | "not-found"
   | "rate-limited"
+  | "unauthorized"
   | "status"
   | "invalid-response"
   | "private";
@@ -154,9 +159,7 @@ const RepositoryResponse = v.object({
   topics: v.optional(v.array(v.string())),
 });
 
-type Read = { readonly ok: true; readonly text: string; readonly complete: boolean };
-
-type RequestOutcome = Read | ({ readonly ok: false } & GitHubRequestFailure);
+type RequestOutcome = BoundedText | ({ readonly ok: false } & GitHubRequestFailure);
 
 function discard(response: Response): void {
   response.body?.cancel().catch(() => {
@@ -169,37 +172,15 @@ function discard(response: Response): void {
 // tell it apart, and for a public repository read with a token that reads public repositories,
 // GitHub documents no other 403. So every 403 and 429 counts as a rate limit, and the caller
 // stops asking GitHub for the rest of the run. A 403 for another reason costs only that run's
-// GitHub data.
+// GitHub data. A 401 is the token, which would fail every bookmark the same way (#127).
 function failureForStatus(status: number): GitHubRequestFailure {
   if (status === 404) {
     return { reason: "not-found", status };
   }
-  return { reason: status === 403 || status === 429 ? "rate-limited" : "status", status };
-}
-
-// The body as UTF-8 text, up to `limit` bytes. The rest is cancelled, never downloaded, and a
-// character cut at the limit is dropped.
-async function readText(body: ReadableStream<Uint8Array>, limit: number): Promise<Read> {
-  const decoder = new TextDecoder();
-  const reader = body.getReader();
-  let text = "";
-  let bytes = 0;
-  for (;;) {
-    const chunk = await reader.read();
-    if (chunk.done) {
-      return { ok: true, text: text + decoder.decode(), complete: true };
-    }
-    const room = limit - bytes;
-    if (chunk.value.byteLength >= room) {
-      text += decoder.decode(chunk.value.subarray(0, room), { stream: true });
-      await reader.cancel().catch(() => {
-        // The rest of the body is not wanted.
-      });
-      return { ok: true, text, complete: false };
-    }
-    bytes += chunk.value.byteLength;
-    text += decoder.decode(chunk.value, { stream: true });
+  if (status === 401) {
+    return { reason: "unauthorized", status };
   }
+  return { reason: status === 403 || status === 429 ? "rate-limited" : "status", status };
 }
 
 async function request(
@@ -257,44 +238,47 @@ function parseRepository(text: string): v.InferOutput<typeof RepositoryResponse>
   return parsed.success ? parsed.output : undefined;
 }
 
-/**
- * Throws for the configuration error that `readGitHubRepository` would throw, and sends nothing:
- * an empty token, or a base URL that is neither https nor http on a loopback host. The
- * enrichment module calls it before it sends anything for a GitHub bookmark, so a missing token
- * is found before Jev is asked (#126).
- */
-export function assertGitHubConfig(config: GitHubConfig): void {
+// The base URL every request is resolved against, once the configuration is checked.
+function checkedConfig(config: GitHubConfig): URL {
   // An empty secret is easy to store by mistake (#98), and GitHub would only answer 401. The
   // value can also be missing, although `Env` says `string`: the test harness and local
   // development don't bind a required secret they can't find.
   if (!config.GITHUB_TOKEN || config.GITHUB_TOKEN.trim() === "") {
-    throw Object.assign(new Error("GITHUB_TOKEN is empty"), { code: "GITHUB_TOKEN_EMPTY" });
+    throw configurationError("GITHUB_TOKEN is empty", "GITHUB_TOKEN_EMPTY");
   }
   // Integration tests point the base URL at a plain-http server on this machine (Q10), so http
   // is allowed there, by the same rule as Google sign-in's endpoints. Every request URL is an
-  // absolute path resolved against the base URL, so it has the base URL's scheme and host.
-  if (!isHttpsOrLoopbackUrl(new URL(config.GITHUB_API_BASE_URL))) {
-    throw new TypeError(
-      "GITHUB_API_BASE_URL must be an https URL, or an http URL on a loopback host for tests",
-    );
-  }
+  // absolute path resolved against the base URL, so it has the base URL's scheme and host. The
+  // error's code is `GITHUB_API_BASE_URL_INVALID` (#155).
+  return checkedBaseUrl("GITHUB_API_BASE_URL", config.GITHUB_API_BASE_URL);
+}
+
+/**
+ * Throws for the configuration error that `readGitHubRepository` would throw, and sends nothing:
+ * an empty token, or a base URL that is missing, doesn't parse, or is neither https nor http on a
+ * loopback host. The enrichment module calls it before it sends anything for a GitHub bookmark,
+ * so a missing token is found before Jev is asked (#126).
+ */
+export function assertGitHubConfig(config: GitHubConfig): void {
+  checkedConfig(config);
 }
 
 /**
  * Reads the repository that `match` names: its description, topics and primary language, and
  * an excerpt of its README. A missing or unreadable README still returns the repository's data.
  * Any other failure returns no data, and nothing is retried. Throws for an empty token, or for a
- * base URL that is neither https nor http on a loopback host, before anything is sent, because
- * those are configuration errors rather than failures of the bookmark.
+ * base URL that is missing, doesn't parse, or is neither https nor http on a loopback host,
+ * before anything is sent, because those are configuration errors rather than failures of the
+ * bookmark.
  */
 export async function readGitHubRepository(
   config: GitHubConfig,
   match: GitHubRepositoryMatch,
   timing: GitHubTiming = GITHUB_TIMING,
 ): Promise<GitHubResult> {
-  assertGitHubConfig(config);
+  const base = checkedConfig(config);
   const path = `/repos/${encodeURIComponent(match.owner)}/${encodeURIComponent(match.repo)}`;
-  const repositoryUrl = new URL(path, config.GITHUB_API_BASE_URL);
+  const repositoryUrl = new URL(path, base);
   const headers = {
     authorization: `Bearer ${config.GITHUB_TOKEN}`,
     "user-agent": GITHUB_USER_AGENT,
@@ -331,7 +315,7 @@ export async function readGitHubRepository(
   // The raw media type returns the README's own text, Markdown and all, rather than JSON with
   // the content in base64, so it can be read a few kilobytes at a time.
   const readmeOutcome = await request(
-    new URL(`${path}/readme`, config.GITHUB_API_BASE_URL),
+    new URL(`${path}/readme`, base),
     { ...headers, accept: "application/vnd.github.raw+json" },
     GITHUB_README_READ_LIMIT_BYTES,
     timing.requestTimeoutMs,

@@ -107,13 +107,14 @@ export const KIND_QUESTION: ChoiceQuestion<Kind> = {
 /**
  * What the bookmark says about the page, from its row. A key is absent when the bookmark has no
  * value for it. `title` and `description` are what the user confirmed on the save form, and the
- * `captured_` and `og_` values are what the page said about itself.
+ * `captured_` and `og_` values are what the page said about itself. `canonical_url` is
+ * describeUrlForJudgment's description of the canonical URL, never the URL itself (#157).
  */
 export interface CapturedEvidence {
   readonly url: string;
   readonly title: string;
   readonly description?: string;
-  readonly canonical_url?: string;
+  readonly canonical_url?: UrlDescription;
   readonly captured_title?: string;
   readonly captured_description?: string;
   readonly og_title?: string;

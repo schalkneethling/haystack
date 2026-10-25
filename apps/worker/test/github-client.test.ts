@@ -384,9 +384,25 @@ describe("readGitHubRepository", () => {
       });
     });
 
-    it("returns nothing for a 401, which isn't a rate limit", async () => {
+    // A 401 is the token, which would fail every bookmark the same way, so the enrichment
+    // module stops the run for it (#127).
+    it("returns nothing for a 401, as a rejected token rather than a rate limit", async () => {
       fixture.respond(status(401));
-      expect(await read()).toEqual({ ok: false, reason: "status", status: 401, requests: 1 });
+      expect(await read()).toEqual({
+        ok: false,
+        reason: "unauthorized",
+        status: 401,
+        requests: 1,
+      });
+    });
+
+    it("reports a 401 for the README as a rejected token too", async () => {
+      fixture.respond(json(repositoryResponse), status(401));
+      expect(await read()).toMatchObject({
+        ok: true,
+        readmeFailure: { reason: "unauthorized", status: 401 },
+        requests: 2,
+      });
     });
 
     for (const code of [500, 502, 503]) {
@@ -556,11 +572,33 @@ describe("readGitHubRepository", () => {
     it("is sent only over https, or http on a loopback host", async () => {
       await expect(
         readGitHubRepository({ ...config, GITHUB_API_BASE_URL: "http://api.github.test" }, match()),
-      ).rejects.toThrow(
-        "GITHUB_API_BASE_URL must be an https URL, or an http URL on a loopback host for tests",
-      );
+      ).rejects.toMatchObject({
+        message: "GITHUB_API_BASE_URL must be an https URL, or http on a loopback host",
+        code: "GITHUB_API_BASE_URL_INVALID",
+      });
       expect(fixture.requests).toEqual([]);
     });
+
+    // `new URL` would throw a bare TypeError for each of these, with no code (#155).
+    it.each([
+      ["an empty string", ""],
+      ["a missing value", undefined as unknown as string],
+      ["a value that isn't a URL", "api.github.com"],
+    ])(
+      "refuses %s as the base URL, with a code that names it, before any request",
+      async (_, base) => {
+        expect(() => assertGitHubConfig({ ...config, GITHUB_API_BASE_URL: base })).toThrow(
+          expect.objectContaining({
+            message: "GITHUB_API_BASE_URL is empty or isn't a URL",
+            code: "GITHUB_API_BASE_URL_INVALID",
+          }),
+        );
+        await expect(
+          readGitHubRepository({ ...config, GITHUB_API_BASE_URL: base }, match()),
+        ).rejects.toMatchObject({ code: "GITHUB_API_BASE_URL_INVALID" });
+        expect(fixture.requests).toEqual([]);
+      },
+    );
 
     // The enrichment module runs the same checks before it sends anything for a bookmark (#126).
     it("is checked by assertGitHubConfig as readGitHubRepository checks it, without a request", () => {
@@ -569,9 +607,7 @@ describe("readGitHubRepository", () => {
       );
       expect(() =>
         assertGitHubConfig({ ...config, GITHUB_API_BASE_URL: "http://api.github.test" }),
-      ).toThrow(
-        "GITHUB_API_BASE_URL must be an https URL, or an http URL on a loopback host for tests",
-      );
+      ).toThrow(expect.objectContaining({ code: "GITHUB_API_BASE_URL_INVALID" }));
       expect(() => assertGitHubConfig(config)).not.toThrow();
       expect(() =>
         assertGitHubConfig({ ...config, GITHUB_API_BASE_URL: GITHUB_LOOPBACK_ORIGIN }),
