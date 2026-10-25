@@ -31,11 +31,30 @@ test("the session lasts through a save", async ({ page }) => {
 });
 
 // The check fails at once for a browser with no session, and the browser stays on Haystack's
-// signed-out page, so it never leaves for Google.
-test("the check fails at once for a browser with no session", async ({ page, signOut }) => {
+// signed-out page, so it never leaves for Google. What the browser asked for shows that it failed
+// at once: it loaded the signed-out page and asked for `/` once, so the check neither retried nor
+// followed a redirect. A check that waited without asking for anything more would still pass that,
+// so the test also bounds the time, at 5 seconds. The check takes about 300 ms, so the bound has
+// more than 15 times that in hand for a busy machine, while a wait on one of Playwright's
+// assertions, which time out after 5 seconds, would pass it (#141).
+test("the check fails at once for a browser with no session", async ({
+  page,
+  signOut,
+  baseURL,
+}) => {
   await signOut();
   const started = Date.now();
+  const requests: string[] = [];
+  page.on("request", (request) => {
+    if (["document", "fetch"].includes(request.resourceType())) {
+      requests.push(`${request.resourceType()} ${request.url()}`);
+    }
+  });
   await expect(expectSignedIn(page)).rejects.toThrow(/signIn gave the browser a session/);
   expect(Date.now() - started).toBeLessThan(5_000);
+  expect(requests).toEqual([
+    `document ${new URL("/auth/signed-out", baseURL).href}`,
+    `fetch ${new URL("/", baseURL).href}`,
+  ]);
   expect(new URL(page.url()).pathname).toBe("/auth/signed-out");
 });

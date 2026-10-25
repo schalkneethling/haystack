@@ -346,10 +346,12 @@ describe("a page that says what it is", () => {
 });
 
 describe("the read stops early", () => {
-  // A Worker that read the whole page would never answer, or would answer at the time limit with
-  // the address alone. Getting the title back well before the time limit means that the read
-  // stopped where the test says, because the page trickles on after that point. The tag after
-  // that point, which a read that went on would find, shows that nothing after it is taken.
+  // The page trickles on after the point where the read should stop, so a Worker that read on
+  // would never answer, or would answer at the time limit with the address alone. Getting the
+  // title back therefore shows that the read stopped there. The tests don't time the lookup,
+  // because a bound on the time would add nothing to that, and could fail on a busy machine
+  // although the lookup is right (#141). The tag after that point, which a read that went on
+  // would find, shows that nothing after it is taken.
   it("at </head>", async () => {
     const page = endless(
       `<head><title>Endless body</title></head><meta property="og:description" content="after the head">`,
@@ -357,10 +359,8 @@ describe("the read stops early", () => {
       50,
     );
     fixture.route("/endless-body", () => html(page.body));
-    const started = performance.now();
     const response = await postAddress(fixture.url("/endless-body"));
     page.stop();
-    expect(performance.now() - started).toBeLessThan(LOOKUP_TIMEOUT_MS / 2);
     expect(savedLinkFields(response)).toEqual({
       url: fixture.url("/endless-body"),
       title: "Endless body",
@@ -374,10 +374,8 @@ describe("the read stops early", () => {
       50,
     );
     fixture.route("/no-head-end", () => html(page.body));
-    const started = performance.now();
     const response = await postAddress(fixture.url("/no-head-end"));
     page.stop();
-    expect(performance.now() - started).toBeLessThan(LOOKUP_TIMEOUT_MS / 2);
     expect(savedLinkFields(response)).toEqual({
       url: fixture.url("/no-head-end"),
       title: "No head end",
@@ -387,14 +385,13 @@ describe("the read stops early", () => {
 
   // The head never ends, and it arrives as fast as the Worker reads it, so only the byte limit
   // can stop the read before the time limit. The filler is a comment, so that the element budget
-  // below is not what stops it.
+  // below is not what stops it. As above, the title shows that the read stopped before the time
+  // limit, so the test doesn't time the lookup (#141).
   it("at the byte limit, when the head never ends", async () => {
     const page = endless("<head><title>Endless head</title>", "<!-- a comment that goes on -->");
     fixture.route("/endless-head", () => html(page.body));
-    const started = performance.now();
     const response = await postAddress(fixture.url("/endless-head"));
     page.stop();
-    expect(performance.now() - started).toBeLessThan(LOOKUP_TIMEOUT_MS);
     expect(savedLinkFields(response)).toEqual({
       url: fixture.url("/endless-head"),
       title: "Endless head",
@@ -486,25 +483,39 @@ describe("a lookup that gives nothing redirects with the address alone", () => {
     expect(everything).not.toContain("page-marker");
   }
 
-  it("when the page does not answer within the time limit", async () => {
-    fixture.route("/slow?page-marker", () => NEVER);
-    const started = performance.now();
-    const response = await postAddress(fixture.url("/slow?page-marker"));
-    const elapsed = performance.now() - started;
-    expectAddressAlone(response, fixture.url("/slow?page-marker"), "timeout");
-    expect(elapsed).toBeGreaterThanOrEqual(LOOKUP_TIMEOUT_MS - 100);
-    expect(elapsed).toBeLessThan(LOOKUP_TIMEOUT_MS + 2000);
-  });
+  // These two pages never finish, so a lookup that the time limit did not end would never answer,
+  // and the test's own timeout fails it. That timeout is the bound: the time limit plus 2 seconds,
+  // set on each test so that a change to Vitest's default can't widen it. A bound measured inside
+  // the test would add nothing, and a tighter one would fail on a busy machine although the lookup
+  // is right (#141). Both tests also show that the lookup waits for the whole time limit, so a page
+  // that stalls isn't given up on early.
+  it(
+    "when the page does not answer within the time limit",
+    { timeout: LOOKUP_TIMEOUT_MS + 2000 },
+    async () => {
+      fixture.route("/slow?page-marker", () => NEVER);
+      const started = performance.now();
+      const response = await postAddress(fixture.url("/slow?page-marker"));
+      const elapsed = performance.now() - started;
+      expectAddressAlone(response, fixture.url("/slow?page-marker"), "timeout");
+      expect(elapsed).toBeGreaterThanOrEqual(LOOKUP_TIMEOUT_MS - 100);
+    },
+  );
 
-  it("when the page stops sending before its head ends", async () => {
-    const page = endless("<html><head><title>page-marker</title>", "", Infinity);
-    fixture.route("/stalls", () => html(page.body));
-    const started = performance.now();
-    const response = await postAddress(fixture.url("/stalls"));
-    page.stop();
-    expectAddressAlone(response, fixture.url("/stalls"), "timeout");
-    expect(performance.now() - started).toBeLessThan(LOOKUP_TIMEOUT_MS + 2000);
-  });
+  it(
+    "when the page stops sending before its head ends",
+    { timeout: LOOKUP_TIMEOUT_MS + 2000 },
+    async () => {
+      const page = endless("<html><head><title>page-marker</title>", "", Infinity);
+      fixture.route("/stalls", () => html(page.body));
+      const started = performance.now();
+      const response = await postAddress(fixture.url("/stalls"));
+      const elapsed = performance.now() - started;
+      page.stop();
+      expectAddressAlone(response, fixture.url("/stalls"), "timeout");
+      expect(elapsed).toBeGreaterThanOrEqual(LOOKUP_TIMEOUT_MS - 100);
+    },
+  );
 
   // In the test harness, Node makes the request (page-fixture.ts), and a request it cannot make
   // reaches the Worker as a 500 response rather than an error, so the logged code is "status".
