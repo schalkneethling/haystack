@@ -487,7 +487,8 @@ describe("a lookup that gives nothing redirects with the address alone", () => {
   // and the test's own timeout fails it. That timeout is the bound: the time limit plus 2 seconds,
   // set on each test so that a change to Vitest's default can't widen it. A bound measured inside
   // the test would add nothing, and a tighter one would fail on a busy machine although the lookup
-  // is right (#141). The first test also shows that the lookup waits for the whole time limit.
+  // is right (#141). Both tests also show that the lookup waits for the whole time limit, so a page
+  // that stalls isn't given up on early.
   it(
     "when the page does not answer within the time limit",
     { timeout: LOOKUP_TIMEOUT_MS + 2000 },
@@ -507,9 +508,12 @@ describe("a lookup that gives nothing redirects with the address alone", () => {
     async () => {
       const page = endless("<html><head><title>page-marker</title>", "", Infinity);
       fixture.route("/stalls", () => html(page.body));
+      const started = performance.now();
       const response = await postAddress(fixture.url("/stalls"));
+      const elapsed = performance.now() - started;
       page.stop();
       expectAddressAlone(response, fixture.url("/stalls"), "timeout");
+      expect(elapsed).toBeGreaterThanOrEqual(LOOKUP_TIMEOUT_MS - 100);
     },
   );
 
