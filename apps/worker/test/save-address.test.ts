@@ -428,8 +428,9 @@ describe("the read stops early", () => {
 
   // A page made of nothing but one tag that reaches a handler, up to the byte limit, is the most
   // work a page can ask of the reader along that path. Each such page is looked up no slower than
-  // a tiny page, give or take a margin, because every handler call counts against the budget, and
-  // the reader stops the rewriter outright once it is done.
+  // a page of the same size whose read ends at the first </head>, give or take a margin, because
+  // every handler call counts against the budget, and the reader stops the rewriter outright once
+  // it is done.
   it.each([
     ["<meta name=description>", '<meta name="description" content="x">'],
     ["<head>", "<head>"],
@@ -437,28 +438,39 @@ describe("the read stops early", () => {
     // An empty title has no text to count, so only its element counts.
     ["an empty <title>", "<title></title>"],
     ["<body>", "<body>"],
-  ])("so a page full of %s is looked up as fast as a tiny page", async (_, tag) => {
-    const filled = tag.repeat(Math.ceil(LOOKUP_READ_LIMIT_BYTES / tag.length));
-    fixture.page("/full-of-tags", `<head>${filled}<title>T</title></head>`);
-    fixture.page("/tiny", "<head><title>Tiny</title></head>");
-    // The fastest of a few runs, so a moment of load on the machine does not count.
-    async function fastest(path: string): Promise<number> {
-      const times: number[] = [];
-      for (let run = 0; run < 3; run += 1) {
+  ])(
+    "so a page full of %s is looked up as fast as a page of the same size whose read ends early",
+    async (_, tag) => {
+      const filled = tag.repeat(Math.ceil(LOOKUP_READ_LIMIT_BYTES / tag.length));
+      const full = `<head>${filled}<title>T</title></head>`;
+      // Within a few bytes of the full page's size, so the fixture sends about as many bytes after
+      // the Worker has stopped reading, but the reader is done at the first </head>.
+      const early = "<head><title>T</title></head>";
+      fixture.page("/full-of-tags", full);
+      fixture.page("/early", early + "<!---->".repeat(Math.ceil((full.length - early.length) / 7)));
+      async function timed(path: string): Promise<number> {
         const started = performance.now();
         expect((await postAddress(fixture.url(path))).status).toBe(303);
-        times.push(performance.now() - started);
+        return performance.now() - started;
       }
-      return Math.min(...times);
-    }
-    const tiny = await fastest("/tiny");
-    const full = await fastest("/full-of-tags");
-    // Measured with the fix: 0 to 2 ms slower on every path. Without it, about 130 ms for <head>
-    // and 360 ms for <title>, and about 90 ms for the meta tag without the budget, so 50 ms tells
-    // them apart with room for load. <body> cost only about 10 ms without the fix, under the margin,
-    // so this holds it to the margin but does not show its fix.
-    expect(full - tiny).toBeLessThan(50);
-  });
+      // The fastest of a few runs, so a moment of load on the machine does not count. The runs
+      // alternate between the two pages, so a burst of load falls on both of them rather than on
+      // whichever page was being timed at that moment (#161).
+      const earlyTimes: number[] = [];
+      const fullTimes: number[] = [];
+      for (let run = 0; run < 5; run += 1) {
+        earlyTimes.push(await timed("/early"));
+        fullTimes.push(await timed("/full-of-tags"));
+      }
+      // Measured against a tiny page with the fix: 0 to 2 ms slower on every path. Without it,
+      // about 130 ms for <head> and 360 ms for <title>, and about 90 ms for the meta tag without
+      // the budget. Against this page with only the element budget lifted, <head>, <title>, an
+      // empty <title> and the meta tag were about 190, 530, 200 and 90 ms slower (#161). So 50 ms
+      // tells them apart with room for load. <body> cost only about 10 ms without the fix, under
+      // the margin, so this holds it to the margin but does not show its fix.
+      expect(Math.min(...fullTimes) - Math.min(...earlyTimes)).toBeLessThan(50);
+    },
+  );
 });
 
 describe("a lookup that gives nothing redirects with the address alone", () => {
