@@ -41,11 +41,15 @@ export const SENSITIVITY_QUESTION: NoulQuestion = {
   },
 };
 
-/** Asks whether the described link gives access to something private, as a probability. */
+/**
+ * Asks whether the described link gives access to something private, as a probability. `signal`
+ * stops the question's retries when a sweep run stops (askJev).
+ */
 export function askSensitivity(
   config: JevConfig,
   description: UrlDescription,
   timing: JevTiming = JEV_TIMING,
+  signal?: AbortSignal,
 ): Promise<JevResult<number>> {
   return askJev(
     config,
@@ -56,6 +60,7 @@ export function askSensitivity(
       answer: NoulAnswer,
     },
     timing,
+    signal,
   );
 }
 
@@ -138,16 +143,21 @@ export interface KindAnswer {
 
 const KindAnswerSchema = choiceAnswer(KINDS);
 
-/** Asks what kind of resource the bookmark is. */
+/**
+ * Asks what kind of resource the bookmark is. `signal` stops the question's retries when a sweep
+ * run stops (askJev).
+ */
 export async function askKind(
   config: JevConfig,
   evidence: KindEvidence,
   timing: JevTiming = JEV_TIMING,
+  signal?: AbortSignal,
 ): Promise<JevResult<KindAnswer>> {
   const result = await askJev(
     config,
     { state: evidence, id: "kind", question: KIND_QUESTION, answer: KindAnswerSchema },
     timing,
+    signal,
   );
   return result.ok
     ? {

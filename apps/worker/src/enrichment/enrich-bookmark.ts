@@ -41,6 +41,10 @@
 // - `last_error` holds fixed codes only (see `lastError`), because the /held page shows it and
 //   logs may copy it.
 // - Nothing here logs.
+//
+// The sweep (enrich-pending.ts) enriches several bookmarks at once, so it passes what they share
+// (EnrichmentRun): the controller that stops its run, and its pause on GitHub. The on-save path
+// enriches one bookmark, and passes neither.
 import { describeUrlForJudgment, type UrlDescription } from "@haystack/schemas";
 import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
@@ -63,6 +67,7 @@ import {
   GITHUB_TIMING,
   readGitHubRepository,
 } from "./github-client.ts";
+import type { GitHubPause } from "./github-pause.ts";
 import { type GitHubRepositoryMatch, matchGitHubRepository } from "./github-url.ts";
 import { assertJevConfig, type JevConfig, JEV_TIMING, type JevTiming } from "./jev-client.ts";
 import { askKind, askSensitivity, type CapturedEvidence } from "./jev-questions.ts";
@@ -91,6 +96,28 @@ export const ENRICHMENT_TIMING: EnrichmentTiming = {
   github: GITHUB_TIMING,
   provider: ANTHROPIC_TIMING,
 };
+
+/**
+ * What the bookmarks of one sweep run share (#127). The on-save path, which enriches one
+ * bookmark, passes neither.
+ */
+export interface EnrichmentRun {
+  /**
+   * Aborted when the run stops. From then on, the module sends nothing more for the bookmark and
+   * records no failure for it, and throws the signal's reason instead, because after an account
+   * rejection or an outage a failure may be the same cause again rather than the bookmark's. A
+   * request already sent is still answered, and an answer is still stored, the noul or the
+   * enrichment, because it was paid for and is about the bookmark.
+   *
+   * The module aborts it itself, with the EnrichmentAccountError, the moment a service rejects
+   * Haystack's account, and then throws that error. The run's other bookmarks then stop at their
+   * next step, even one whose next step is only a promise away, such as a GitHub read waiting
+   * its turn, rather than when this bookmark's error has reached the caller.
+   */
+  readonly controller?: AbortController;
+  /** The run's pause on GitHub, through which the module reads GitHub (github-pause.ts). */
+  readonly github?: GitHubPause;
+}
 
 /** The bookmark's columns that the module reads. The caller's query selects them. */
 export type BookmarkToEnrich = Pick<
@@ -125,7 +152,8 @@ export type EnrichmentFailureReason = ProviderFailureReason | "invalid-output";
 /** The bookmark was enriched, or another run enriched it at this version first. */
 export interface EnrichedOutcome {
   readonly outcome: "enriched";
-  // Why GitHub gave nothing, or no README, for a GitHub bookmark. See FailedOutcome.
+  // Why GitHub gave nothing, or no README, for a GitHub bookmark. See FailedOutcome. Absent, too,
+  // when the run's pause on GitHub meant that nothing was asked.
   readonly github?: GitHubRequestFailure;
 }
 
@@ -148,8 +176,9 @@ export interface FailedOutcome {
   readonly status?: number;
   // The schema check that the LLM's output failed, for an `invalid-output` failure.
   readonly issue?: ValidationIssue;
-  // Why GitHub gave nothing, or no README, for a GitHub bookmark, so the sweep can stop asking
-  // GitHub after a `rate-limited` failure (see "GitHub enrichment" in the plan).
+  // Why GitHub gave nothing, or no README, for a GitHub bookmark, for the log. The run's pause on
+  // GitHub (EnrichmentRun) is what stops asking GitHub after a `rate-limited` failure (see
+  // "GitHub enrichment" in the plan), as soon as GitHub answers, before this outcome is ready.
   readonly github?: GitHubRequestFailure;
 }
 
@@ -199,9 +228,22 @@ interface StepFailure {
   readonly issue?: ValidationIssue;
 }
 
+// The error for a rejected account, once the run, if there is one, is stopped with it.
+function accountRejected(
+  run: EnrichmentRun,
+  step: AccountStep,
+  reason: EnrichmentFailureReason | "unauthorized",
+  status: number | undefined,
+): EnrichmentAccountError {
+  const error = new EnrichmentAccountError(step, reason, status);
+  run.controller?.abort(error);
+  return error;
+}
+
 // A client's failure as the bookmark records it. An `account` failure isn't the bookmark's, so
-// it throws instead, before anything is recorded.
+// it stops the run and throws instead, before anything is recorded.
 function bookmarkFailure(
+  run: EnrichmentRun,
   step: EnrichmentStep,
   {
     failure,
@@ -216,7 +258,7 @@ function bookmarkFailure(
   },
 ): StepFailure {
   if (failure === "account") {
-    throw new EnrichmentAccountError(step, reason, status);
+    throw accountRejected(run, step, reason, status);
   }
   return {
     failure,
@@ -237,11 +279,12 @@ function bookmarkFailure(
  * which the backoff (`backoffWindowMs` in state.ts) spreads over about two and a half days. A
  * permanent failure in the run brings that forward: after two permanent failures, the third
  * transient failure in a row is the 5th failure, so it counts, and the bookmark reaches Failed.
- * The sweep is to stop a run when its first calls all fail transiently, which limits how many
- * bookmarks an outage touches in each run, but an outage of more than about two and a half days
- * can still fail a bookmark tried in every window. The owner's decision of 2026-10-25, which
- * chose this reading over a count of transient failures alone, which would need a column of its
- * own.
+ * An outage shorter than about two and a half days can't fail a bookmark on its own, because the
+ * sweep stops a run when its first calls all fail transiently. A longer one can fail the
+ * bookmarks each run tries first, which the owner accepted, because recording those failures is
+ * what grows their backoff (OUTAGE_STOP_CALLS in enrich-pending.ts). The owner's decision of
+ * 2026-10-25, which chose this reading over a count of transient failures alone, which would
+ * need a column of its own.
  */
 export const TRANSIENT_FAILURES_PER_ATTEMPT = 5;
 
@@ -299,19 +342,32 @@ interface GitHubRead {
 }
 
 // What GitHub says about the bookmark's repository, when the URL is in one. A failure only
-// leaves the evidence out, except a 401, from either request, which is the token's (#127).
+// leaves the evidence out, except a 401, from either request, which is the token's (#127). In a
+// sweep run, the read goes through the run's pause on GitHub, which leaves the evidence out
+// without asking when GitHub rate-limited an earlier read. The read checks the run's signal when
+// its turn comes, because the pause can make it wait while the run stops, and it handles a 401
+// before its turn ends, so the run is stopped before the next read's turn begins.
 async function readGitHub(
   config: GitHubConfig,
   match: GitHubRepositoryMatch | undefined,
   timing: GitHubTiming,
+  run: EnrichmentRun,
 ): Promise<GitHubRead> {
   if (match === undefined) {
     return {};
   }
-  const result = await readGitHubRepository(config, match, timing);
-  const failure = result.ok ? result.readmeFailure : result;
-  if (failure?.reason === "unauthorized") {
-    throw new EnrichmentAccountError("github", failure.reason, failure.status);
+  const read = async () => {
+    run.controller?.signal.throwIfAborted();
+    const read = await readGitHubRepository(config, match, timing);
+    const failure = read.ok ? read.readmeFailure : read;
+    if (failure?.reason === "unauthorized") {
+      throw accountRejected(run, "github", failure.reason, failure.status);
+    }
+    return read;
+  };
+  const result = run.github === undefined ? await read() : await run.github.read(read);
+  if (result === undefined) {
+    return {};
   }
   if (!result.ok) {
     const { reason, status } = result;
@@ -385,14 +441,20 @@ async function recordFailure(
  * record. Throws for a configuration error, before anything is sent or stored, for a service that
  * rejects Haystack's account (EnrichmentAccountError), and for a D1 error, without recording a
  * failure for any of them. The caller should treat a thrown error as a problem with the run, not
- * with the bookmark, and stop the run.
+ * with the bookmark, and stop the run. Once `run.controller` is aborted, it sends nothing more
+ * and records no failure, and throws the signal's reason (see EnrichmentRun).
  */
 export async function enrichBookmark(
   db: Db,
   config: EnrichmentConfig,
   bookmark: BookmarkToEnrich,
   timing: EnrichmentTiming = ENRICHMENT_TIMING,
+  run: EnrichmentRun = {},
 ): Promise<EnrichmentOutcome> {
+  // Before each step that sends a request, and before a failure is recorded: a stopped run sends
+  // nothing more and records no failure. The account error, which the clients' answers raise,
+  // comes first, so a rejection that arrives after the stop is still reported as one.
+  const stopIfAborted = () => run.controller?.signal.throwIfAborted();
   // Every configuration error this bookmark could meet, found before anything is sent, so none
   // costs a request. Jev's is always needed, because a bookmark that isn't Held is asked the
   // `kind` question even when its noul is stored. A bookmark that turns out to be Held needs
@@ -416,15 +478,17 @@ export async function enrichBookmark(
       bookmark.capturedTitle ?? undefined,
       bookmark.sensitiveCanonicalDropped === true,
     );
-    const sensitivity = await askSensitivity(config, description, timing.jev);
+    stopIfAborted();
+    const sensitivity = await askSensitivity(
+      config,
+      description,
+      timing.jev,
+      run.controller?.signal,
+    );
     if (!sensitivity.ok) {
-      return recordFailure(
-        db,
-        bookmark.id,
-        "sensitivity",
-        bookmarkFailure("sensitivity", sensitivity),
-        undefined,
-      );
+      const stepFailure = bookmarkFailure(run, "sensitivity", sensitivity);
+      stopIfAborted();
+      return recordFailure(db, bookmark.id, "sensitivity", stepFailure, undefined);
     }
     noul = sensitivity.answer;
     await db
@@ -437,25 +501,32 @@ export async function enrichBookmark(
   }
 
   const evidence = capturedEvidence(bookmark);
-  const github = await readGitHub(config, match, timing.github);
+  const github = await readGitHub(config, match, timing.github, run);
+  stopIfAborted();
   const kind = await askKind(
     config,
     github.evidence === undefined
       ? { bookmark: evidence }
       : { bookmark: evidence, github: github.evidence },
     timing.jev,
+    run.controller?.signal,
   );
   if (!kind.ok) {
-    return recordFailure(db, bookmark.id, "kind", bookmarkFailure("kind", kind), github.failure);
+    const stepFailure = bookmarkFailure(run, "kind", kind);
+    stopIfAborted();
+    return recordFailure(db, bookmark.id, "kind", stepFailure, github.failure);
   }
   const input: EnrichmentInput = {
     bookmark: evidence,
     kind: kind.answer.kind,
     ...(github.evidence === undefined ? {} : { github: github.evidence }),
   };
+  stopIfAborted();
   const prose = await writeProseEnrichment(provider, input, { model });
   if (!prose.ok) {
-    return recordFailure(db, bookmark.id, "llm", bookmarkFailure("llm", prose), github.failure);
+    const stepFailure = bookmarkFailure(run, "llm", prose);
+    stopIfAborted();
+    return recordFailure(db, bookmark.id, "llm", stepFailure, github.failure);
   }
 
   // D1 runs a batch as one transaction ("Data model" in the plan), so the enrichment and the

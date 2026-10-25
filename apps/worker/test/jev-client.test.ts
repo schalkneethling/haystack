@@ -52,7 +52,7 @@ const noulResponse = {
   usage: { input_tokens: 120, output_tokens: 12 },
 };
 
-function ask(): Promise<JevResult<number>> {
+function ask(signal?: AbortSignal): Promise<JevResult<number>> {
   return askJev(
     config,
     {
@@ -62,6 +62,7 @@ function ask(): Promise<JevResult<number>> {
       answer: NoulAnswer,
     },
     timing,
+    signal,
   );
 }
 
@@ -181,6 +182,79 @@ describe("askJev", () => {
         attempts: 3,
       });
       expect(fixture.requests).toHaveLength(3);
+    });
+
+    // A sweep run that has stopped sends nothing more (#127).
+    it("sends nothing, and throws the signal's reason, when its signal is already aborted", async () => {
+      const run = new AbortController();
+      const stopped = new Error("The run stopped");
+      run.abort(stopped);
+      await expect(ask(run.signal)).rejects.toBe(stopped);
+      expect(fixture.requests).toEqual([]);
+    });
+
+    // A sweep run that has stopped wants no more paid attempts (#127).
+    it("makes no other attempt once its signal is aborted, nor waits, and returns the last failure", async () => {
+      const run = new AbortController();
+      const waits = recordClientWaits();
+      fixture.respond((request) => {
+        run.abort(new Error("The run stopped"));
+        return status(503)(request);
+      });
+      expect(await ask(run.signal)).toEqual({
+        ok: false,
+        failure: "transient",
+        reason: "status",
+        status: 503,
+        attempts: 1,
+      });
+      expect(fixture.requests).toHaveLength(1);
+      expect(waits).toEqual([]);
+    });
+
+    // The run stops once the client has started its backoff, which is the longest the client
+    // allows, and the client must stop waiting at once: its timer never fires.
+    it("stops waiting out its backoff when its signal is aborted", async () => {
+      const run = new AbortController();
+      const setTimeoutAsGiven = globalThis.setTimeout;
+      let backoffStarted = false;
+      let backoffFired = false;
+      vi.spyOn(globalThis, "setTimeout").mockImplementation(
+        (...args: Parameters<typeof setTimeout>) => {
+          const stackTraceLimit = Error.stackTraceLimit;
+          Error.stackTraceLimit = 50;
+          const stack = new Error().stack ?? "";
+          Error.stackTraceLimit = stackTraceLimit;
+          if (!/\bsleep \([^)]*src[\\/]enrichment[\\/]jev-client\.ts/.test(stack)) {
+            return setTimeoutAsGiven(...args);
+          }
+          backoffStarted = true;
+          // After the client's wait has begun listening for the signal.
+          queueMicrotask(() => run.abort(new Error("The run stopped")));
+          const [callback, milliseconds] = args;
+          return setTimeoutAsGiven(() => {
+            backoffFired = true;
+            callback();
+          }, milliseconds);
+        },
+      );
+      fixture.respond(status(503));
+      const longest: JevTiming = { ...timing, backoffInitialMs: 60_000 };
+      const result = await askJev(
+        config,
+        {
+          state: "x",
+          id: "billing",
+          question: { type: "noul", instructions: "?" },
+          answer: NoulAnswer,
+        },
+        longest,
+        run.signal,
+      );
+      expect(result).toMatchObject({ ok: false, status: 503, attempts: 1 });
+      expect(backoffStarted).toBe(true);
+      expect(backoffFired).toBe(false);
+      expect(fixture.requests).toHaveLength(1);
     });
 
     it("doubles the delay between attempts, and takes the jitter off it", async () => {

@@ -236,9 +236,16 @@ function retryDelayMs(
   return Math.max(backoff, requested ?? 0);
 }
 
-function sleep(milliseconds: number): Promise<void> {
+// Waits `milliseconds`, or until `signal` is aborted, whichever comes first.
+function sleep(milliseconds: number, signal: AbortSignal | undefined): Promise<void> {
   return new Promise((resolve) => {
-    setTimeout(resolve, milliseconds);
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, milliseconds);
+    signal?.addEventListener("abort", done, { once: true });
   });
 }
 
@@ -309,12 +316,20 @@ export function assertJevConfig(config: JevConfig): void {
  * Throws for an empty key, or for a base URL that is missing, doesn't parse, or is neither https
  * nor http on a loopback host, before anything is sent, because those are configuration errors
  * rather than failures of the question.
+ *
+ * A `signal` that is already aborted, as a sweep run's is once the run stops (#127), throws its
+ * reason before anything is sent. Once it is aborted later, no other attempt is made and no
+ * backoff is waited out: the last attempt's failure is returned. An attempt under
+ * way still runs to its answer or its own time limit, because the signal isn't given to `fetch`.
+ * The on-save path passes no signal.
  */
 export async function askJev<Answer>(
   config: JevConfig,
   { state, id, question, answer }: JevAsk<Answer>,
   timing: JevTiming = JEV_TIMING,
+  signal?: AbortSignal,
 ): Promise<JevResult<Answer>> {
+  signal?.throwIfAborted();
   const url = endpoint(config);
   const init: RequestInit = {
     method: "POST",
@@ -341,14 +356,18 @@ export async function askJev<Answer>(
       ...(outcome.status === undefined ? {} : { status: outcome.status }),
       attempts,
     };
-    // An `account` failure would get the same answer again, as a permanent one would.
-    if (outcome.failure !== "transient" || attempts === JEV_ATTEMPT_LIMIT) {
+    // An `account` failure would get the same answer again, as a permanent one would. A run that
+    // has stopped wants no more paid attempts.
+    if (outcome.failure !== "transient" || attempts === JEV_ATTEMPT_LIMIT || signal?.aborted) {
       return failure;
     }
     const delay = retryDelayMs(attempts, outcome.headers, timing);
     if (delay === undefined) {
       return failure;
     }
-    await sleep(delay);
+    await sleep(delay, signal);
+    if (signal?.aborted) {
+      return failure;
+    }
   }
 }

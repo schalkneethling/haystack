@@ -19,8 +19,9 @@ import {
   enrichBookmark,
   TRANSIENT_FAILURES_PER_ATTEMPT,
 } from "../src/enrichment/enrich-bookmark.ts";
+import { DEFAULT_ATTEMPT_LIMIT } from "../src/enrichment/enrich-pending.ts";
 import { ENRICHMENT_SCHEMA_VERSION, EnrichmentV1 } from "../src/enrichment/enrichment-schema.ts";
-import { KINDS } from "../src/enrichment/jev-questions.ts";
+import { GitHubPause } from "../src/enrichment/github-pause.ts";
 import { deriveMatchText, MATCH_TEXT_VERSION } from "../src/enrichment/match-text.ts";
 import { readEnrichmentStateInputs } from "../src/enrichment/state-inputs.ts";
 import { deriveEnrichmentState, readSensitiveWarnThreshold } from "../src/enrichment/state.ts";
@@ -44,12 +45,8 @@ import {
   readme,
   status as githubStatus,
 } from "./github-fixture.ts";
-import {
-  answer as jevAnswer,
-  JEV_ORIGIN,
-  networkError as jevNetworkError,
-  status as jevStatus,
-} from "./jev-fixture.ts";
+import { kind, noul, PROBABILITIES } from "./jev-answers.ts";
+import { JEV_ORIGIN, networkError as jevNetworkError, status as jevStatus } from "./jev-fixture.ts";
 import { seedBookmark, seedEnrichment, seedEnrichmentFailure, seedSignedInUser } from "./seed.ts";
 import type { SeededBookmarkFields } from "./seed.ts";
 
@@ -142,35 +139,6 @@ const REPOSITORY = {
   topics: ["test", "vite"],
 };
 
-const PROBABILITIES = {
-  tool: 0.81,
-  library: 0.12,
-  reference: 0.02,
-  tutorial: 0.01,
-  article: 0.01,
-  discussion: 0.01,
-  collection: 0.01,
-  other: 0.01,
-};
-
-// Jev's answer to the sensitivity question, in the shape of its recorded responses.
-function noul(value: number) {
-  return jevAnswer({
-    model: "jev-1.13.0",
-    answers: { private_access: { type: "noul", noul: value } },
-    usage: { input_tokens: 412, output_tokens: 9 },
-  });
-}
-
-// Jev's answer to the `kind` question.
-function kind(choice: (typeof KINDS)[number] = "tool") {
-  return jevAnswer({
-    model: "jev-1.13.0",
-    answers: { kind: { type: "choice", choice, confidence: 0.7, probabilities: PROBABILITIES } },
-    usage: { input_tokens: 655, output_tokens: 40 },
-  });
-}
-
 async function save(url: string, fields: SeededBookmarkFields = {}): Promise<string> {
   return seedBookmark(await d1(), userId, url, url, fields);
 }
@@ -215,11 +183,11 @@ async function derivedState(id: string) {
   if (inputs === undefined) {
     throw new Error("No such bookmark");
   }
-  // 3 is the plan's default attempt limit, which the sweep's configuration adds (#127, #128).
+  // The sweep's default (#127). The scheduled handler reads the limit from a `var` (#128).
   return deriveEnrichmentState(inputs, {
     schemaVersion: ENRICHMENT_SCHEMA_VERSION,
     sensitiveWarnThreshold: threshold,
-    attemptLimit: 3,
+    attemptLimit: DEFAULT_ATTEMPT_LIMIT,
   });
 }
 
@@ -866,6 +834,153 @@ describe("enrichBookmark", () => {
       for (const leaked of ["Zx81kQ2mPa9wLr4T", "Captured-7c1e", "docs.example.com", "fixture"]) {
         expect(logged).not.toContain(leaked);
       }
+    });
+  });
+
+  // What a sweep run's bookmarks share (EnrichmentRun, #127): the controller that stops the run, and
+  // its pause on GitHub. enrich-pending.test.ts shows the sweep using them.
+  describe("in a sweep run", () => {
+    const stopped = new Error("The run stopped");
+
+    // Runs the module with the run's controller and, optionally, its pause on GitHub.
+    async function enrichInRun(id: string, controller: AbortController, github?: GitHubPause) {
+      return enrichBookmark(db, config, await bookmarkRow(id), timing, {
+        controller,
+        ...(github === undefined ? {} : { github }),
+      });
+    }
+
+    it("records no failure that arrives after the run stopped, and throws the stop's reason", async () => {
+      const id = await save("https://example.com/post", { sensitivityNoul: 0.02 });
+      await seedEnrichmentFailure(await d1(), id, ENRICHMENT_SCHEMA_VERSION, 1, 4);
+      const before = await failureRecord(id);
+      const run = new AbortController();
+      fixtures.jev.respond(kind("article"));
+      // The run stops while the LLM request is under way, and then the request fails.
+      fixtures.llm.respond((request) => {
+        run.abort(stopped);
+        return llmStatus(529)(request);
+      });
+      await expect(enrichInRun(id, run)).rejects.toBe(stopped);
+      expect(await failureRecord(id)).toEqual(before);
+    });
+
+    it("sends nothing at all for a run that has already stopped", async () => {
+      const id = await save(REPOSITORY_URL, REPOSITORY_FIELDS);
+      const run = new AbortController();
+      run.abort(stopped);
+      await expect(enrichInRun(id, run)).rejects.toBe(stopped);
+      expect(fixtures.jev.requests).toEqual([]);
+    });
+
+    // The run stops while one step's request is under way, and the next step isn't taken. The
+    // answer that came is still stored, as the noul is.
+    it.each([
+      ["the GitHub read", REPOSITORY_URL, ["private_access"]],
+      ["the kind question", "https://example.com/post", ["private_access"]],
+    ])(
+      "sends nothing more once the run stopped, so not %s, and keeps the noul",
+      async (_, url, questions) => {
+        const id = await save(url, REPOSITORY_FIELDS);
+        const run = new AbortController();
+        fixtures.jev.respond((request) => {
+          run.abort(stopped);
+          return noul(0.02)(request);
+        });
+        await expect(enrichInRun(id, run)).rejects.toBe(stopped);
+        expect(jevQuestions()).toEqual(questions);
+        expect(fixtures.github.requests).toEqual([]);
+        expect(fixtures.llm.requests).toEqual([]);
+        expect((await bookmarkRow(id)).sensitivityNoul).toBe(0.02);
+        expect(await failureRecord(id)).toBeUndefined();
+      },
+    );
+
+    it("sends nothing more once the run stopped, so not the LLM request", async () => {
+      const id = await save("https://example.com/post", { sensitivityNoul: 0.02 });
+      const run = new AbortController();
+      fixtures.jev.respond((request) => {
+        run.abort(stopped);
+        return kind("article")(request);
+      });
+      await expect(enrichInRun(id, run)).rejects.toBe(stopped);
+      expect(fixtures.llm.requests).toEqual([]);
+      expect(await enrichmentRows(id)).toEqual([]);
+    });
+
+    it("stores an enrichment whose answer came after the run stopped, because it was paid for", async () => {
+      const id = await save("https://example.com/post", { sensitivityNoul: 0.02 });
+      const run = new AbortController();
+      fixtures.jev.respond(kind("article"));
+      fixtures.llm.respond((request) => {
+        run.abort(stopped);
+        return output(VALID_OUTPUT)(request);
+      });
+      expect(await enrichInRun(id, run)).toEqual({ outcome: "enriched" });
+      expect(await derivedState(id)).toBe("current");
+    });
+
+    it("still reports a rejected account that arrives after the run stopped", async () => {
+      const id = await save("https://example.com/post", { sensitivityNoul: 0.02 });
+      const run = new AbortController();
+      fixtures.jev.respond((request) => {
+        run.abort(stopped);
+        return jevStatus(401)(request);
+      });
+      await expect(enrichInRun(id, run)).rejects.toBeInstanceOf(EnrichmentAccountError);
+    });
+
+    // So the run's other bookmarks stop at their next step, without waiting for this error to
+    // reach the sweep.
+    it.each([
+      ["Jev", () => fixtures.jev.respond(jevStatus(401))],
+      [
+        "GitHub",
+        () => {
+          fixtures.jev.respond(noul(0.02));
+          fixtures.github.respond(githubStatus(401));
+        },
+      ],
+    ])("stops the run itself when %s rejects the account", async (_, respond) => {
+      const id = await save(REPOSITORY_URL, REPOSITORY_FIELDS);
+      const run = new AbortController();
+      respond();
+      const thrown = await enrichInRun(id, run).catch((caught: unknown) => caught);
+      expect(thrown).toBeInstanceOf(EnrichmentAccountError);
+      expect(run.signal.aborted).toBe(true);
+      expect(run.signal.reason).toBe(thrown);
+    });
+
+    it("asks GitHub nothing once the run's pause is on, and enriches from what was captured", async () => {
+      const id = await save(REPOSITORY_URL, { ...REPOSITORY_FIELDS, sensitivityNoul: 0.02 });
+      const github = new GitHubPause();
+      await github.read(async () => ({
+        ok: false,
+        reason: "rate-limited",
+        status: 403,
+        requests: 1,
+      }));
+      fixtures.jev.respond(kind());
+      fixtures.llm.respond(output(VALID_OUTPUT));
+      expect(await enrichInRun(id, new AbortController(), github)).toEqual({
+        outcome: "enriched",
+      });
+      expect(fixtures.github.requests).toEqual([]);
+      expect(jevState("kind")).not.toHaveProperty("github");
+      expect(llmMessages()[0]).not.toContain("<github_repository>");
+    });
+
+    it("turns the run's pause on when GitHub rate-limits its own read", async () => {
+      const id = await save(REPOSITORY_URL, { ...REPOSITORY_FIELDS, sensitivityNoul: 0.02 });
+      const github = new GitHubPause();
+      fixtures.github.respond(githubStatus(403, { "x-ratelimit-remaining": "0" }));
+      fixtures.jev.respond(kind());
+      fixtures.llm.respond(output(VALID_OUTPUT));
+      expect(await enrichInRun(id, new AbortController(), github)).toEqual({
+        outcome: "enriched",
+        github: { reason: "rate-limited", status: 403 },
+      });
+      expect(github.paused).toBe(true);
     });
   });
 
