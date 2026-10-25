@@ -16,6 +16,7 @@ import {
   askJev,
   assertJevConfig,
   JEV_ATTEMPT_LIMIT,
+  JEV_MAX_RETRY_DELAY_MS,
   type JevConfig,
   type JevResult,
   type JevTiming,
@@ -68,8 +69,9 @@ function ask(): Promise<JevResult<number>> {
 // timers that jev-client.ts's `sleep` sets are recorded, because Node's fetch sets timers of its
 // own around each request, some while the client's own frames are on the stack, so the match
 // names `sleep` and not only the file. Every timer still runs as asked, with all its arguments:
-// fetch's keep-alive timer passes its state as a third one.
-function recordClientWaits(): number[] {
+// fetch's keep-alive timer passes its state as a third one. With `skipWaits`, the client's own
+// waits run at once instead, for a test of a delay too long to wait out (#142).
+function recordClientWaits({ skipWaits = false } = {}): number[] {
   const waits: number[] = [];
   const setTimeoutAsGiven = globalThis.setTimeout;
   vi.spyOn(globalThis, "setTimeout").mockImplementation(
@@ -81,6 +83,10 @@ function recordClientWaits(): number[] {
       Error.stackTraceLimit = stackTraceLimit;
       if (/\bsleep \([^)]*src[\\/]enrichment[\\/]jev-client\.ts/.test(stack)) {
         waits.push(args[1] ?? 0);
+        if (skipWaits) {
+          const [callback, , ...rest] = args;
+          return setTimeoutAsGiven(callback, 0, ...rest);
+        }
       }
       return setTimeoutAsGiven(...args);
     },
@@ -208,6 +214,28 @@ describe("askJev", () => {
       // A timer can fire a millisecond early.
       expect(second - first).toBeGreaterThanOrEqual(backoffInitialMs * 0.7525 - 1);
       expect(third - second).toBeGreaterThanOrEqual(backoffInitialMs * 2 * 0.7525 - 1);
+    });
+
+    it("cuts a backoff longer than 5 seconds to JEV_MAX_RETRY_DELAY_MS", async () => {
+      // With the random draw at 0, the jitter takes nothing off, so the first delay is 0.8 of the
+      // cap, under it, and the second doubles it to 1.6 of the cap, which the cap cuts. The waits
+      // run at once, so the test reads the delays it asks for without waiting them out (#142).
+      const backoffInitialMs = JEV_MAX_RETRY_DELAY_MS * 0.8;
+      vi.spyOn(Math, "random").mockReturnValue(0);
+      const waits = recordClientWaits({ skipWaits: true });
+      fixture.respond(status(429), status(429), status(429));
+      const result = await askJev(
+        config,
+        {
+          state: "x",
+          id: "billing",
+          question: { type: "noul", instructions: "?" },
+          answer: NoulAnswer,
+        },
+        { ...timing, backoffInitialMs },
+      );
+      expect(result).toMatchObject({ ok: false, attempts: JEV_ATTEMPT_LIMIT });
+      expect(waits).toEqual([backoffInitialMs, JEV_MAX_RETRY_DELAY_MS]);
     });
 
     it("waits as long as retry-after-ms asks, when that is longer than the backoff", async () => {

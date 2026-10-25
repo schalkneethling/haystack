@@ -31,6 +31,10 @@ test("the form after a rejected title has no axe violations", async ({ page }) =
   // Both the form and the page after it have the heading "Save a link", so wait for the title.
   await expect(page).toHaveTitle("Check the form - Haystack");
   await expect(page.getByRole("alert")).toHaveText("Enter a title of up to 200 characters.");
+  // The page can show the title and the alert while its stylesheets are still loading, so
+  // without the wait axe could check the unstyled page, in the browser's default colors
+  // (#159, #160).
+  await page.waitForLoadState("load");
   const results = await new AxeBuilder({ page }).analyze();
   expect(results.violations).toEqual([]);
 });
