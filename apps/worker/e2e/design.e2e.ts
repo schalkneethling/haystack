@@ -31,6 +31,10 @@ async function rejectTitle(page: Page): Promise<void> {
   await page.getByLabel("Title").fill("   ");
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page).toHaveTitle("Check the form - Haystack");
+  // The title comes before the stylesheets in the page's head, so it can match while they are
+  // still loading, and a test that reads layout right after the match sees the unstyled page
+  // (#159).
+  await page.waitForLoadState("load");
 }
 
 async function openDeleteDialog(page: Page, url: string, title: string): Promise<void> {
