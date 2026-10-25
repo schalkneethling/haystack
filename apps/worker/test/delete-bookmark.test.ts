@@ -175,9 +175,28 @@ describe("POST /bookmarks/:id/delete", () => {
     expect(await bookmarkIds()).toEqual([bookmarkId]);
   });
 
-  it("does not delete without a session", async () => {
-    const response = await postDelete(bookmarkId, confirmed, { cookie: "" });
+  // The dialog's script sends fetch()'s default Accept, so it gets the 401 it says "signed out"
+  // for (delete-dialog.js).
+  it("does not delete without a session, and answers a script with 401", async () => {
+    const response = await postDelete(bookmarkId, confirmed, { cookie: "", accept: "*/*" });
     expect(response.status).toBe(401);
+    expect(await bookmarkIds()).toEqual([bookmarkId]);
+  });
+
+  // A form submission asks for HTML. A POST cannot be repeated by returning to its path, so the
+  // user returns to the saved links after sign-in (#34).
+  it.each([
+    ["the list's Delete button", {}],
+    ["the confirmation page's Delete button", confirmed],
+  ])("sends %s through sign-in to the saved links, without a session", async (_, fields) => {
+    const response = await postDelete(bookmarkId, fields, {
+      cookie: "",
+      accept: "text/html,application/xhtml+xml",
+    });
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe(
+      `/auth/sign-in?return_to=${encodeURIComponent("/")}`,
+    );
     expect(await bookmarkIds()).toEqual([bookmarkId]);
   });
 

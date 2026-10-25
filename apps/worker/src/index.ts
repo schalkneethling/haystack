@@ -21,8 +21,15 @@ import { createDb, type Db } from "./db/client.ts";
 import { deletePathId } from "./bookmark-paths.ts";
 import { deleteBookmark } from "./delete-bookmark.ts";
 import { showRecentSaves } from "./recent-saves.ts";
-import { saveBookmark, showSaveForm, signedOutSave } from "./save.ts";
-import { saveAddress } from "./save-address.ts";
+import {
+  saveBookmark,
+  showSaveForm,
+  type SignedOutSave,
+  signedOutSave,
+  signedOutSubmission,
+} from "./save.ts";
+import { saveAddress, signedOutAddress } from "./save-address.ts";
+import { withSecurityHeaders } from "./security-headers.ts";
 import {
   accountNotAllowedPage,
   notFoundPage,
@@ -31,7 +38,8 @@ import {
   signInLinkExpiredPage,
 } from "./pages.ts";
 
-// Plain text for API answers (401) and blocked requests (403). Pages use htmlResponse.
+// Plain text for API answers (401), blocked requests (403) and failures (500). Pages use
+// htmlResponse. The entry point adds the security headers to every answer (security-headers.ts).
 function text(body: string, status: number, headers: Record<string, string> = {}): Response {
   return new Response(body, {
     status,
@@ -58,8 +66,12 @@ function isReadRequest(request: Request): boolean {
   return request.method === "GET" || request.method === "HEAD";
 }
 
-function isPageRequest(request: Request): boolean {
-  return isReadRequest(request) && (request.headers.get("accept") ?? "").includes("text/html");
+// A browser asks for HTML when it navigates, which is when it loads a page or submits a form.
+// The site's scripts never do: the address form's asks for JSON, and the delete dialog's sends
+// fetch()'s default, */*. So a POST that asks for HTML is a form submission, and one that does
+// not is a script's, which gets a 401 it can act on (#34).
+function wantsHtml(request: Request): boolean {
+  return (request.headers.get("accept") ?? "").includes("text/html");
 }
 
 function redirectUri(request: Request): string {
@@ -206,63 +218,98 @@ async function handleAppRoute(
 // Where sign-in returns to, or the page to show instead of signing in. A signed-out GET or HEAD
 // /save is screened first, so a link that sign-in would not keep gets its page now, and no
 // Location header carries a link the check flags (plan, "Sensitive URLs").
-function beforeSignIn(request: Request): { page: Response } | { returnTo: string } {
+function beforeSignIn(request: Request): SignedOutSave {
   const url = new URL(request.url);
-  if (url.pathname === "/save" && isReadRequest(request)) {
+  if (url.pathname === "/save") {
     return signedOutSave(url);
   }
   return { returnTo: url.pathname + url.search };
 }
 
-function withoutSession(request: Request): Response {
-  if (!isPageRequest(request)) {
+// Where sign-in returns to after a form submission whose session had ended (#34), or the page to
+// show instead. The save form returns to itself, with what the user entered, and the address
+// form to the save form for its address. Both are screened as a signed-out GET /save is. Any
+// other form, such as a bookmark's Delete, returns to the saved links, because a POST cannot be
+// repeated by returning to its path.
+async function afterSubmission(request: Request): Promise<SignedOutSave> {
+  const path = new URL(request.url).pathname;
+  if (path === "/save") {
+    return signedOutSubmission(request);
+  }
+  if (path === "/save/address") {
+    return signedOutAddress(request);
+  }
+  return { returnTo: "/" };
+}
+
+// A page request or a form submission is sent to sign-in. Every other request gets a 401. A
+// form's 303 has the browser follow it with a GET, as a 302 after a GET does.
+async function withoutSession(request: Request): Promise<Response> {
+  const read = isReadRequest(request);
+  if (!wantsHtml(request) || !(read || request.method === "POST")) {
     return text("Unauthorized", 401);
   }
-  const next = beforeSignIn(request);
+  const next = read ? beforeSignIn(request) : await afterSubmission(request);
   if ("page" in next) {
     return next.page;
   }
-  return redirect(`/auth/sign-in?return_to=${encodeURIComponent(next.returnTo)}`, 302);
+  return redirect(`/auth/sign-in?return_to=${encodeURIComponent(next.returnTo)}`, read ? 302 : 303);
 }
 
 // Every answer clears a session cookie that is no longer valid.
-function unauthenticated(request: Request, hadCookie: boolean): Response {
-  const response = withoutSession(request);
+async function unauthenticated(request: Request, hadCookie: boolean): Promise<Response> {
+  const response = await withoutSession(request);
   if (hadCookie) {
     response.headers.append("set-cookie", serializeClearedSessionCookie());
   }
   return response;
 }
 
+// Every answer the Worker builds. The Origin check comes before anything else reads the request.
+async function answer(request: Request, env: Env): Promise<Response> {
+  if (!SAFE_METHODS.has(request.method) && !isSameOriginRequest(request)) {
+    return text("Forbidden", 403);
+  }
+  const db = createDb(env.DB);
+  const path = new URL(request.url).pathname;
+  if (path.startsWith("/auth/")) {
+    return handleAuthRoute(request, env, db, path);
+  }
+
+  const now = Date.now();
+  const sessionId = readSessionCookie(request.headers.get("cookie"));
+  const session =
+    sessionId === undefined
+      ? undefined
+      : await authenticateSession(db, sessionId, parseAllowedEmails(env.ALLOWED_EMAILS), now);
+  if (sessionId === undefined || session === undefined) {
+    return unauthenticated(request, sessionId !== undefined);
+  }
+
+  const response = await handleAppRoute(request, db, session);
+  if (!session.extended) {
+    return response;
+  }
+  // A response from fetch() or Response.redirect() has immutable headers, so copy it first.
+  const extended = new Response(response.body, response);
+  const maxAgeSeconds = Math.floor((session.expiresAt - now) / 1000);
+  extended.headers.append("set-cookie", serializeSessionCookie(sessionId, maxAgeSeconds));
+  return extended;
+}
+
 export default {
+  // Every answer leaves through here, so each one gets the security headers for its kind, and no
+  // route can build one without them (#113). A route that throws, for example when D1 fails, gets
+  // a 500 built here, because the runtime's own error page would leave without them. Only the
+  // error's code is logged, never its message, which can hold a query's values.
   async fetch(request, env): Promise<Response> {
-    if (!SAFE_METHODS.has(request.method) && !isSameOriginRequest(request)) {
-      return text("Forbidden", 403);
+    let response: Response;
+    try {
+      response = await answer(request, env);
+    } catch (error) {
+      console.error("Request failed:", errorCode(error));
+      response = text("Internal Server Error", 500);
     }
-    const db = createDb(env.DB);
-    const path = new URL(request.url).pathname;
-    if (path.startsWith("/auth/")) {
-      return handleAuthRoute(request, env, db, path);
-    }
-
-    const now = Date.now();
-    const sessionId = readSessionCookie(request.headers.get("cookie"));
-    const session =
-      sessionId === undefined
-        ? undefined
-        : await authenticateSession(db, sessionId, parseAllowedEmails(env.ALLOWED_EMAILS), now);
-    if (sessionId === undefined || session === undefined) {
-      return unauthenticated(request, sessionId !== undefined);
-    }
-
-    const response = await handleAppRoute(request, db, session);
-    if (!session.extended) {
-      return response;
-    }
-    // A response from fetch() or Response.redirect() has immutable headers, so copy it first.
-    const extended = new Response(response.body, response);
-    const maxAgeSeconds = Math.floor((session.expiresAt - now) / 1000);
-    extended.headers.append("set-cookie", serializeSessionCookie(sessionId, maxAgeSeconds));
-    return extended;
+    return withSecurityHeaders(response);
   },
 } satisfies ExportedHandler<Env>;

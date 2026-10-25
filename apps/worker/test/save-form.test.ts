@@ -466,3 +466,81 @@ describe("GET /save", () => {
     expect(markup).toContain('<form class="panel" method="post" action="/save">');
   });
 });
+
+// The save link that sign-in returns to after a POST /save whose session had ended (#34). It
+// carries the values the user entered, or says that they did not fit in the link.
+describe("GET /save after a submission without a session", () => {
+  const link = { url: "https://example.com/article", title: "Document title" };
+  const KEPT_MESSAGE =
+    "This link is not saved yet. Check the title and description, then press Save.";
+  const NOT_KEPT_MESSAGE =
+    "This link is not saved yet, and its address is too long to keep the title and description with it. Enter them again, then press Save.";
+
+  it("shows the values entered, and says the link is not saved yet", async () => {
+    const response = await getSave({
+      ...link,
+      confirmed_title: "My own title",
+      confirmed_description: "My notes\non two lines",
+    });
+    expect(response.status).toBe(200);
+    const markup = await response.text();
+    expect(markup).toContain("<title>Not saved yet - Haystack</title>");
+    expect(markup).toContain(
+      `<h1>Save a link</h1><div class="status" role="status"><p>${KEPT_MESSAGE}</p></div>`,
+    );
+    expect(formValue(markup, "confirmed_title")).toBe("My own title");
+    expect(formValue(markup, "confirmed_description")).toBe("My notes\non two lines");
+    // The hidden inputs are the captured values only, so a save stores those as before.
+    expect(markup).not.toMatch(/type="hidden" name="confirmed_/);
+    expect(formValue(markup, "title")).toBe("Document title");
+    await expectValidHtml(markup);
+  });
+
+  it("keeps an empty description the user entered, rather than the prefill", async () => {
+    const markup = await (
+      await getSave({
+        ...link,
+        description: "Meta",
+        confirmed_title: "A",
+        confirmed_description: "",
+      })
+    ).text();
+    expect(formValue(markup, "confirmed_description")).toBe("");
+  });
+
+  it("checks the values as a save does, and shows the error first", async () => {
+    const response = await getSave({ ...link, confirmed_title: "   ", confirmed_description: "x" });
+    expect(response.status).toBe(400);
+    const markup = await response.text();
+    expect(markup).toContain("<title>Check the form - Haystack</title>");
+    expect(markup).toContain(
+      '<h1>Save a link</h1><div class="alert" role="alert"><p id="save-error">Enter a title of up to 200 characters.</p></div><div class="status" role="status">',
+    );
+    expect(markup).toMatch(
+      /id="confirmed-title"[^>]*aria-invalid="true" aria-describedby="save-error"/,
+    );
+    await expectValidHtml(markup);
+  });
+
+  it("says the values were not kept, and starts from the prefill", async () => {
+    const response = await getSave({ ...link, confirmed_values: "not-kept" });
+    expect(response.status).toBe(200);
+    const markup = await response.text();
+    expect(markup).toContain("<title>Not saved yet - Haystack</title>");
+    expect(markup).toContain(`<div class="status" role="status"><p>${NOT_KEPT_MESSAGE}</p></div>`);
+    expect(formValue(markup, "confirmed_title")).toBe("Document title");
+    await expectValidHtml(markup);
+  });
+
+  it("shows an ordinary save link as before", async () => {
+    const markup = await (await getSave({ ...link, confirmed_values: "other" })).text();
+    expect(markup).toContain("<title>Save a link - Haystack</title>");
+    expect(markup).not.toContain('role="status"');
+  });
+
+  it("shows that the link is already saved, whatever was entered", async () => {
+    await seedBookmark(await db(), owner.userId, link.url, normalizeUrl(link.url));
+    const markup = await (await getSave({ ...link, confirmed_title: "Another" })).text();
+    expect(markup).toContain("<h1>You already saved this link</h1>");
+  });
+});

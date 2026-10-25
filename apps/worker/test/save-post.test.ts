@@ -281,3 +281,140 @@ describe("POST /save", () => {
     expect(await bookmarks()).toHaveLength(0);
   });
 });
+
+// A form submission asks for HTML, as a browser's navigation does, while the site's scripts never
+// do. Without a session, the form is sent through sign-in and back to itself with what the user
+// entered (#34). A script still gets the 401 above.
+describe("POST /save from the form without a session", () => {
+  const HTML = { accept: "text/html,application/xhtml+xml", cookie: "" };
+
+  // The return target in the sign-in redirect, as sign-in reads it.
+  function returnTarget(response: Response): string {
+    expect(response.status).toBe(303);
+    const location = new URL(response.headers.get("location") ?? "", origin);
+    expect(location.pathname).toBe("/auth/sign-in");
+    return location.searchParams.get("return_to") ?? "";
+  }
+
+  it("returns to the save link with the values entered, normalized as a save would store them", async () => {
+    const response = await post(
+      { ...submission, confirmed_description: "Line one\r\nline two  " },
+      HTML,
+    );
+    const { url, canonical_url, title, description, og_title, og_description, og_site_name } =
+      submission;
+    expect(returnTarget(response)).toBe(
+      `/save?${new URLSearchParams({
+        url,
+        canonical_url,
+        title,
+        description,
+        og_title,
+        og_description,
+        og_site_name,
+        confirmed_title: "My title",
+        confirmed_description: "Line one\nline two",
+      }).toString()}`,
+    );
+    expect(await bookmarks()).toHaveLength(0);
+  });
+
+  // A form with enctype="multipart/form-data" sends this encoding, which formData() reads too.
+  // The harness would send a FormData body as text/plain, so the body is encoded here, with its
+  // boundary in the content type.
+  it("reads a multipart form submission the same way", async () => {
+    const form = new FormData();
+    for (const [name, value] of Object.entries(submission)) {
+      form.append(name, value);
+    }
+    const encoded = new Request("https://encoder.invalid/", { method: "POST", body: form });
+    const contentType = encoded.headers.get("content-type") ?? "";
+    expect(contentType).toMatch(/^multipart\/form-data; boundary=/);
+    const response = await server.fetch("/save", {
+      method: "POST",
+      headers: { ...HTML, origin, "content-type": contentType },
+      body: await encoded.arrayBuffer(),
+      redirect: "manual",
+    });
+    const target = new URL(returnTarget(response), origin);
+    expect(target.searchParams.get("url")).toBe(submission.url);
+    expect(target.searchParams.get("og_title")).toBe(submission.og_title);
+    expect(target.searchParams.get("confirmed_title")).toBe("My title");
+    expect(target.searchParams.get("confirmed_description")).toBe("My description");
+  });
+
+  it("clears a session cookie that is no longer valid", async () => {
+    const response = await post(submission, { ...HTML, cookie: "__Host-session=ended" });
+    expect(response.status).toBe(303);
+    expect(response.headers.get("set-cookie")).toContain("__Host-session=; Max-Age=0");
+  });
+
+  it("drops a flagged canonical URL from the return target, as the form does", async () => {
+    const response = await post(
+      { ...submission, canonical_url: "https://example.com/share?api_key=secret-value" },
+      HTML,
+    );
+    const target = new URL(returnTarget(response), origin);
+    expect(target.searchParams.has("canonical_url")).toBe(false);
+    expect(target.href).not.toContain("secret-value");
+  });
+
+  // Only a tampered or hand-built submission carries a flagged address. It gets the page a
+  // signed-out GET /save of that link gets, and no Location header or stored row carries it.
+  it("answers a tampered address that carries a secret with its page, and no redirect", async () => {
+    const response = await post(
+      { ...submission, url: "https://example.com/cb?access_token=secret-value" },
+      HTML,
+    );
+    expect(response.status).toBe(400);
+    expect(response.headers.get("location")).toBeNull();
+    const markup = await response.text();
+    expect(markup).toContain("This link contains an access token, key, or password");
+    expect(markup).not.toContain("secret-value");
+    const { results } = await (await db()).prepare("SELECT * FROM auth_flows").all();
+    expect(results).toHaveLength(0);
+  });
+
+  // The values must keep the save link within SAVE_URL_BUDGET, which keeps the sign-in redirect
+  // under Cloudflare's URL limit (save-url-budget.test.ts).
+  it("says the values were not kept when they would take the save link over its budget", async () => {
+    // The save link without the values is about 6,400 characters, because each "/" is encoded
+    // as "%2F", and each "語" the values add is encoded in nine.
+    const long = {
+      ...submission,
+      url: `https://example.com/${"/".repeat(2000)}`,
+      confirmed_title: "語".repeat(200),
+      confirmed_description: "語".repeat(300),
+    };
+    const target = new URL(returnTarget(await post(long, HTML)), origin);
+    expect(target.searchParams.has("confirmed_title")).toBe(false);
+    expect(target.searchParams.has("confirmed_description")).toBe(false);
+    expect(target.searchParams.get("confirmed_values")).toBe("not-kept");
+    expect(target.searchParams.get("url")).toBe(long.url);
+  });
+
+  it("returns to the address form for a body that is not a form", async () => {
+    const response = await server.fetch("/save", {
+      method: "POST",
+      headers: { ...HTML, origin, "content-type": "application/json" },
+      body: JSON.stringify(submission),
+      redirect: "manual",
+    });
+    expect(returnTarget(response)).toBe("/save");
+  });
+
+  it("still gets 403 from another origin, before anything else", async () => {
+    const response = await post(submission, { ...HTML, origin: "https://evil.example" });
+    expect(response.status).toBe(403);
+    expect(response.headers.get("location")).toBeNull();
+  });
+
+  it.each([
+    ["JSON", "application/json"],
+    ["anything, as fetch() asks by default", "*/*"],
+  ])("still answers 401 to a request that asks for %s", async (_, accept) => {
+    const response = await post(submission, { accept, cookie: "" });
+    expect(response.status).toBe(401);
+    expect(response.headers.get("location")).toBeNull();
+  });
+});

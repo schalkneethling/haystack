@@ -31,8 +31,12 @@ const server = createTestHarness({
   workers: [{ configPath: new URL("../wrangler.jsonc", import.meta.url) }],
 });
 
+// The Worker's own origin in the harness. The save form's values are kept only while the save
+// link, with this origin, is within the budget (#34).
+let workerOrigin: string;
+
 beforeAll(async () => {
-  await server.listen();
+  workerOrigin = (await server.listen()).url.origin;
   await server.getWorker().applyD1Migrations("DB");
 });
 
@@ -143,4 +147,75 @@ describe("a save URL at the budget", () => {
       expect(results).toEqual([{ return_to: path }]);
     },
   );
+});
+
+// Text of `units` code units that alternates a letter and a space, which is the most spaces a
+// confirmed title keeps once runs of whitespace are collapsed. It starts and ends with a letter.
+function alternating(units: number): string {
+  return Array.from({ length: units }, (_, index) => (index % 2 === 0 ? "a" : " ")).join("");
+}
+
+// The save form submitted without a session (#34) returns to its save link with the values the
+// user entered. The values only stay when the whole link is within the budget, so the redirect
+// to sign-in stays under Cloudflare's limit whatever they hold.
+describe("a save form submitted without a session at the budget", () => {
+  const confirmed = {
+    confirmed_title: alternating(CAPTURE_CAPS.title - 1),
+    confirmed_description: spaced(CAPTURE_CAPS.description),
+  };
+
+  // The longest submission whose save link, with the values, is exactly SAVE_URL_BUDGET
+  // characters at the Worker's origin, plus `extra` characters of canonical URL.
+  function submissionAtBudget(extra: number): Record<string, string> {
+    const text = {
+      title: spaced(CAPTURE_CAPS.title),
+      description: spaced(CAPTURE_CAPS.description),
+      og_title: spaced(CAPTURE_CAPS.og_title),
+      og_description: spaced(CAPTURE_CAPS.og_description),
+      og_site_name: spaced(CAPTURE_CAPS.og_site_name),
+    };
+    const length = (fields: Record<string, string>) =>
+      `${workerOrigin}/save?${query({ ...fields, ...confirmed })}`.length;
+    const withoutCanonical = { url: address(CAPTURE_CAPS.url), ...text };
+    const room = SAVE_URL_BUDGET - length({ ...withoutCanonical, canonical_url: "" });
+    return { ...withoutCanonical, canonical_url: addressEncodedTo(room + extra), ...confirmed };
+  }
+
+  async function submit(fields: Record<string, string>): Promise<URL> {
+    const response = await server.fetch("/save", {
+      method: "POST",
+      headers: { origin: workerOrigin, accept: "text/html" },
+      body: new URLSearchParams(fields),
+      redirect: "manual",
+    });
+    expect(response.status).toBe(303);
+    const requested = new URL(response.headers.get("location") ?? "", ORIGIN);
+    expect(requested.pathname).toBe("/auth/sign-in");
+    expect(requested.href).toMatch(/^[\x21-\x7e]+$/);
+    expect(requested.href.length).toBeLessThan(CLOUDFLARE_URL_LIMIT);
+    return requested;
+  }
+
+  it("keeps the values at the budget, and sign-in stores the same target", async () => {
+    const fields = submissionAtBudget(0);
+    const requested = await submit(fields);
+    const returnTo = requested.searchParams.get("return_to") ?? "";
+    expect(`${workerOrigin}${returnTo}`).toHaveLength(SAVE_URL_BUDGET);
+    expect(new URL(returnTo, ORIGIN).searchParams.get("confirmed_description")).toBe(
+      confirmed.confirmed_description,
+    );
+
+    const DB = (await server.getWorker().getEnv()).DB;
+    await DB.prepare("DELETE FROM auth_flows").run();
+    await server.fetch(requested.pathname + requested.search, { redirect: "manual" });
+    const { results } = await DB.prepare("SELECT return_to FROM auth_flows").all();
+    expect(results).toEqual([{ return_to: returnTo }]);
+  });
+
+  it("says the values were not kept one character over the budget", async () => {
+    const requested = await submit(submissionAtBudget(1));
+    const returnTo = new URL(requested.searchParams.get("return_to") ?? "", ORIGIN);
+    expect(returnTo.searchParams.has("confirmed_title")).toBe(false);
+    expect(returnTo.searchParams.get("confirmed_values")).toBe("not-kept");
+  });
 });

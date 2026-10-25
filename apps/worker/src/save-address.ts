@@ -28,7 +28,14 @@ import type { Db } from "./db/client.ts";
 import { ADDRESS_ERROR_TITLE } from "./address-form.ts";
 import { jsonResponse, pageTitle } from "./page.ts";
 import { type LookupFailure, lookUpPage } from "./page-lookup.ts";
-import { existingBookmark, rejectedAddressState, rejectedLinkPage, screenCapture } from "./save.ts";
+import {
+  existingBookmark,
+  rejectedAddressState,
+  rejectedLinkPage,
+  screenCapture,
+  type SignedOutSave,
+  signedOutSave,
+} from "./save.ts";
 
 /** Why the save link carries the address alone, as a fixed code that is safe to log. */
 type Fallback = LookupFailure | "invalid" | "no-metadata";
@@ -85,6 +92,21 @@ async function submittedFields(request: Request): Promise<Record<string, string>
   } catch {
     return {};
   }
+}
+
+/**
+ * The address form's submission without a session, from a browser without JavaScript (#34): the
+ * page to show instead of signing in, or the save link to return to after it. It is the answer
+ * the form shown before sign-in gets, which asks for GET /save with the address (address-form.ts),
+ * so a rejected address gets the address form with its error, and nothing is stored. The user
+ * returns to the save form for the address alone, because nothing is looked up before sign-in.
+ */
+export async function signedOutAddress(request: Request): Promise<SignedOutSave> {
+  const link = new URL("/save", request.url);
+  for (const [name, value] of Object.entries(await submittedFields(request))) {
+    link.searchParams.set(name, value);
+  }
+  return signedOutSave(link);
 }
 
 // The payload the page's metadata gives, or why there is none. Every value is untrusted page
