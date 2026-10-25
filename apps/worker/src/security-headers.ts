@@ -57,11 +57,6 @@ export const SECURITY_HEADERS: Readonly<Record<AnswerKind, Readonly<Record<strin
   },
 };
 
-/** Every header name that some kind of answer gets, so a test can check the rest are absent. */
-export const SECURITY_HEADER_NAMES: readonly string[] = [
-  ...new Set(Object.values(SECURITY_HEADERS).flatMap((headers) => Object.keys(headers))),
-];
-
 function kindOf(response: Response): AnswerKind {
   if (response.status >= 300 && response.status < 400) {
     return "redirect";
