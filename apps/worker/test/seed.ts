@@ -145,3 +145,31 @@ export async function seedEnrichmentFailure(
     .bind(bookmarkId, schemaVersion, attempts, consecutiveFailures, "Seeded failure", Date.now())
     .run();
 }
+
+export interface BulkBookmark {
+  url: string;
+  normalizedUrl: string;
+  createdAt: number;
+}
+
+/**
+ * Seeds many bookmarks, titled "Seeded", in one statement and returns their ids in order. A
+ * harness D1 call blocks the test's thread on a round trip through Miniflare's proxy, and
+ * `seedBookmark` makes several per row, so seeding fifty rows with it takes about a second, and
+ * under load can run past a test's timeout (#161). The rows travel as one JSON parameter, which
+ * `json_each` unpacks into a row each.
+ */
+export async function seedBookmarks(
+  db: D1Like,
+  userId: string,
+  bookmarks: BulkBookmark[],
+): Promise<string[]> {
+  const rows = bookmarks.map((bookmark) => ({ id: crypto.randomUUID(), ...bookmark }));
+  await db
+    .prepare(
+      "INSERT INTO bookmarks (id, user_id, url, normalized_url, title, created_at) SELECT json_extract(value, '$.id'), ?1, json_extract(value, '$.url'), json_extract(value, '$.normalizedUrl'), 'Seeded', json_extract(value, '$.createdAt') FROM json_each(?2)",
+    )
+    .bind(userId, JSON.stringify(rows))
+    .run();
+  return rows.map((row) => row.id);
+}

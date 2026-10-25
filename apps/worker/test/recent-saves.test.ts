@@ -4,6 +4,7 @@ import { createTestHarness } from "wrangler";
 import { RECENT_SAVES_LIMIT, savedLink } from "../src/recent-saves.ts";
 import {
   seedBookmark,
+  seedBookmarks,
   type SeededBookmarkFields,
   seedSignedInUser,
   type SeededUser,
@@ -46,6 +47,20 @@ beforeEach(async () => {
 
 async function save(url: string, fields: SeededBookmarkFields = {}, user = owner) {
   return seedBookmark(await db(), user.userId, url, normalizeUrl(url), fields);
+}
+
+// Seeds one bookmark per entry in a single database call, in order, and returns their ids (#161).
+async function saveMany(entries: { url: string; createdAt?: number }[], user = owner) {
+  const now = Date.now();
+  return seedBookmarks(
+    await db(),
+    user.userId,
+    entries.map(({ url, createdAt = now }) => ({
+      url,
+      normalizedUrl: normalizeUrl(url),
+      createdAt,
+    })),
+  );
 }
 
 async function getList(cookie: string | null = owner.cookie) {
@@ -149,10 +164,12 @@ describe("GET /", () => {
   });
 
   it(`shows the newest ${RECENT_SAVES_LIMIT} and says so when there are more`, async () => {
-    const ids: string[] = [];
-    for (let index = 0; index <= RECENT_SAVES_LIMIT; index += 1) {
-      ids.push(await save(`https://example.com/${index}`, { createdAt: index }));
-    }
+    const ids = await saveMany(
+      Array.from({ length: RECENT_SAVES_LIMIT + 1 }, (_, index) => ({
+        url: `https://example.com/${index}`,
+        createdAt: index,
+      })),
+    );
     const markup = await listMarkup();
     expect(itemIds(markup)).toEqual(ids.slice(1).reverse());
     expect(markup).toContain(`This list shows only your ${RECENT_SAVES_LIMIT} most recent links.`);
@@ -164,9 +181,11 @@ describe("GET /", () => {
   });
 
   it(`shows all ${RECENT_SAVES_LIMIT} without mentioning the limit at exactly that many`, async () => {
-    for (let index = 0; index < RECENT_SAVES_LIMIT; index += 1) {
-      await save(`https://example.com/${index}`);
-    }
+    await saveMany(
+      Array.from({ length: RECENT_SAVES_LIMIT }, (_, index) => ({
+        url: `https://example.com/${index}`,
+      })),
+    );
     const markup = await listMarkup();
     expect(itemIds(markup)).toHaveLength(RECENT_SAVES_LIMIT);
     expect(markup).not.toContain("most recent links");
@@ -199,18 +218,24 @@ describe("the already-saved page", () => {
   }
 
   it("links to the bookmark when the list shows it", async () => {
-    const id = await save("https://example.com/listed", { createdAt: 1 });
-    for (let index = 1; index < RECENT_SAVES_LIMIT; index += 1) {
-      await save(`https://example.com/${index}`, { createdAt: 1 + index });
-    }
+    const [id] = await saveMany([
+      { url: "https://example.com/listed", createdAt: 1 },
+      ...Array.from({ length: RECENT_SAVES_LIMIT - 1 }, (_, offset) => ({
+        url: `https://example.com/${offset + 1}`,
+        createdAt: 2 + offset,
+      })),
+    ]);
     expect(await alreadySaved("https://example.com/listed")).toContain(`href="/#bookmark-${id}"`);
   });
 
   it(`explains when the bookmark is older than the newest ${RECENT_SAVES_LIMIT}`, async () => {
-    const id = await save("https://example.com/older", { createdAt: 1 });
-    for (let index = 1; index <= RECENT_SAVES_LIMIT; index += 1) {
-      await save(`https://example.com/${index}`, { createdAt: 1 + index });
-    }
+    const [id] = await saveMany([
+      { url: "https://example.com/older", createdAt: 1 },
+      ...Array.from({ length: RECENT_SAVES_LIMIT }, (_, offset) => ({
+        url: `https://example.com/${offset + 1}`,
+        createdAt: 2 + offset,
+      })),
+    ]);
     const markup = await alreadySaved("https://example.com/older");
     expect(markup).not.toContain(`bookmark-${id}`);
     expect(markup).toContain(`older than the ${RECENT_SAVES_LIMIT} most recent links`);
@@ -218,10 +243,12 @@ describe("the already-saved page", () => {
   });
 
   it("orders bookmarks saved at the same moment as the list does", async () => {
-    const ids: string[] = [];
-    for (let index = 0; index <= RECENT_SAVES_LIMIT; index += 1) {
-      ids.push(await save(`https://example.com/${index}`, { createdAt: 5 }));
-    }
+    const ids = await saveMany(
+      Array.from({ length: RECENT_SAVES_LIMIT + 1 }, (_, index) => ({
+        url: `https://example.com/${index}`,
+        createdAt: 5,
+      })),
+    );
     const listed = new Set(itemIds(await listMarkup()));
     for (const [index, id] of ids.entries()) {
       const markup = await alreadySaved(`https://example.com/${index}`);
