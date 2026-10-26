@@ -2,8 +2,8 @@
 // GitHub, the `match_text` refresh and its summary, against the real local D1 from Wrangler's test
 // harness. Every outside request is answered by the enrichment fixtures (enrichment-fixtures.ts),
 // which fail a test that makes a request they did not plan for. See "Enrichment sweep", Phase 8
-// and Q3 in plans/haystack-v1-implementation-plan.md. The scheduled handler, the Cron Trigger and
-// the configuration module are #128's.
+// and Q3 in plans/haystack-v1-implementation-plan.md. The scheduled run that calls it is tested in
+// scheduled.test.ts, and the configuration module in flags.test.ts (#128).
 import { and, eq, sql } from "drizzle-orm";
 import { HttpResponse } from "msw";
 import {

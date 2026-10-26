@@ -22,6 +22,7 @@ import { deletePathId } from "./bookmark-paths.ts";
 import { deleteBookmark } from "./delete-bookmark.ts";
 import { errorCode } from "./error-code.ts";
 import { showRecentSaves } from "./recent-saves.ts";
+import { runScheduled } from "./scheduled.ts";
 import {
   saveBookmark,
   showSaveForm,
@@ -303,5 +304,11 @@ export default {
       response = text("Internal Server Error", 500);
     }
     return withSecurityHeaders(response);
+  },
+  // The Cron Trigger's run (`triggers.crons` in wrangler.jsonc): the enrichment sweep, then the
+  // cleanup of expired sessions and sign-in flows (scheduled.ts). The runtime waits for the
+  // promise a scheduled handler returns, so the run needs no `ctx.waitUntil`.
+  async scheduled(_controller, env): Promise<void> {
+    await runScheduled(env);
   },
 } satisfies ExportedHandler<Env>;

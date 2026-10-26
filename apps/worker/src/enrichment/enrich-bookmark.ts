@@ -2,7 +2,8 @@
 // See "Enrichment design", "Enrichment state is derived, not stored", "Enrichment sweep",
 // "Probabilistic check with Jev" and Q3 in plans/haystack-v1-implementation-plan.md. It takes the
 // bookmark's row and returns an outcome, and it knows nothing about how it was called, so the
-// sweep (#127) and the on-save path (#133) call the same code. Nothing in production calls it yet.
+// sweep (#127) and the on-save path (#133) call the same code. In production, the scheduled run
+// (#128) calls the sweep. The on-save path comes with #133.
 //
 // The steps, in order:
 // 1. The sensitivity gate, only when the bookmark's `sensitivity_noul` is empty. Jev is sent

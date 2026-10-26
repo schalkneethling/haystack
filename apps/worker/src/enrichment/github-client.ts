@@ -1,6 +1,6 @@
 // The client that reads what GitHub says about a repository, for enrichment (#123). See "GitHub
-// enrichment", Q3, Q7 and "Untrusted content" in plans/haystack-v1-implementation-plan.md. Nothing
-// in production calls it yet: the enrichment module (#126) is its first caller.
+// enrichment", Q3, Q7 and "Untrusted content" in plans/haystack-v1-implementation-plan.md. Its
+// caller is the enrichment module (#126), which the scheduled sweep (#128) runs in production.
 //
 // The endpoints, headers, media types and statuses come from GitHub's REST reference, read on
 // 2026-10-22: "Get a repository" (https://docs.github.com/en/rest/repos/repos#get-a-repository),

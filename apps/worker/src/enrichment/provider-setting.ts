@@ -1,6 +1,6 @@
 // The setting that chooses which provider enrichment uses (#125). See "The provider interface"
-// and "Secrets and configuration" in plans/haystack-v1-implementation-plan.md. Nothing in
-// production calls it yet: the enrichment module (#126) is its first caller.
+// and "Secrets and configuration" in plans/haystack-v1-implementation-plan.md. Its caller
+// is the enrichment module (#126), which the scheduled sweep (#128) runs in production.
 //
 // ENRICHMENT_PROVIDER is a `var`, not a Flagship flag, because changing the provider changes who
 // receives every bookmark's data, so it should be a reviewed change that goes through a deploy,

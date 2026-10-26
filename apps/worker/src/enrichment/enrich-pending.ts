@@ -1,8 +1,8 @@
 // The enrichment sweep (#127): the one operation that enriches every outstanding bookmark, a few
 // in each run. See "Enrichment sweep", "Enrichment state is derived, not stored" and Q3 in
 // plans/haystack-v1-implementation-plan.md. The first backfill, a schema version change and the
-// retries after failures on save all use it. Nothing in production calls it yet: the scheduled
-// handler (#128) is its caller, and reads the batch size and the attempt limit from configuration.
+// retries after failures on save all use it. The scheduled run (scheduled.ts, #128) is its
+// caller, and reads the batch size from a Flagship flag and the attempt limit from a `var`.
 //
 // A run, in order:
 // 1. Rewrites `match_text` for a few enrichments at an older derivation (match-text-refresh.ts),
@@ -73,8 +73,8 @@ import {
  * The most bookmarks one run may enrich on Workers Free (Q3). Each makes at most 10 outside
  * requests and 3 D1 statements, and the run itself up to 8 D1 statements and 2 flag reads, so 3
  * bookmarks make at most 49 subrequests, under the limit of 50, and a 4th would make 62.
- * enrichPending refuses a larger batch, and the configuration module (#128) uses this as the
- * batch size flag's ceiling.
+ * enrichPending refuses a larger batch, and the configuration module (flags.ts, #128) uses this
+ * as the batch size flag's ceiling.
  */
 export const SWEEP_BATCH_SIZE_LIMIT = 3;
 
@@ -91,7 +91,7 @@ export const SWEEP_CONCURRENCY = 3;
 /**
  * How many permanent failures, counting every 5th failure in a row as one
  * (TRANSIENT_FAILURES_PER_ATTEMPT), leave a bookmark Failed when no limit is given: the plan's
- * default of 3. The scheduled handler (#128) reads the limit from a `var` and passes it.
+ * default of 3. The scheduled run (#128) reads the limit from SWEEP_ATTEMPT_LIMIT and passes it.
  */
 export const DEFAULT_ATTEMPT_LIMIT = 3;
 
