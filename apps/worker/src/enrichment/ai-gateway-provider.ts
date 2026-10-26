@@ -1,7 +1,7 @@
 // The Cloudflare AI Gateway adapter for the provider interface (#125). See "The provider
 // interface", Q3, Q7 and "Secrets and configuration" in plans/haystack-v1-implementation-plan.md.
-// Nothing in production calls it yet: the enrichment module (#126) is its first caller, through
-// chooseEnrichmentProvider (provider-setting.ts).
+// Its caller is the enrichment module (#126), through chooseEnrichmentProvider
+// (provider-setting.ts), and the scheduled sweep (#128) runs that module in production.
 //
 // It sends the same Messages API request as the Anthropic adapter (anthropic-messages.ts) to the
 // gateway's Anthropic endpoint, which passes it on to Anthropic. That module has the request, its

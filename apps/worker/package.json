@@ -15,6 +15,7 @@
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
     "db:export:remote": "mkdir -p backups && stamp=$(date -u +%Y%m%dT%H%M%SZ) && wrangler d1 export DB --remote --no-data --skip-confirmation --output=backups/haystack-$stamp-schema.sql && wrangler d1 export DB --remote --no-schema --skip-confirmation --output=backups/haystack-$stamp-data.sql",
+    "fixtures": "node test/fixture-server.ts",
     "test:e2e": "playwright test",
     "e2e:install": "playwright install --only-shell chromium",
     "test:voiceover": "playwright test --config playwright.voiceover.config.ts",

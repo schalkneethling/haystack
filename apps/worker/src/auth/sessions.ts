@@ -1,5 +1,5 @@
 // Session storage in D1. See "Site sign-in" in plans/haystack-v1-implementation-plan.md.
-import { eq } from "drizzle-orm";
+import { eq, lte } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import { sessions, users } from "../db/schema.ts";
 import { isEmailAllowed } from "./allowlist.ts";
@@ -71,4 +71,15 @@ export async function authenticateSession(
 
 export async function deleteSession(db: Db, sessionId: string): Promise<void> {
   await db.delete(sessions).where(eq(sessions.idHash, await hashSessionId(sessionId)));
+}
+
+/**
+ * Deletes every session that has expired by `now`, which is when authenticateSession stops
+ * accepting it, and resolves to how many were deleted. authenticateSession deletes an expired
+ * session only when its cookie comes back, so without this a browser that never returns would
+ * leave its session behind for good.
+ */
+export async function deleteExpiredSessions(db: Db, now: number): Promise<number> {
+  const result = await db.delete(sessions).where(lte(sessions.expiresAt, now));
+  return result.meta.changes;
 }

@@ -57,7 +57,18 @@
     // confirms that the link isn't private. Schalk chose 0.5 (#126). A `var`, not a Flagship
     // flag, so changing which bookmarks are Held is a reviewed deploy.
     "SENSITIVE_WARN_THRESHOLD": "0.5",
+    // How many attempts leave a bookmark Failed, where /held shows it (plan, "Enrichment sweep"):
+    // a whole number from 1. The plan's default is 3. A `var`, not a Flagship flag, so changing
+    // which bookmarks reach Failed is a reviewed deploy. A value that isn't a whole number stops
+    // the sweep, not the cleanup, and fails the scheduled run (src/scheduled.ts).
+    "SWEEP_ATTEMPT_LIMIT": "3",
   },
+  // The enrichment sweep and the cleanup of expired sessions and sign-in flows (#128). Every 5
+  // minutes is Q3's starting schedule, which drains the backlog at up to 864 bookmarks a day.
+  // #133 moves it to hourly once the backlog is empty. The schedule is the run frequency, so
+  // changing it is a reviewed deploy, like a `var`. The sweep's switch and batch size are
+  // Flagship flags (src/flags.ts).
+  "triggers": { "crons": ["*/5 * * * *"] },
   // Values come from .env.schema through varlock. A secret is added here in the change
   // whose code first reads it, even before production calls that code, as with
   // TYPESAFE_API_KEY (#122), GITHUB_TOKEN (#123), ANTHROPIC_API_KEY (#124) and

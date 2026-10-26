@@ -12,15 +12,25 @@ import { sha256Hex } from "./sha256.ts";
 
 export const AUTH_FLOW_LIFETIME_MS = 10 * 60 * 1000;
 
+/**
+ * Deletes every flow that has expired by `now`, which is when consumeAuthFlow stops accepting it,
+ * and resolves to how many were deleted.
+ */
+export async function deleteExpiredAuthFlows(db: Db, now: number): Promise<number> {
+  const result = await db.delete(authFlows).where(lte(authFlows.expiresAt, now));
+  return result.meta.changes;
+}
+
 /** Stores a new flow and returns what the authorization request needs. */
 export async function createAuthFlow(
   db: Db,
   returnTo: string,
   now: number,
 ): Promise<{ state: string; codeChallenge: string }> {
-  // Anyone can start sign-in, so expired flows are removed here rather than left until the
-  // scheduled cleanup arrives in Milestone 2.
-  await db.delete(authFlows).where(lte(authFlows.expiresAt, now));
+  // Anyone can start sign-in, so expired flows are removed here as well as by the scheduled
+  // cleanup (scheduled.ts). That keeps the table small however often sign-in is used, even if
+  // the scheduled runs stop.
+  await deleteExpiredAuthFlows(db, now);
   const state = generateRandomState();
   const codeVerifier = generateRandomCodeVerifier();
   await db.insert(authFlows).values({
