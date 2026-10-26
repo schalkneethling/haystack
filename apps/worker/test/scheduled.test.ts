@@ -21,7 +21,12 @@ import { deleteExpiredSessions } from "../src/auth/sessions.ts";
 import { createDb } from "../src/db/client.ts";
 import type { EnrichmentConfig } from "../src/enrichment/enrich-bookmark.ts";
 import { ENRICHMENT_SCHEMA_VERSION } from "../src/enrichment/enrichment-schema.ts";
-import { type FlagReader, SWEEP_BATCH_SIZE_FLAG, SWEEP_ENABLED_FLAG } from "../src/flags.ts";
+import {
+  type FlagDetails,
+  type FlagReader,
+  SWEEP_BATCH_SIZE_FLAG,
+  SWEEP_ENABLED_FLAG,
+} from "../src/flags.ts";
 import { readSweepAttemptLimit, runScheduled, type ScheduledEnv } from "../src/scheduled.ts";
 import {
   ANTHROPIC_ORIGIN,
@@ -125,9 +130,11 @@ afterEach(() => {
 
 /** A fake binding with these flags set, which gives the default for any other, as a missing flag. */
 function fakeFlags(values: Record<string, unknown>): FlagReader {
-  const read = async <T>(key: string, defaultValue: T): Promise<T> =>
-    Object.hasOwn(values, key) ? (values[key] as T) : defaultValue;
-  return { getBooleanValue: read, getNumberValue: read };
+  const read = async <T>(key: string, defaultValue: T): Promise<FlagDetails<T>> =>
+    Object.hasOwn(values, key)
+      ? { value: values[key] as T }
+      : { value: defaultValue, errorCode: "FLAG_NOT_FOUND" };
+  return { getBooleanDetails: read, getNumberDetails: read };
 }
 
 async function scheduledEnv(
@@ -279,10 +286,10 @@ describe("runScheduled", () => {
     await seedPending(4);
     answerPending(3);
     const failing: FlagReader = {
-      getBooleanValue: async () => {
+      getBooleanDetails: async () => {
         throw new Error("Flagship is unavailable");
       },
-      getNumberValue: async () => 1,
+      getNumberDetails: async () => ({ value: 1 }),
     };
 
     const { sweep } = await runScheduled(await scheduledEnv(failing));

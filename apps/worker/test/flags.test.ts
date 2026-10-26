@@ -1,11 +1,12 @@
 // The configuration module (#128), with a fake Flagship binding. The test harness can't set a
 // flag (Q13 in plans/haystack-v1-implementation-plan.md), so these are unit tests. The fake
-// answers as the binding's typed getters do: the flag's value when it has one, and otherwise the
-// default it was given, as for a missing flag. scheduled.test.ts shows what the scheduled run
-// does with the values.
+// answers as the binding's details getters do: the flag's value when it has one, and otherwise
+// the default it was given, with FLAG_NOT_FOUND, as for a missing flag. scheduled.test.ts shows
+// what the scheduled run does with the values.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { SWEEP_BATCH_SIZE_LIMIT } from "../src/enrichment/enrich-pending.ts";
 import {
+  type FlagDetails,
   type FlagReader,
   readSweepFlags,
   SWEEP_BATCH_SIZE_FLAG,
@@ -16,11 +17,22 @@ import {
 /** A fake binding with these flags set, and every key it was asked for. */
 function fakeFlags(values: Record<string, unknown>): FlagReader & { readonly keys: string[] } {
   const keys: string[] = [];
-  const read = async <T>(key: string, defaultValue: T): Promise<T> => {
+  const read = async <T>(key: string, defaultValue: T): Promise<FlagDetails<T>> => {
     keys.push(key);
-    return Object.hasOwn(values, key) ? (values[key] as T) : defaultValue;
+    return Object.hasOwn(values, key)
+      ? { value: values[key] as T }
+      : { value: defaultValue, errorCode: "FLAG_NOT_FOUND" };
   };
-  return { keys, getBooleanValue: read, getNumberValue: read };
+  return { keys, getBooleanDetails: read, getNumberDetails: read };
+}
+
+/** A fake binding whose getters give their default with this error code, for every flag. */
+function failingFlags(errorCode: string): FlagReader {
+  const read = async <T>(_key: string, defaultValue: T): Promise<FlagDetails<T>> => ({
+    value: defaultValue,
+    errorCode,
+  });
+  return { getBooleanDetails: read, getNumberDetails: read };
 }
 
 let warn: ReturnType<typeof vi.spyOn>;
@@ -56,12 +68,50 @@ describe("readSweepFlags", () => {
     expect(SWEEP_FLAG_DEFAULTS.batchSize).toBeLessThanOrEqual(SWEEP_BATCH_SIZE_LIMIT);
   });
 
+  it("logs a missing switch by its key and the getter's code, but not a missing batch size", async () => {
+    // A switch created in another app, or never created, gives the sweep enabled, so the log is
+    // what shows that the switch isn't being read. The batch size flag is only created to lower
+    // the batch, so its absence is the expected state.
+    await readSweepFlags(fakeFlags({}));
+
+    expect(warn).toHaveBeenCalledWith("Flag not evaluated, using its default:", {
+      flag: SWEEP_ENABLED_FLAG,
+      code: "FLAG_NOT_FOUND",
+    });
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["TYPE_MISMATCH", "PARSE_ERROR"])(
+    "uses the defaults and logs %s for each flag",
+    async (errorCode) => {
+      expect(await readSweepFlags(failingFlags(errorCode))).toEqual(SWEEP_FLAG_DEFAULTS);
+      for (const flag of [SWEEP_ENABLED_FLAG, SWEEP_BATCH_SIZE_FLAG]) {
+        expect(warn).toHaveBeenCalledWith("Flag not evaluated, using its default:", {
+          flag,
+          code: errorCode,
+        });
+      }
+    },
+  );
+
+  it.each(["flag sweep-enabled is true", "", "FLAG_NOT_FOUND\n"])(
+    "logs an error code that isn't a plain code (%j) as UNRECOGNIZED",
+    async (errorCode) => {
+      await readSweepFlags(failingFlags(errorCode));
+
+      expect(warn).toHaveBeenCalledWith("Flag not evaluated, using its default:", {
+        flag: SWEEP_ENABLED_FLAG,
+        code: "UNRECOGNIZED",
+      });
+    },
+  );
+
   it("gives every default when the binding throws", async () => {
     // The switch's getter answers, but the batch size's throws, as the binding does for any
     // error other than a missing flag or a type mismatch (Q13).
     const flags: FlagReader = {
-      getBooleanValue: async () => false,
-      getNumberValue: async () => {
+      getBooleanDetails: async () => ({ value: false }),
+      getNumberDetails: async () => {
         throw Object.assign(new Error("Flagship is unavailable"), { name: "FlagshipError" });
       },
     };

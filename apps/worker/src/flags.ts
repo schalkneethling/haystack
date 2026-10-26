@@ -11,8 +11,22 @@
 // empty key and for any other error. So the keys are constant and non-empty, any error from the
 // binding gives every default, and a value the getter returns is still checked here, because
 // Flagship is an outside service whose answers are untrusted input (plan, "Testing strategy").
+// The flags are read through the details getters, which report those three cases as an
+// `errorCode`, so a flag that was never created, or was created in another app, is logged rather
+// than quietly giving its default, which turns the sweep on.
 import { SWEEP_BATCH_SIZE, SWEEP_BATCH_SIZE_LIMIT } from "./enrichment/enrich-pending.ts";
 import { errorCode } from "./error-code.ts";
+
+/**
+ * The part of a details getter's answer this module reads (`FlagshipEvaluationDetails` in
+ * worker-configuration.d.ts). `errorCode` is set when the getter gave the default instead of the
+ * flag's value: FLAG_NOT_FOUND, PARSE_ERROR or TYPE_MISMATCH in Miniflare's simulator. Its
+ * `errorMessage` isn't read, so it can't reach a log.
+ */
+export interface FlagDetails<T> {
+  readonly value: T;
+  readonly errorCode?: string | undefined;
+}
 
 /**
  * The part of the Flagship binding this module calls, with the getters' signatures from the
@@ -23,8 +37,8 @@ import { errorCode } from "./error-code.ts";
  * a change to the binding's getters that this no longer matches fails the type check there.
  */
 export interface FlagReader {
-  getBooleanValue(flagKey: string, defaultValue: boolean): Promise<boolean>;
-  getNumberValue(flagKey: string, defaultValue: number): Promise<number>;
+  getBooleanDetails(flagKey: string, defaultValue: boolean): Promise<FlagDetails<boolean>>;
+  getNumberDetails(flagKey: string, defaultValue: number): Promise<FlagDetails<number>>;
 }
 
 /**
@@ -85,24 +99,51 @@ function checkedEnabled(value: unknown): boolean {
   return SWEEP_FLAG_DEFAULTS.enabled;
 }
 
+// A code as Flagship's simulator writes them, such as FLAG_NOT_FOUND. Any other answer is logged
+// as UNRECOGNIZED, because the code comes from an outside service and must not carry a value.
+const FLAG_ERROR_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
+
+// The getter's code for a flag that doesn't exist in the app.
+const FLAG_NOT_FOUND = "FLAG_NOT_FOUND";
+
+// The flag's value, after logging, by the flag's key and the code alone, when the getter gave
+// its default instead. `mayBeMissing` is for a flag that is only created when its default has to
+// be overridden, so its absence is the expected state and logging it every run would bury the
+// warnings that matter.
+function valueOf(flag: string, details: FlagDetails<unknown>, mayBeMissing = false): unknown {
+  const { errorCode: code } = details;
+  if (code !== undefined && !(mayBeMissing && code === FLAG_NOT_FOUND)) {
+    console.warn("Flag not evaluated, using its default:", {
+      flag,
+      code: typeof code === "string" && FLAG_ERROR_CODE.test(code) ? code : "UNRECOGNIZED",
+    });
+  }
+  return details.value;
+}
+
 /**
  * Reads the sweep's flags, once for the run. Never throws: an error from the binding gives every
  * default, and is logged by its code or name only, so a Flagship problem can't stop the
  * scheduled run (Q13). So does a binding that is missing, which `Env` can't rule out at runtime,
- * because the getters are called inside the same `try`. A value outside its range gives that
- * flag's default.
+ * because the getters are called inside the same `try`. A flag the getter couldn't evaluate
+ * gives its default and is logged with the getter's code, except a missing batch size: the plan
+ * creates that flag only to lower the batch without a deploy ("Deploys"), while a missing switch
+ * turns the sweep on. A value outside its range gives that flag's default.
  */
 export async function readSweepFlags(flags: FlagReader): Promise<SweepFlags> {
-  let enabled: unknown;
-  let batchSize: unknown;
+  let enabled: FlagDetails<unknown>;
+  let batchSize: FlagDetails<unknown>;
   try {
     [enabled, batchSize] = await Promise.all([
-      flags.getBooleanValue(SWEEP_ENABLED_FLAG, SWEEP_FLAG_DEFAULTS.enabled),
-      flags.getNumberValue(SWEEP_BATCH_SIZE_FLAG, SWEEP_FLAG_DEFAULTS.batchSize),
+      flags.getBooleanDetails(SWEEP_ENABLED_FLAG, SWEEP_FLAG_DEFAULTS.enabled),
+      flags.getNumberDetails(SWEEP_BATCH_SIZE_FLAG, SWEEP_FLAG_DEFAULTS.batchSize),
     ]);
   } catch (error) {
     console.error("Flags unavailable, using the defaults:", { code: errorCode(error) });
     return SWEEP_FLAG_DEFAULTS;
   }
-  return { enabled: checkedEnabled(enabled), batchSize: checkedBatchSize(batchSize) };
+  return {
+    enabled: checkedEnabled(valueOf(SWEEP_ENABLED_FLAG, enabled)),
+    batchSize: checkedBatchSize(valueOf(SWEEP_BATCH_SIZE_FLAG, batchSize, true)),
+  };
 }
