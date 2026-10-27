@@ -5,9 +5,9 @@
 //
 // Each bookmark's state comes from the user's state input rows (state-inputs.ts), through
 // collectStateInputs and deriveEnrichmentState, which the sweep's selection also derives its
-// state with, so the page and the sweep can't disagree about which bookmarks are Held or Failed. Every lookup matches the bookmark's ID and the session's
-// user together, and a miss gets the delete's 404 page, so no answer reveals that another user's
-// bookmark exists.
+// state with, so the page and the sweep can't disagree about which bookmarks are Held or Failed.
+// Every lookup matches the bookmark's ID and the session's user together, and a miss gets the
+// delete's 404 page, so no answer reveals that another user's bookmark exists.
 //
 // Release and Retry are ordinary forms that load the page again, with or without JavaScript,
 // because each is one quick write. Delete is the delete endpoint's (delete-bookmark.ts), whose
