@@ -71,16 +71,19 @@ Feature: Reviewing links that Haystack held back or couldn't describe
     @integration:apps/worker/test/held.test.ts
     Scenario Outline: Releasing a link, <with or without> JavaScript
       Release is an ordinary form either way, so the page loads again. Its
-      result takes focus, so a screen reader reads it, and Tab goes on to the
-      links that are left. The VoiceOver test runs with JavaScript turned on.
+      result is in the page title and in the status message. Focus is not
+      moved, so the page starts from the top, as any page that loads does, and
+      a screen reader announces the title. The VoiceOver test runs with
+      JavaScript turned on.
 
       Given my browser has JavaScript <turned on or off>
       And Haystack held back "A guide"
       When I tick "This link does not give access to anything private" on its card
       And I press "Release A guide"
       Then the page's title is "Released “A guide” - Links to review - Haystack"
-      And the status message "Released “A guide”. Haystack can now describe it." has focus
-      And a screen reader announces it
+      And the status message says "Released “A guide”. Haystack can now describe it."
+      And focus is not moved, so the page starts from the top
+      And a screen reader announces the result through the page title
       And the card for "A guide" is gone, because Haystack can now describe the link
 
       Examples:
@@ -99,7 +102,8 @@ Feature: Reviewing links that Haystack held back or couldn't describe
       When I tick "This link does not give access to anything private" on its card
       And I press "Release A guide"
       Then the page's title is "Released “A guide” - Links to review - Haystack"
-      And the status message "Released “A guide”. Haystack couldn't describe it before, so it's now under “Not described”, where you can retry it." has focus
+      And the status message says "Released “A guide”. Haystack couldn't describe it before, so it's now under “Not described”, where you can retry it."
+      And focus is not moved, so the page starts from the top
       And the card for "A guide" is under the heading "Not described", with the button "Retry"
 
     @playwright:apps/worker/e2e/held.e2e.ts
@@ -148,14 +152,16 @@ Feature: Reviewing links that Haystack held back or couldn't describe
     @integration:apps/worker/test/held.test.ts
     Scenario Outline: Retrying a link, <with or without> JavaScript
       Retry is an ordinary form either way, so the page loads again, and its
-      result takes focus. The VoiceOver test runs with JavaScript turned on.
+      result is in the page title and in the status message, and focus is not
+      moved. The VoiceOver test runs with JavaScript turned on.
 
       Given my browser has JavaScript <turned on or off>
       And Haystack couldn't describe "A guide"
       When I press "Retry A guide"
       Then the page's title is "Retrying “A guide” - Links to review - Haystack"
-      And the status message "Retrying “A guide”. Haystack will try to describe it again soon." has focus
-      And a screen reader announces it
+      And the status message says "Retrying “A guide”. Haystack will try to describe it again soon."
+      And focus is not moved, so the page starts from the top
+      And a screen reader announces the result through the page title
       And the card for "A guide" is gone, because Haystack will try it again in its next run
 
       Examples:
@@ -212,7 +218,8 @@ Feature: Reviewing links that Haystack held back or couldn't describe
       And it shows "Title: A guide" and "Site:" with the link's host, not its whole address, as the card does
       When I press "Delete"
       Then I am back on /held, and the page's title is "Deleted “A guide” - Links to review - Haystack"
-      And the status message "Deleted “A guide”." has focus
+      And the status message says "Deleted “A guide”."
+      And focus is not moved, so the page starts from the top
       And the link is deleted, with everything Haystack had recorded about it
 
     @playwright:apps/worker/e2e/held.e2e.ts

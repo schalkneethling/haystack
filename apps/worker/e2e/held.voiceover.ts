@@ -1,9 +1,10 @@
 // What VoiceOver says after Release and Retry on the review page at /held (#129). Each loads the
-// page again, and the result is in the page title and in the status message, which takes focus
-// when the page loads (`autofocus`). VoiceOver speaks a page title when a page loads after the
-// user's own action (save-pages.voiceover.ts), and reads an element that takes focus, so either
-// one announces the result. The check matches the result's words, ignoring case, rather than a
-// whole phrase, so a change in how VoiceOver joins them does not fail the test.
+// page again, and the result is in the page title and in the status message. Focus is not moved,
+// so the page title announces the result: VoiceOver speaks a page title when a page loads after
+// the user's own action (save-pages.voiceover.ts). The status message is in the page when it
+// loads, so it is not a live announcement, and the test does not rely on it. The check matches
+// the result's words in the title, ignoring case, rather than a whole phrase, so a change in how
+// VoiceOver joins them does not fail the test.
 //
 // Each button sends a form that loads a page, as Save and Continue do in save-pages.voiceover.ts,
 // so the test presses it the same way: the VoiceOver cursor is moved to the focused button, and
@@ -32,7 +33,7 @@ async function openWithVoiceOver(page: Page, voiceOver: VoiceOverPlaywright): Pr
 
 /**
  * Presses the button with VoiceOver, so the page that loads is a result of the user's action,
- * then waits for that page's title and for VoiceOver to say `result`.
+ * then waits for that page's title and for VoiceOver to say `result`, which is the title's words.
  */
 async function pressWithVoiceOver(
   page: Page,
@@ -66,7 +67,7 @@ test("releasing a Held link announces that it was released", async ({
     voiceOver,
     `Release ${TITLE}`,
     `Released “${TITLE}” - Links to review - Haystack`,
-    new RegExp(`\\breleased\\b.*${TITLE}`, "i"),
+    new RegExp(`\\breleased\\b.*${TITLE}.*\\blinks to review\\b`, "i"),
   );
   await expect(page.getByRole("button", { name: `Release ${TITLE}` })).toHaveCount(0);
   const [row] = await query(
@@ -90,7 +91,7 @@ test("retrying a Failed link announces that it is being retried", async ({
     voiceOver,
     `Retry ${TITLE}`,
     `Retrying “${TITLE}” - Links to review - Haystack`,
-    new RegExp(`\\bretrying\\b.*${TITLE}`, "i"),
+    new RegExp(`\\bretrying\\b.*${TITLE}.*\\blinks to review\\b`, "i"),
   );
   await expect(page.getByRole("button", { name: `Retry ${TITLE}` })).toHaveCount(0);
   const records = await query(

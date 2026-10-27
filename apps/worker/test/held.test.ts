@@ -377,9 +377,10 @@ describe("POST /bookmarks/:id/release", () => {
     expect(response.status).toBe(200);
     const markup = await response.text();
     expect(markup).toContain("<title>Released “A guide” - Links to review - Haystack</title>");
-    // The message takes focus when the page loads, so a screen reader reads it.
+    // The message doesn't take focus. The page title and the message carry the result.
+    expect(markup).not.toContain("autofocus");
     expect(markup).toContain(
-      '<div id="list-status" class="status" role="status"><p tabindex="-1" autofocus>Released “A guide”. Haystack can now describe it.</p></div>',
+      '<div id="list-status" class="status" role="status"><p>Released “A guide”. Haystack can now describe it.</p></div>',
     );
     expect(sectionIds(markup, "held")).toEqual([other]);
     await expectValidHtml(markup);
@@ -404,7 +405,7 @@ describe("POST /bookmarks/:id/release", () => {
     const markup = await response.text();
     expect(markup).toContain("<title>Released “A guide” - Links to review - Haystack</title>");
     expect(markup).toContain(
-      '<p tabindex="-1" autofocus>Released “A guide”. Haystack couldn&#39;t describe it before, so it&#39;s now under “Not described”, where you can retry it.</p>',
+      "<p>Released “A guide”. Haystack couldn&#39;t describe it before, so it&#39;s now under “Not described”, where you can retry it.</p>",
     );
     expect(sectionIds(markup, "held")).toEqual([]);
     expect(sectionIds(markup, "failed")).toEqual([id]);
@@ -420,7 +421,7 @@ describe("POST /bookmarks/:id/release", () => {
     const response = await release(id);
     expect(response.status).toBe(200);
     expect(await response.text()).toContain(
-      '<p tabindex="-1" autofocus>Released “A guide”. Haystack can now describe it.</p>',
+      "<p>Released “A guide”. Haystack can now describe it.</p>",
     );
     expect(await acknowledgedAt(id)).toBe(5);
   });
@@ -439,7 +440,7 @@ describe("POST /bookmarks/:id/release", () => {
       "<title>Nothing to release for “A guide” - Links to review - Haystack</title>",
     );
     expect(markup).toContain(
-      '<p tabindex="-1" autofocus>“A guide” isn&#39;t held back, so there was nothing to release.</p>',
+      "<p>“A guide” isn&#39;t held back, so there was nothing to release.</p>",
     );
     await expectValidHtml(markup);
     expect(await acknowledgedAt(id)).toBeNull();
@@ -462,7 +463,7 @@ describe("POST /bookmarks/:id/release", () => {
     const markup = await response.text();
     expect(markup).toContain("<title>Not released “A guide” - Links to review - Haystack</title>");
     expect(markup).toContain(
-      '<p tabindex="-1" autofocus>“A guide” was not released. Tick “This link does not give access to anything private” to release it.</p>',
+      "<p>“A guide” was not released. Tick “This link does not give access to anything private” to release it.</p>",
     );
     expect(sectionIds(markup, "held")).toEqual([id]);
     await expectValidHtml(markup);
@@ -543,7 +544,7 @@ describe("POST /bookmarks/:id/retry", () => {
     const markup = await response.text();
     expect(markup).toContain("<title>Retrying “A guide” - Links to review - Haystack</title>");
     expect(markup).toContain(
-      '<div id="list-status" class="status" role="status"><p tabindex="-1" autofocus>Retrying “A guide”. Haystack will try to describe it again soon.</p></div>',
+      '<div id="list-status" class="status" role="status"><p>Retrying “A guide”. Haystack will try to describe it again soon.</p></div>',
     );
     expect(sectionIds(markup, "failed")).toEqual([other]);
     await expectValidHtml(markup);
@@ -571,9 +572,7 @@ describe("POST /bookmarks/:id/retry", () => {
       expect(markup).toContain(
         "<title>Nothing to retry for “A guide” - Links to review - Haystack</title>",
       );
-      expect(markup).toContain(
-        '<p tabindex="-1" autofocus>“A guide” isn&#39;t waiting for a retry.</p>',
-      );
+      expect(markup).toContain("<p>“A guide” isn&#39;t waiting for a retry.</p>");
       await expectValidHtml(markup);
       expect(await failureVersions(id)).toEqual([ENRICHMENT_SCHEMA_VERSION]);
     },
@@ -669,7 +668,7 @@ describe("deleting from /held", () => {
     expect(response.status).toBe(200);
     const markup = await response.text();
     expect(markup).toContain("<title>Deleted “A guide” - Links to review - Haystack</title>");
-    expect(markup).toContain('<p tabindex="-1" autofocus>Deleted “A guide”.</p>');
+    expect(markup).toContain("<p>Deleted “A guide”.</p>");
     expect(sectionIds(markup, "held")).toEqual([kept]);
     expect(markup).not.toContain('id="failed-heading"');
     await expectValidHtml(markup);

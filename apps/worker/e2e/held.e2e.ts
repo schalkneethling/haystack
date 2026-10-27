@@ -1,5 +1,6 @@
 // The review page at /held (#129). Release and Retry are ordinary forms that load the page again,
-// with or without JavaScript, and their result takes focus. Delete is the delete dialog's with
+// with or without JavaScript, and their result is in the page title and the status message, while
+// focus is left to the browser. Delete is the delete dialog's with
 // JavaScript, which deletes in place, and the confirmation page's without (plan, "Deleting
 // bookmarks"). The page's design is tested in design.e2e.ts.
 import type { Locator, Page } from "@playwright/test";
@@ -13,6 +14,15 @@ test.beforeEach(async ({ signIn }) => {
 
 function card(page: Page, title: string): Locator {
   return page.getByRole("listitem").filter({ has: page.getByRole("heading", { name: title }) });
+}
+
+/**
+ * Checks that nothing took focus when the page loaded, so the page starts from the top, as the
+ * browser leaves it. Only the body has focus, and the result message is not focusable.
+ */
+async function expectFocusNotMoved(page: Page): Promise<void> {
+  expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+  await expect(listStatus(page).locator("p")).not.toHaveAttribute("tabindex");
 }
 
 async function acknowledgedAt(query: HaystackWorker["query"], url: string): Promise<unknown> {
@@ -29,7 +39,7 @@ for (const javaScriptEnabled of [true, false]) {
     // Each test's addresses are its own in each mode, because the Worker's database is shared.
     const mode = javaScriptEnabled ? "js" : "no-js";
 
-    test("ticking the box and pressing Release releases the link, and its result takes focus", async ({
+    test("ticking the box and pressing Release releases the link, and focus is left to the browser", async ({
       page,
       run,
       query,
@@ -49,7 +59,7 @@ for (const javaScriptEnabled of [true, false]) {
       await expect(listStatus(page)).toHaveText(
         "Released “Held guide”. Haystack can now describe it.",
       );
-      await expect(listStatus(page).getByText("Released “Held guide”.")).toBeFocused();
+      await expectFocusNotMoved(page);
       await expect(held).toHaveCount(0);
       await expect(card(page, "Kept guide")).toBeVisible();
       expect(await acknowledgedAt(query, url)).not.toBeNull();
@@ -71,7 +81,7 @@ for (const javaScriptEnabled of [true, false]) {
       expect(await acknowledgedAt(query, url)).toBeNull();
     });
 
-    test("pressing Retry retries the link, and its result takes focus", async ({
+    test("pressing Retry retries the link, and focus is left to the browser", async ({
       page,
       run,
       query,
@@ -91,7 +101,7 @@ for (const javaScriptEnabled of [true, false]) {
       await expect(listStatus(page)).toHaveText(
         "Retrying “Failed guide”. Haystack will try to describe it again soon.",
       );
-      await expect(listStatus(page).getByText("Retrying “Failed guide”.")).toBeFocused();
+      await expectFocusNotMoved(page);
       await expect(failed).toHaveCount(0);
       await expect(card(page, "Kept guide")).toBeVisible();
       const records = await query(
@@ -177,7 +187,7 @@ test.describe("with JavaScript, Delete", () => {
 test.describe("without JavaScript, Delete", () => {
   test.use({ javaScriptEnabled: false });
 
-  test("asks on the confirmation page, then returns to /held, where the result takes focus", async ({
+  test("asks on the confirmation page, then returns to /held, where focus is left to the browser", async ({
     page,
     run,
     query,
@@ -192,7 +202,7 @@ test.describe("without JavaScript, Delete", () => {
 
     await expect(page).toHaveTitle("Deleted “Failed guide” - Links to review - Haystack");
     await expect(listStatus(page)).toHaveText("Deleted “Failed guide”.");
-    await expect(listStatus(page).getByText("Deleted “Failed guide”.")).toBeFocused();
+    await expectFocusNotMoved(page);
     await expect(page.getByText("Nothing to review.")).toBeVisible();
     expect(await query("SELECT id FROM bookmarks WHERE url = ?", url)).toEqual([]);
   });
