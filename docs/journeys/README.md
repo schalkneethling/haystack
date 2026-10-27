@@ -1,6 +1,6 @@
 # User journeys
 
-The files in this folder describe, in plain language, what a person can do with Haystack and what happens when something goes wrong. Each journey is a scenario written in Gherkin, the language that Cucumber reads, in which every step starts with Given, When or Then. The scenarios cover Milestone 1 as it is deployed, from `main` at fae17b3, and the review page at /held, which Milestone 2 adds (#129).
+The files in this folder describe, in plain language, what a person can do with Haystack and what happens when something goes wrong. Each journey is a scenario written in Gherkin, the language that Cucumber reads, in which every step starts with Given, When or Then. The scenarios cover Milestone 1 and the review page at /held, which Milestone 2 adds (#129). They were last checked against the code and tests of `main` at df18c58.
 
 They are documentation, and the input for new Playwright tests. They do not run: there is no Cucumber, no other Gherkin runner and no step definitions, so nothing checks a scenario against the code except the tests named in its tags and the people who read it.
 
