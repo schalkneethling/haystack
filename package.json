@@ -16,7 +16,7 @@
   },
   "devDependencies": {
     "@schalkneethling/stylelint-plugin-css-property-type-validator": "0.1.0-beta.1",
-    "html-validate": "^11.16.2",
+    "html-validate": "^11.17.0",
     "knip": "^6.41.0",
     "stylelint": "^17.16.0",
     "stylelint-config-standard": "^40.0.0",
@@ -24,7 +24,7 @@
     "stylelint-plugin-logical-css": "^2.1.0",
     "stylelint-plugin-use-baseline": "^1.4.7",
     "typescript": "~7.0.2",
-    "varlock": "^1.22.0",
+    "varlock": "^1.23.0",
     "vite-plus": "catalog:"
   },
   "devEngines": {
