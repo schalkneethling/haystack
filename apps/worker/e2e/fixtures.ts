@@ -70,6 +70,11 @@ export interface HaystackWorker {
   signIn(context: BrowserContext, browserName: string): Promise<void>;
   /** Runs a read query against the Worker's D1, for checking what a flow stored. */
   query(sql: string, ...values: unknown[]): Promise<Record<string, unknown>[]>;
+  /**
+   * Runs a statement that changes the Worker's D1, for putting a bookmark in a state that no
+   * browser flow reaches, such as Held or Failed, which only the sweep sets.
+   */
+  run(sql: string, ...values: unknown[]): Promise<void>;
   /** The pages the Worker can fetch, and the requests it made. */
   pages: PageFixture;
   /**
@@ -145,6 +150,12 @@ export async function startHaystackWorker(): Promise<HaystackWorker> {
             .bind(...values)
             .all()
         ).results,
+      run: async (sql, ...values) => {
+        await db
+          .prepare(sql)
+          .bind(...values)
+          .run();
+      },
       pages,
       close: async () => {
         await stop();
@@ -166,6 +177,7 @@ export const test = base.extend<
     signIn: () => Promise<void>;
     signOut: () => Promise<void>;
     query: HaystackWorker["query"];
+    run: HaystackWorker["run"];
     pages: PageFixture;
   },
   { haystackWorker: HaystackWorker }
@@ -213,6 +225,9 @@ export const test = base.extend<
   },
   query: async ({ haystackWorker }, use) => {
     await use((sql, ...values) => haystackWorker.query(sql, ...values));
+  },
+  run: async ({ haystackWorker }, use) => {
+    await use((sql, ...values) => haystackWorker.run(sql, ...values));
   },
 });
 

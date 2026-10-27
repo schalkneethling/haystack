@@ -68,3 +68,19 @@ export function notFoundPage(signedIn: boolean): Response {
     { signedIn },
   );
 }
+
+/**
+ * The 404 for a bookmark's route (delete, release or retry) whose bookmark doesn't exist, was
+ * already deleted (a reload after deleting posts again), or belongs to someone else. It is the
+ * same page whichever it is, so it reveals nothing.
+ */
+export function notSavedPage(): Response {
+  return htmlResponse(
+    "Link not found",
+    html`<h1>This link isn't in your saved links</h1>
+      <p>It may have been deleted already.</p>
+      <p><a href="/">Go to your saved links</a></p>`,
+    404,
+    { signedIn: true },
+  );
+}

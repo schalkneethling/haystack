@@ -19,3 +19,16 @@ export const SENSITIVE_NOTICE = html`<p id="sensitive-notice" class="notice">
 export function fieldError(id: string, message: string): SafeHtml {
   return html`<div class="alert" role="alert"><p id="${id}">${message}</p></div>`;
 }
+
+/**
+ * The result of an action, such as deleting a bookmark, shown on the page the action returns to:
+ * the saved links page, or /held.
+ */
+export interface Outcome {
+  // Comes first in the page title, because a screen reader announces the title when the page
+  // loads, but not a status message that arrives with it.
+  title: string;
+  // One paragraph of text, shown in the page's live region, which is on the page on every load,
+  // so the dialog script can announce a deletion in it.
+  message: string;
+}

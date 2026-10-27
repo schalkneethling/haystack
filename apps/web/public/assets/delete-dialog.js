@@ -1,9 +1,14 @@
 // @ts-check
-// Confirms deletion on the recent saves list in a modal dialog, and deletes in place. Without
-// this script, each Delete button leads to a confirmation page instead (plan, "Deleting
-// bookmarks"). The server renders every other part of the page.
+// Confirms deletion in a modal dialog, and deletes in place, on the saved links page and on the
+// review page at /held. Without this script, each Delete button leads to a confirmation page
+// instead (plan, "Deleting bookmarks"). The server renders every other part of the page.
+//
+// Both pages give their heading, live region and empty state the same IDs, and mark each Delete
+// button's form with `data-delete-form`, so the script leaves their other forms alone, such as
+// the address form and /held's Release and Retry.
 
-const list = document.getElementById("recent-saves");
+const DELETE_FORMS = "form[data-delete-form]";
+const main = document.querySelector("main");
 const heading = document.getElementById("list-heading");
 const status = document.getElementById("list-status");
 const emptyState = document.getElementById("empty-state");
@@ -64,16 +69,30 @@ function announce(message) {
 }
 
 /**
- * Focus moves to the next item's title heading, then the previous item's, then the list
- * heading. A heading is named by its text, so a screen reader reads the title on focus.
+ * The item's title heading: an `h2` on the saved links page, and an `h3` on /held, whose sections
+ * have the `h2`s.
+ * @param {Element | null | undefined} item
+ */
+function titleHeading(item) {
+  return item?.querySelector("h2, h3") ?? null;
+}
+
+/**
+ * Focus moves to the next item's title heading, then the previous item's, then the page
+ * heading. A heading is named by its text, so a screen reader reads the title on focus. A list
+ * that is left empty is removed, with its section on /held, where each kind of item has one. The
+ * empty state appears once no Delete button is left.
  * @param {Element} item
  */
 function removeItem(item) {
   const neighbour = item.nextElementSibling ?? item.previousElementSibling;
-  const target = neighbour?.querySelector("h2") ?? heading;
+  const target = titleHeading(neighbour) ?? heading;
+  const list = item.parentElement;
   item.remove();
   if (list !== null && list.children.length === 0) {
-    list.remove();
+    (list.closest("section") ?? list).remove();
+  }
+  if (document.querySelector(DELETE_FORMS) === null) {
     emptyState?.removeAttribute("hidden");
   }
   if (target instanceof HTMLElement) {
@@ -82,9 +101,13 @@ function removeItem(item) {
   }
 }
 
-if (list !== null && typeof HTMLDialogElement === "function") {
+if (
+  main !== null &&
+  document.querySelector(DELETE_FORMS) !== null &&
+  typeof HTMLDialogElement === "function"
+) {
   const { dialog, name, confirm, cancel } = createDialog();
-  list.after(dialog);
+  main.append(dialog);
 
   /** @type {HTMLFormElement | null} */
   let pending = null;
@@ -113,9 +136,9 @@ if (list !== null && typeof HTMLDialogElement === "function") {
     }
   });
 
-  list.addEventListener("submit", (event) => {
+  main.addEventListener("submit", (event) => {
     const form = event.target;
-    if (!(form instanceof HTMLFormElement)) {
+    if (!(form instanceof HTMLFormElement) || !form.matches(DELETE_FORMS)) {
       return;
     }
     event.preventDefault();
@@ -123,7 +146,7 @@ if (list !== null && typeof HTMLDialogElement === "function") {
       return;
     }
     pending = form;
-    const title = form.closest("li")?.querySelector("h2")?.textContent ?? "";
+    const title = titleHeading(form.closest("li"))?.textContent ?? "";
     name.textContent = title;
     dialog.showModal();
     // The spec lets autofocus on the dialog do this, but Chromium (156) ignores it and focuses
@@ -142,11 +165,16 @@ if (list !== null && typeof HTMLDialogElement === "function") {
     /** @type {string} */
     let message;
     let removed = false;
+    // The form's own fields go too, such as /held's return page, so the delete answers with the
+    // page it started from, as it does without this script.
+    const body = new URLSearchParams({ confirm: "yes" });
+    for (const [field, value] of new FormData(form)) {
+      if (typeof value === "string") {
+        body.append(field, value);
+      }
+    }
     try {
-      const response = await fetch(form.action, {
-        method: "POST",
-        body: new URLSearchParams({ confirm: "yes" }),
-      });
+      const response = await fetch(form.action, { method: "POST", body });
       if (response.ok) {
         message = `Deleted “${title}”.`;
         removed = true;

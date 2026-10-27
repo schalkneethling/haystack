@@ -18,9 +18,10 @@ import {
 } from "./auth/sessions.ts";
 import { upsertUser } from "./auth/users.ts";
 import { createDb, type Db } from "./db/client.ts";
-import { deletePathId } from "./bookmark-paths.ts";
-import { deleteBookmark } from "./delete-bookmark.ts";
+import { bookmarkActionPath, type BookmarkRoute, HELD_PATH } from "./bookmark-paths.ts";
+import { deleteBookmark, deleteReturnPage, readForm } from "./delete-bookmark.ts";
 import { errorCode } from "./error-code.ts";
+import { releaseBookmark, retryBookmark, showHeld } from "./held.ts";
 import { showRecentSaves } from "./recent-saves.ts";
 import { runScheduled } from "./scheduled.ts";
 import {
@@ -181,15 +182,37 @@ async function handleAuthRoute(
   return notFoundPage(false);
 }
 
+// A bookmark's own routes: Delete from any page that lists it, and Release and Retry from /held.
+function handleBookmarkRoute(
+  request: Request,
+  env: Env,
+  db: Db,
+  userId: string,
+  { bookmarkId, action }: BookmarkRoute,
+): Promise<Response> {
+  switch (action) {
+    case "delete":
+      return deleteBookmark(request, db, userId, bookmarkId, env);
+    case "release":
+      return releaseBookmark(request, db, userId, bookmarkId, env);
+    case "retry":
+      return retryBookmark(db, userId, bookmarkId, env);
+  }
+}
+
 // Routes that need a session. Each phase adds its own.
 async function handleAppRoute(
   request: Request,
+  env: Env,
   db: Db,
   session: AuthenticatedSession,
 ): Promise<Response> {
   const path = new URL(request.url).pathname;
   if (path === "/" && isReadRequest(request)) {
-    return showRecentSaves(db, session.user.id);
+    return showRecentSaves(db, session.user.id, env);
+  }
+  if (path === HELD_PATH && isReadRequest(request)) {
+    return showHeld(db, session.user.id, env);
   }
   if (path === "/save" && request.method === "GET") {
     return showSaveForm(request, db, session.user.id);
@@ -201,9 +224,9 @@ async function handleAppRoute(
   if (path === "/save/address" && request.method === "POST") {
     return saveAddress(request, db, session.user.id);
   }
-  const deleteId = request.method === "POST" ? deletePathId(path) : undefined;
-  if (deleteId !== undefined) {
-    return deleteBookmark(request, db, session.user.id, deleteId);
+  const bookmarkRoute = request.method === "POST" ? bookmarkActionPath(path) : undefined;
+  if (bookmarkRoute !== undefined) {
+    return handleBookmarkRoute(request, env, db, session.user.id, bookmarkRoute);
   }
   return notFoundPage(true);
 }
@@ -221,9 +244,10 @@ function beforeSignIn(request: Request): SignedOutSave {
 
 // Where sign-in returns to after a form submission whose session had ended (#34), or the page to
 // show instead. The save form returns to itself, with what the user entered, and the address
-// form to the save form for its address. Both are screened as a signed-out GET /save is. Any
-// other form, such as a bookmark's Delete, returns to the saved links, because a POST cannot be
-// repeated by returning to its path.
+// form to the save form for its address. Both are screened as a signed-out GET /save is. A
+// bookmark's buttons return to the page they were pressed on, because a POST cannot be repeated
+// by returning to its path: Release and Retry to /held, and Delete to the page its form names.
+// Any other form returns to the saved links.
 async function afterSubmission(request: Request): Promise<SignedOutSave> {
   const path = new URL(request.url).pathname;
   if (path === "/save") {
@@ -232,7 +256,15 @@ async function afterSubmission(request: Request): Promise<SignedOutSave> {
   if (path === "/save/address") {
     return signedOutAddress(request);
   }
-  return { returnTo: "/" };
+  switch (bookmarkActionPath(path)?.action) {
+    case "release":
+    case "retry":
+      return { returnTo: HELD_PATH };
+    case "delete":
+      return { returnTo: deleteReturnPage(await readForm(request)) };
+    case undefined:
+      return { returnTo: "/" };
+  }
 }
 
 // A page request or a form submission is sent to sign-in. Every other request gets a 401. A
@@ -279,7 +311,7 @@ async function answer(request: Request, env: Env): Promise<Response> {
     return unauthenticated(request, sessionId !== undefined);
   }
 
-  const response = await handleAppRoute(request, db, session);
+  const response = await handleAppRoute(request, env, db, session);
   if (!session.extended) {
     return response;
   }
