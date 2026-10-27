@@ -39,11 +39,11 @@
     "@types/node": "^25.9.9",
     "@valibot/to-json-schema": "^1.8.0",
     "@varlock/1password-plugin": "^2.0.5",
-    "@varlock/cloudflare-integration": "^1.6.1",
+    "@varlock/cloudflare-integration": "^1.6.2",
     "drizzle-kit": "^0.31.11",
     "html-validate": "^11.17.0",
     "msw": "^3.0.3",
-    "varlock": "^1.22.0",
+    "varlock": "^1.23.0",
     "vite": "catalog:",
     "wrangler": "4.151.0"
   }
