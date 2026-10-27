@@ -124,16 +124,26 @@ Feature: Confirming and saving a link
 
   @integration:apps/worker/test/save-form.test.ts
   @integration:apps/worker/test/save-post.test.ts
+  @integration:apps/worker/test/save-address.test.ts
   @unit:apps/extension/test/open-save-form.test.ts
+  @unit:packages/schemas/test/screen-canonical-url.test.ts
+  @playwright:apps/extension/e2e/toolbar-button.e2e.ts
   Scenario: A page that declares a private address for itself is still saved
     A page can name a canonical address for itself. If that address carries a
     secret, Haystack leaves it out and saves the page without it. The person
-    never saw that address, so the form says nothing about it.
+    never saw that address, so the form says nothing about it. Haystack keeps
+    only the fact that the page declared such an address, as a yes or no and
+    never the address, so that the privacy check can use it later. The fact
+    reaches the save form whether the page was read by the extension, by the
+    address form or by a link someone built by hand. The browser test checks
+    the extension's link and the form it opens, and the integration tests
+    check what is stored.
 
     Given I opened the save form for a page that declares a canonical address containing an access token
     Then the save form looks as it does for any other page
     When I press Save
     Then the link is saved without the canonical address, and the secret is stored nowhere
+    And Haystack has recorded that the page declared an address with a secret
 
   @integration:apps/worker/test/save-form.test.ts
   @integration:apps/worker/test/recent-saves.test.ts

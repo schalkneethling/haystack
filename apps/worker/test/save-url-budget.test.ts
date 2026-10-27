@@ -4,9 +4,14 @@
 // query into `return_to` with encodeURIComponent, so every character that is already encoded
 // grows again: "%" becomes "%25", and the "+" that stands for a space becomes "%2B". The Worker
 // builds the return target from the validated payload with URLSearchParams, as the extension
-// builds its save URL, so a link from the extension comes back unchanged. Only a canonical URL
-// that detectSensitiveUrl flags is left out, which makes the redirect shorter, so the cases here
-// use one that passes.
+// builds its save URL, so a link from the extension comes back unchanged. A canonical URL that
+// detectSensitiveUrl flags is left out, so the cases here use one that passes. In its place the
+// link carries the flag `sensitive_canonical_dropped=1` (#131), 30 characters that `return_to`
+// encodes again like the rest, so one case carries the flag next to a clean canonical URL. That
+// pair cannot come from one page, but the Worker accepts it. Its redirect is shorter than the
+// all-spaces case's (14,724 characters against 14,740), because the flag's letters and
+// underscores do not grow when encoded again and the canonical characters they take the place of
+// do, so the all-spaces case is still the longest redirect the test builds.
 import {
   CAPTURE_CAPS,
   type CaptureField,
@@ -77,8 +82,11 @@ function spaced(units: number): string {
 // The longest payload the caps and the budget allow, with the address and the canonical URL at
 // the sizes that leave the most room for the characters that grow most. The canonical URL takes
 // whatever is left of the budget, so the save URL is exactly SAVE_URL_BUDGET characters.
-function payloadAtBudget(text: Partial<Record<CaptureField, string>>): Record<string, string> {
-  const withoutCanonical = { url: address(CAPTURE_CAPS.url), ...text };
+function payloadAtBudget(
+  text: Partial<Record<CaptureField, string>>,
+  flag: Record<string, string> = {},
+): Record<string, string> {
+  const withoutCanonical = { url: address(CAPTURE_CAPS.url), ...text, ...flag };
   const room = SAVE_URL_BUDGET - saveUrlLength({ ...withoutCanonical, canonical_url: "" });
   const canonical = addressEncodedTo(room);
   return { ...withoutCanonical, canonical_url: canonical };
@@ -98,6 +106,19 @@ const cases = [
       og_description: spaced(CAPTURE_CAPS.og_description),
       og_site_name: spaced(CAPTURE_CAPS.og_site_name),
     }),
+  },
+  {
+    name: "the same, with the flag that a canonical URL was dropped (#131)",
+    fields: payloadAtBudget(
+      {
+        title: spaced(CAPTURE_CAPS.title),
+        description: spaced(CAPTURE_CAPS.description),
+        og_title: spaced(CAPTURE_CAPS.og_title),
+        og_description: spaced(CAPTURE_CAPS.og_description),
+        og_site_name: spaced(CAPTURE_CAPS.og_site_name),
+      },
+      { sensitive_canonical_dropped: "1" },
+    ),
   },
 ];
 

@@ -197,6 +197,12 @@ describe("GET /save without a session", () => {
     expect(results).toEqual([{ return_to: "/save" }]);
   });
 
+  it("treats a link that holds only the flag as a bare /save, and stores nothing from it", async () => {
+    const response = await getPath("/save?sensitive_canonical_dropped=1");
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("/auth/sign-in?return_to=%2Fsave");
+  });
+
   // The return target is built from the validated payload, without a canonical URL the form
   // leaves out, and encoded by URLSearchParams. The links are written by hand, because the
   // extension never builds one with an unknown or a repeated key, or with untrimmed values.
@@ -204,8 +210,31 @@ describe("GET /save without a session", () => {
   const title = "title=Caf%C3%A9+guide";
   const canonical = "canonical_url=https%3A%2F%2Fexample.com%2Farticle";
   const flaggedCanonical = "canonical_url=https%3A%2F%2Fexample.com%2F%3Fapi_key%3Dsecret-value";
+  const droppedFlag = "sensitive_canonical_dropped=1";
   it.each([
-    ["a flagged canonical URL", [page, flaggedCanonical, title], [page, title]],
+    // The flag takes the dropped URL's place, at the end, where the extension writes it (#131).
+    ["a flagged canonical URL", [page, flaggedCanonical, title], [page, title, droppedFlag]],
+    [
+      "the flag that a canonical URL was dropped",
+      [page, droppedFlag, title],
+      [page, title, droppedFlag],
+    ],
+    [
+      "the flag and a flagged canonical URL",
+      [page, droppedFlag, flaggedCanonical, title],
+      [page, title, droppedFlag],
+    ],
+    [
+      "the flag and a clean canonical URL",
+      [page, canonical, droppedFlag, title],
+      [page, canonical, title, droppedFlag],
+    ],
+    [
+      "a flag with a value other than 1",
+      [page, "sensitive_canonical_dropped=yes", title],
+      [page, title],
+    ],
+    ["an empty flag", [page, "sensitive_canonical_dropped=", title], [page, title]],
     ["an unknown key", [page, "note=secret-value", title], [page, title]],
     [
       "a second url",
@@ -216,6 +245,11 @@ describe("GET /save without a session", () => {
       "a second canonical_url",
       [page, canonical, flaggedCanonical, title],
       [page, canonical, title],
+    ],
+    [
+      "a second flag",
+      [page, droppedFlag, "sensitive_canonical_dropped=0", title],
+      [page, title, droppedFlag],
     ],
     ["an empty canonical_url", [page, "canonical_url=", title], [page, title]],
     ["a value with spaces around it", [page, "title=+Caf%C3%A9+guide+"], [page, title]],
@@ -291,6 +325,43 @@ describe("GET /save", () => {
     const markup = await (await getSave(fields)).text();
     expect(formValue(markup, "confirmed_title")).toBe(title);
     expect(formValue(markup, "confirmed_description")).toBe(description);
+  });
+
+  // The flag that a canonical URL was dropped (#131) is a hidden input of its own, so POST /save
+  // can store it. It never holds the canonical URL.
+  describe("the flag that a canonical URL was dropped", () => {
+    const FLAG = "sensitive_canonical_dropped";
+    const flaggedCanonical = "https://example.com/share?api_key=secret-value";
+
+    it.each([
+      ["a flagged canonical URL, which the form drops", { canonical_url: flaggedCanonical }],
+      ["a link that carries the flag", { [FLAG]: "1" }],
+      [
+        "a link that carries the flag and a flagged canonical URL",
+        { [FLAG]: "1", canonical_url: flaggedCanonical },
+      ],
+      [
+        "a link that carries the flag and a clean canonical URL",
+        { [FLAG]: "1", canonical_url: "https://example.com/article" },
+      ],
+    ])("is a hidden input set to 1 for %s", async (_, extra) => {
+      const markup = await (await getSave({ ...article, ...extra })).text();
+      expect(formValue(markup, FLAG)).toBe("1");
+      expect(markup.match(new RegExp(`name="${FLAG}"`, "g"))).toHaveLength(1);
+      expect(markup).not.toContain("secret-value");
+      await expectValidHtml(markup);
+    });
+
+    it.each([
+      ["a clean canonical URL", {}],
+      ["a canonical URL that is not an address", { canonical_url: "not a url" }],
+      ["a flag with the value 0", { [FLAG]: "0" }],
+      ["a flag with the value true", { [FLAG]: "true" }],
+      ["an empty flag", { [FLAG]: "" }],
+    ])("is not in the form for %s", async (_, extra) => {
+      const markup = await (await getSave({ ...article, ...extra })).text();
+      expect(markup).not.toContain(`name="${FLAG}"`);
+    });
   });
 
   it("collapses line breaks in the title prefill, keeping the raw value", async () => {

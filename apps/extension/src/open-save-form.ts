@@ -149,8 +149,9 @@ async function decideAndOpen(api: PopupBrowser, origin: string): Promise<PopupOu
     ? validated.payload
     : withoutInvalidFields(candidate, validated.invalidFields, urlOnly.payload);
   // A canonical URL that carries a secret is left out the same way, so it never leaves the
-  // browser. The page itself has already passed the check above. The budget then runs on that
-  // final payload, so it never counts a field that is not sent.
+  // browser. The page itself has already passed the check above. In its place the payload carries
+  // the flag `sensitive_canonical_dropped=1`, which the budget never drops (#131). The budget then
+  // runs on that final payload, so it never counts a field that is not sent.
   const target = saveUrlWithinBudget(origin, withoutSensitiveCanonicalUrl(payload));
   await api.tabs.create({ url: target });
   return { opened: true, saveUrl: target };

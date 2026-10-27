@@ -1,6 +1,14 @@
 import * as v from "valibot";
 import { describe, expect, it } from "vite-plus/test";
-import { CAPTURE_CAPS, CapturePayload, validateCapturePayload } from "../src/index.ts";
+import {
+  CAPTURE_CAPS,
+  CAPTURE_KEYS,
+  CapturePayload,
+  declaredSensitiveCanonical,
+  SENSITIVE_CANONICAL_DROPPED,
+  validateCapturePayload,
+  withSensitiveCanonicalDropped,
+} from "../src/index.ts";
 
 const full = {
   url: "https://example.com/article",
@@ -154,6 +162,55 @@ describe("CapturePayload", () => {
   it("keeps the URL as submitted, apart from trimming", () => {
     const url = "HTTPS://Example.com:443/Path/?b=2&a=1#section";
     expect(v.parse(CapturePayload, { url: ` ${url} ` }).url).toBe(url);
+  });
+});
+
+describe("the flag that a canonical URL was dropped (#131)", () => {
+  const url = "https://example.com/article";
+
+  it("is named after the column that stores it", () => {
+    expect(SENSITIVE_CANONICAL_DROPPED).toBe("sensitive_canonical_dropped");
+  });
+
+  it("is kept in the payload when it is 1, and read as set", () => {
+    const payload = v.parse(CapturePayload, { url, [SENSITIVE_CANONICAL_DROPPED]: "1" });
+    expect(payload).toEqual({ url, sensitive_canonical_dropped: "1" });
+    expect(declaredSensitiveCanonical(payload)).toBe(true);
+  });
+
+  it("is written by withSensitiveCanonicalDropped, which the reader and the schema both accept", () => {
+    const written = withSensitiveCanonicalDropped({ url });
+    expect(written).toEqual({ url, sensitive_canonical_dropped: "1" });
+    expect(declaredSensitiveCanonical(written)).toBe(true);
+    expect(v.parse(CapturePayload, written)).toEqual(written);
+  });
+
+  it("is not set when the payload does not carry it", () => {
+    expect(declaredSensitiveCanonical(v.parse(CapturePayload, { url }))).toBe(false);
+  });
+
+  // The flag is a hint, so a value other than "1" is not an error: the payload stays valid and
+  // the flag is left out of it.
+  it.each([
+    ["0", "0"],
+    ["true", "true"],
+    ["an empty string", ""],
+    ["1 with a space", " 1"],
+    ["a number", 1],
+    ["a boolean", true],
+    ["null", null],
+  ])("reads %s as not set, and the payload stays valid", (_, value) => {
+    const validation = validateCapturePayload({ url, [SENSITIVE_CANONICAL_DROPPED]: value });
+    expect(validation).toEqual({ ok: true, payload: { url } });
+  });
+
+  it("comes after the captured fields, the order in which the popup builds the save link", () => {
+    const payload = v.parse(CapturePayload, { [SENSITIVE_CANONICAL_DROPPED]: "1", ...full });
+    expect(Object.keys(payload).at(-1)).toBe(SENSITIVE_CANONICAL_DROPPED);
+  });
+
+  it("is a query key that /save reads, beside the captured fields", () => {
+    expect(CAPTURE_KEYS).toEqual([...Object.keys(CAPTURE_CAPS), SENSITIVE_CANONICAL_DROPPED]);
   });
 });
 

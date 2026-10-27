@@ -51,6 +51,13 @@ const submission = {
   confirmed_description: "My description",
 };
 
+// A field set to undefined is left out of the submission.
+function withoutUndefined(fields: Record<string, string | undefined>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(fields).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  );
+}
+
 function post(fields: Record<string, string>, headers: Record<string, string> = {}) {
   return server.fetch("/save", {
     method: "POST",
@@ -86,6 +93,8 @@ describe("POST /save", () => {
       og_title: "Sharing title",
       og_description: "Sharing description",
       og_site_name: "Example",
+      // A save with no flagged canonical URL stores 0, not NULL, which a save before #131 has.
+      sensitive_canonical_dropped: 0,
     });
     expect(bookmark?.id).toMatch(/^[0-9a-f-]{36}$/);
     expect(markup).toContain(`href="/#bookmark-${String(bookmark?.id)}"`);
@@ -263,8 +272,102 @@ describe("POST /save", () => {
       canonical_url: null,
       captured_title: "Document title",
       og_title: "Sharing title",
+      sensitive_canonical_dropped: 1,
     });
     expect(JSON.stringify(rows)).not.toContain("secret-value");
+  });
+
+  // The form carries the flag as a hidden input when it dropped the canonical URL on GET /save,
+  // or when the popup or the address form's lookup did before that (#131).
+  it.each([
+    [
+      "the flag set and no canonical URL",
+      { canonical_url: undefined, sensitive_canonical_dropped: "1" },
+    ],
+    ["the flag set and a clean canonical URL", { sensitive_canonical_dropped: "1" }],
+    [
+      "the flag set and a flagged canonical URL",
+      {
+        canonical_url: "https://example.com/share?api_key=secret-value",
+        sensitive_canonical_dropped: "1",
+      },
+    ],
+  ])("stores 1 for a submission with %s", async (_, extra) => {
+    const response = await post(withoutUndefined({ ...submission, ...extra }));
+    expect(response.status).toBe(200);
+    expect((await bookmarks())[0]?.sensitive_canonical_dropped).toBe(1);
+  });
+
+  it.each(["0", "true", "yes", "", " 1", "11"])(
+    "stores 0 for a flag with the value %j, which is read as not set",
+    async (value) => {
+      const response = await post({ ...submission, sensitive_canonical_dropped: value });
+      expect(response.status).toBe(200);
+      expect((await bookmarks())[0]?.sensitive_canonical_dropped).toBe(0);
+    },
+  );
+
+  it("stores 0 for a submission without the flag and without a canonical URL", async () => {
+    const response = await post(withoutUndefined({ ...submission, canonical_url: undefined }));
+    expect(response.status).toBe(200);
+    expect((await bookmarks())[0]).toMatchObject({
+      canonical_url: null,
+      sensitive_canonical_dropped: 0,
+    });
+  });
+
+  // The whole path of a save link: GET /save renders the form, and the form's own hidden inputs
+  // are what POST /save receives. The popup's link carries the flag, and a hand-built link carries
+  // the flagged canonical URL itself.
+  it.each([
+    [
+      "a link from the popup, which carries the flag",
+      { url: "https://example.com/s/k9Xq2", sensitive_canonical_dropped: "1" },
+      1,
+    ],
+    [
+      "a hand-built link with a flagged canonical URL",
+      {
+        url: "https://example.com/s/k9Xq2",
+        canonical_url: "https://example.com/s/k9Xq2?access_token=secret-value",
+      },
+      1,
+    ],
+    [
+      "a link with a clean canonical URL",
+      { url: "https://example.com/s/k9Xq2", canonical_url: "https://example.com/s/k9Xq2" },
+      0,
+    ],
+    ["a link with the address alone", { url: "https://example.com/s/k9Xq2" }, 0],
+  ])("stores the flag from the form that GET /save shows for %s", async (_, link, stored) => {
+    const form = await (
+      await server.fetch(`/save?${new URLSearchParams(link).toString()}`, {
+        headers: { cookie: owner.cookie, accept: "text/html" },
+      })
+    ).text();
+    const hidden = Object.fromEntries(
+      [...form.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g)].map((match) => [
+        match[1] ?? "",
+        match[2] ?? "",
+      ]),
+    );
+
+    const response = await post({ ...hidden, confirmed_title: "A shared page" });
+
+    expect(response.status).toBe(200);
+    expect((await bookmarks()).map((row) => row.sensitive_canonical_dropped)).toEqual([stored]);
+    expect(JSON.stringify(await bookmarks())).not.toContain("secret-value");
+  });
+
+  it("shows the form again with the flag when the title is empty", async () => {
+    const response = await post({
+      ...submission,
+      canonical_url: "https://example.com/share?api_key=secret-value",
+      confirmed_title: "",
+    });
+    expect(response.status).toBe(400);
+    const markup = await response.text();
+    expect(markup).toContain('<input type="hidden" name="sensitive_canonical_dropped" value="1">');
   });
 
   it("shows the form again without the flagged canonical URL when the title is empty", async () => {
@@ -356,7 +459,14 @@ describe("POST /save from the form without a session", () => {
     );
     const target = new URL(returnTarget(response), origin);
     expect(target.searchParams.has("canonical_url")).toBe(false);
+    expect(target.searchParams.get("sensitive_canonical_dropped")).toBe("1");
     expect(target.href).not.toContain("secret-value");
+  });
+
+  it("keeps the flag in the return target", async () => {
+    const response = await post({ ...submission, sensitive_canonical_dropped: "1" }, HTML);
+    const target = new URL(returnTarget(response), origin);
+    expect(target.searchParams.get("sensitive_canonical_dropped")).toBe("1");
   });
 
   // Only a tampered or hand-built submission carries a flagged address. It gets the page a

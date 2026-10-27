@@ -323,11 +323,14 @@ describe("openSaveForm", () => {
       const outcome = await openSaveForm(fake.api, ORIGIN);
 
       expect(outcome.opened).toBe(true);
+      // The save link says that a canonical URL was dropped, and carries nothing of it.
       expect(saveParameters(fake.created[0] ?? "")).toEqual({
         url: "https://example.com/article",
         og_title: "Kept",
+        sensitive_canonical_dropped: "1",
       });
       expect(fake.created[0]).not.toContain("secret-value");
+      expect(fake.created[0]).not.toContain("canonical_url");
     });
 
     it("is dropped for a secret even after another field was dropped as invalid", async () => {
@@ -345,7 +348,28 @@ describe("openSaveForm", () => {
       expect(saveParameters(fake.created[0] ?? "")).toEqual({
         url: "https://example.com/article",
         title: "Kept",
+        sensitive_canonical_dropped: "1",
       });
+    });
+
+    it.each([
+      ["a clean canonical URL", "https://example.com/article?id=7"],
+      ["no canonical URL", null],
+      ["a canonical URL that is not an address", "not a url"],
+      [
+        "a canonical URL over its cap",
+        `https://example.com/${"a".repeat(CAPTURE_CAPS.canonical_url)}`,
+      ],
+    ])("does not say a canonical URL was dropped for %s", async (_, canonicalUrl) => {
+      // The last two are left out like a flagged one, but they are not flagged, so they say nothing.
+      const fake = fakeBrowser({
+        tab: tabAt("https://example.com/article"),
+        injected: metadata({ canonicalUrl }),
+      });
+
+      await openSaveForm(fake.api, ORIGIN);
+
+      expect(fake.created[0]).not.toContain("sensitive_canonical_dropped");
     });
 
     it("may be http, because it is only evidence and is never linked", async () => {
@@ -685,19 +709,54 @@ describe("the save URL's length budget", () => {
   });
 
   describe("runs on the payload that is sent", () => {
-    it("counts a canonical URL that carries a secret as already gone", async () => {
+    // The canonical URL is dropped for the secret, so it costs the budget nothing. What replaces
+    // it is the flag that a canonical URL was dropped (#131): a few characters, and the only trace
+    // of that URL, so the budget counts it and never drops it.
+    const secret = address(1200, "https://example.com/?api_key=secret-value");
+    const FLAG = { sensitive_canonical_dropped: "1" };
+    const FLAG_LENGTH = "&sensitive_canonical_dropped=1".length;
+
+    it("counts a canonical URL that carries a secret as already gone, and the flag in its place", async () => {
       // With this canonical URL the save URL is over the budget by its size. It is dropped
-      // for the secret, so the fields that would otherwise go are kept.
-      const secret = address(1200, "https://example.com/?api_key=secret-value");
-      const { url, fields } = pageAt(SAVE_URL_BUDGET, ["canonical_url"], {
+      // for the secret, so the fields that would otherwise go are kept, and the flag fits.
+      const { url, fields } = pageAt(SAVE_URL_BUDGET - FLAG_LENGTH, ["canonical_url"], {
         canonical_url: secret,
       });
       expect(lengthOf({ url, ...fields })).toBeGreaterThan(SAVE_URL_BUDGET);
 
       const { saved, parameters } = await open(url, fields);
 
-      expect(parameters).toEqual(without(fields, url, 0, ["canonical_url"]));
+      expect(saved.length).toBe(SAVE_URL_BUDGET);
+      expect(parameters).toEqual({ ...without(fields, url, 0, ["canonical_url"]), ...FLAG });
       expect(saved).not.toContain("secret-value");
+    });
+
+    it("drops a field when the flag takes the link one character over the budget", async () => {
+      const { url, fields } = pageAt(SAVE_URL_BUDGET - FLAG_LENGTH + 1, ["canonical_url"], {
+        canonical_url: secret,
+      });
+
+      const { saved, parameters } = await open(url, fields);
+
+      expect(saved.length).toBeLessThanOrEqual(SAVE_URL_BUDGET);
+      expect(parameters).toEqual({ ...without(fields, url, 1, ["canonical_url"]), ...FLAG });
+    });
+
+    it("stays when every field is at its cap and every optional field has to go", async () => {
+      const url = addressAtCap();
+      const fields = {
+        canonical_url: secret,
+        title: "€".repeat(CAPTURE_CAPS.title),
+        description: "€".repeat(CAPTURE_CAPS.description),
+        og_title: "€".repeat(CAPTURE_CAPS.og_title),
+        og_description: "€".repeat(CAPTURE_CAPS.og_description),
+        og_site_name: "€".repeat(CAPTURE_CAPS.og_site_name),
+      };
+
+      const { saved, parameters } = await open(url, fields);
+
+      expect(parameters).toEqual({ url, title: fields.title, ...FLAG });
+      expect(saved.length).toBeLessThanOrEqual(SAVE_URL_BUDGET);
     });
   });
 });
