@@ -21,7 +21,7 @@ import { createDb, type Db } from "./db/client.ts";
 import { bookmarkActionPath, type BookmarkRoute, HELD_PATH } from "./bookmark-paths.ts";
 import { deleteBookmark, deleteReturnPage, readForm } from "./delete-bookmark.ts";
 import { errorCode } from "./error-code.ts";
-import { releaseBookmark, retryBookmark, showHeld } from "./held.ts";
+import { readReviewPolicy, releaseBookmark, retryBookmark, showHeld } from "./held.ts";
 import { showRecentSaves } from "./recent-saves.ts";
 import { runScheduled } from "./scheduled.ts";
 import {
@@ -212,7 +212,7 @@ async function handleAppRoute(
     return showRecentSaves(db, session.user.id, env);
   }
   if (path === HELD_PATH && isReadRequest(request)) {
-    return showHeld(db, session.user.id, env);
+    return showHeld(db, session.user.id, readReviewPolicy(env));
   }
   if (path === "/save" && request.method === "GET") {
     return showSaveForm(request, db, session.user.id);

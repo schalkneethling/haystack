@@ -73,13 +73,15 @@ const STATE_INPUT_COLUMNS = {
  * columns a caller also needs, such as the title that /held shows. One row per enrichment, or one
  * row for a bookmark that has none. A bookmark has at most one failure record per version, so
  * that join adds no rows, and a column of the failure record, such as `last_error`, is the one at
- * `schemaVersion`. Pass the rows to collectStateInputs with the same `schemaVersion`.
+ * `schemaVersion`. Pass the rows to collectStateInputs with the same `schemaVersion`. With
+ * `bookmarkId`, only that bookmark's rows are read, when it is the user's.
  */
 export function selectStateInputRows<Extra extends SelectedFields>(
   db: Db,
   userId: string,
   schemaVersion: number,
   extra: Extra,
+  bookmarkId?: string,
 ) {
   return db
     .select({ ...STATE_INPUT_COLUMNS, ...extra })
@@ -92,7 +94,12 @@ export function selectStateInputRows<Extra extends SelectedFields>(
         eq(enrichmentFailures.schemaVersion, schemaVersion),
       ),
     )
-    .where(eq(bookmarks.userId, userId))
+    .where(
+      and(
+        eq(bookmarks.userId, userId),
+        bookmarkId === undefined ? undefined : eq(bookmarks.id, bookmarkId),
+      ),
+    )
     .orderBy(asc(bookmarks.createdAt), asc(bookmarks.id), asc(enrichments.schemaVersion));
 }
 

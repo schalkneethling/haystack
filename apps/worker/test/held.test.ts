@@ -412,11 +412,37 @@ describe("POST /bookmarks/:id/release", () => {
     expect(await sweepSelection()).toEqual([]);
   });
 
-  it("keeps the first acknowledgment when it is sent again, as a reload does", async () => {
-    const id = await saveHeld("https://example.com/held", { sensitivityAcknowledgedAt: 5 });
+  it("answers a bookmark released already as a release, and keeps the first time, as a reload does", async () => {
+    const id = await saveHeld("https://example.com/held", {
+      title: "A guide",
+      sensitivityAcknowledgedAt: 5,
+    });
     const response = await release(id);
     expect(response.status).toBe(200);
+    expect(await response.text()).toContain(
+      '<p tabindex="-1" autofocus>Released “A guide”. Haystack can now describe it.</p>',
+    );
     expect(await acknowledgedAt(id)).toBe(5);
+  });
+
+  // An acknowledgment means that the owner saw the link held back and released it. Set on a
+  // bookmark that was never checked, it would skip the gate when Jev checks it later.
+  it.each([
+    ["Pending, below the threshold", { sensitivityNoul: 0, sensitivityCheckedAt: 1 }],
+    ["never checked, with a NULL noul", {}],
+  ])("writes nothing for a bookmark that is %s, and says it isn't held back", async (_, fields) => {
+    const id = await save("https://example.com/not-held", { title: "A guide", ...fields });
+    const response = await release(id);
+    expect(response.status).toBe(409);
+    const markup = await response.text();
+    expect(markup).toContain(
+      "<title>Nothing to release for “A guide” - Links to review - Haystack</title>",
+    );
+    expect(markup).toContain(
+      '<p tabindex="-1" autofocus>“A guide” isn&#39;t held back, so there was nothing to release.</p>',
+    );
+    await expectValidHtml(markup);
+    expect(await acknowledgedAt(id)).toBeNull();
   });
 
   it("leaves the last Held bookmark's page with only the empty state", async () => {
@@ -527,6 +553,40 @@ describe("POST /bookmarks/:id/retry", () => {
     expect(await failureVersions(theirs)).toEqual([ENRICHMENT_SCHEMA_VERSION]);
     // The record held the backoff window too, so the bookmark is tried in the next run.
     expect(await sweepSelection()).toEqual([id]);
+  });
+
+  // Deleting a record below the limit would reset the bookmark's backoff, and let it skip the
+  // queue. A Held bookmark's record waits until it is released.
+  it.each([
+    ["below the attempt limit", {}, 1],
+    ["Held, at the attempt limit", { sensitivityNoul: 1, sensitivityCheckedAt: 1 }, 0],
+  ])(
+    "writes nothing for a bookmark %s, and says it isn't waiting for a retry",
+    async (_, fields, below) => {
+      const id = await save("https://example.com/not-failed", { title: "A guide", ...fields });
+      await seedEnrichmentFailure(await d1(), id, ENRICHMENT_SCHEMA_VERSION, attemptLimit - below);
+      const response = await retry(id);
+      expect(response.status).toBe(409);
+      const markup = await response.text();
+      expect(markup).toContain(
+        "<title>Nothing to retry for “A guide” - Links to review - Haystack</title>",
+      );
+      expect(markup).toContain(
+        '<p tabindex="-1" autofocus>“A guide” isn&#39;t waiting for a retry.</p>',
+      );
+      await expectValidHtml(markup);
+      expect(await failureVersions(id)).toEqual([ENRICHMENT_SCHEMA_VERSION]);
+    },
+  );
+
+  it("answers a bookmark without a failure record as a retry, with nothing to delete", async () => {
+    const id = await save("https://example.com/pending", { title: "A guide" });
+    const response = await retry(id);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain(
+      "<title>Retrying “A guide” - Links to review - Haystack</title>",
+    );
+    expect(await failureVersions(id)).toEqual([]);
   });
 
   it("changes nothing more when it is sent again, as a reload does", async () => {
@@ -711,16 +771,52 @@ describe("with an attempt limit that can't be read", () => {
     ],
   });
   let user: SeededUser;
+  let misconfiguredOrigin: string;
+  let heldId: string;
+
+  async function misconfiguredDb() {
+    return (await misconfigured.getWorker().getEnv()).DB;
+  }
 
   beforeAll(async () => {
-    await misconfigured.listen();
+    misconfiguredOrigin = (await misconfigured.listen()).url.origin;
     await misconfigured.getWorker().applyD1Migrations("DB");
-    const DB = (await misconfigured.getWorker().getEnv()).DB;
+    const DB = await misconfiguredDb();
     user = await seedSignedInUser(DB, "owner@example.com");
-    await seedBookmark(DB, user.userId, "https://example.com/held", "held", {
+    heldId = await seedBookmark(DB, user.userId, "https://example.com/held", "held", {
       sensitivityNoul: 1,
       sensitivityCheckedAt: 1,
     });
+    await seedEnrichmentFailure(DB, heldId, ENRICHMENT_SCHEMA_VERSION, 99);
+  });
+
+  function postMisconfigured(path: string, fields: Record<string, string>) {
+    return misconfigured.fetch(path, {
+      method: "POST",
+      headers: { origin: misconfiguredOrigin, cookie: user.cookie, accept: "text/html" },
+      body: new URLSearchParams(fields),
+      redirect: "manual",
+    });
+  }
+
+  async function heldRow(): Promise<Record<string, unknown> | null> {
+    return (await misconfiguredDb())
+      .prepare(
+        "SELECT b.sensitivity_acknowledged_at AS at, f.attempts FROM bookmarks b LEFT JOIN enrichment_failures f ON f.bookmark_id = b.id WHERE b.id = ?",
+      )
+      .bind(heldId)
+      .first();
+  }
+
+  // Each action reads the policy before it writes, so nothing changes.
+  it.each([
+    ["a delete that returns to /held", "delete", { ...confirmed, ...fromHeld }],
+    ["a release", "release", notPrivate],
+    ["a retry", "retry", {}],
+  ])("answers %s with a 500, and changes nothing", async (_, action, fields) => {
+    const response = await postMisconfigured(`/bookmarks/${heldId}/${action}`, fields);
+    expect(response.status).toBe(500);
+    expect(await heldRow()).toEqual({ at: null, attempts: 99 });
   });
 
   afterAll(async () => {
@@ -742,5 +838,15 @@ describe("with an attempt limit that can't be read", () => {
     const markup = await response.text();
     expect(markup).toContain('<h1 id="list-heading">Saved links</h1>');
     expect(markup).not.toContain('href="/held"');
+  });
+
+  // Runs last, because it deletes the bookmark the other tests read.
+  it("still deletes from the saved links, which don't need the policy", async () => {
+    const response = await postMisconfigured(`/bookmarks/${heldId}/delete`, confirmed);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain(
+      "<title>Deleted “Seeded” - Saved links - Haystack</title>",
+    );
+    expect(await heldRow()).toBeNull();
   });
 });

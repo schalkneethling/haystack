@@ -6,7 +6,7 @@ import { bookmarkHost } from "./bookmark-card.ts";
 import type { Db } from "./db/client.ts";
 import { bookmarks } from "./db/schema.ts";
 import { bookmarkAction, HELD_PATH, RETURN_FIELD } from "./bookmark-paths.ts";
-import { type ReviewConfig, showHeld } from "./held.ts";
+import { readReviewPolicy, type ReviewConfig, showHeld } from "./held.ts";
 import { html, type SafeHtml } from "./html.ts";
 import type { Outcome } from "./notices.ts";
 import { htmlResponse } from "./page.ts";
@@ -102,6 +102,10 @@ export async function deleteBookmark(
       ? notSavedPage()
       : confirmationPage(bookmarkId, bookmark.title, bookmark.url, returnPage);
   }
+  // /held can't be shown when the policy can't be read, so a delete that returns there reads it
+  // first: a configuration error then answers 500 with nothing deleted, rather than after the
+  // delete. A delete that returns to the saved links doesn't need it, and is unchanged.
+  const heldPolicy = returnPage === HELD_PATH ? readReviewPolicy(config) : undefined;
   const deleted = await db
     .delete(bookmarks)
     .where(owned)
@@ -114,7 +118,7 @@ export async function deleteBookmark(
     title: `Deleted “${deleted.title}”`,
     message: `Deleted “${deleted.title}”.`,
   };
-  return returnPage === HELD_PATH
-    ? showHeld(db, userId, config, outcome)
-    : showRecentSaves(db, userId, config, outcome);
+  return heldPolicy === undefined
+    ? showRecentSaves(db, userId, config, outcome)
+    : showHeld(db, userId, heldPolicy, outcome);
 }

@@ -12,7 +12,7 @@
 // Release and Retry are ordinary forms that load the page again, with or without JavaScript,
 // because each is one quick write. Delete is the delete endpoint's (delete-bookmark.ts), whose
 // dialog script works here as on the saved links page.
-import { and, eq, exists, sql } from "drizzle-orm";
+import { and, eq, exists, gte, sql } from "drizzle-orm";
 import { bookmarkHost, DELETE_DIALOG_SCRIPT, deleteForm, savedDate } from "./bookmark-card.ts";
 import { bookmarkAction, HELD_PATH } from "./bookmark-paths.ts";
 import type { Db } from "./db/client.ts";
@@ -26,6 +26,7 @@ import {
 } from "./enrichment/state-inputs.ts";
 import {
   deriveEnrichmentState,
+  type EnrichmentState,
   type EnrichmentStateInputs,
   type EnrichmentStatePolicy,
   readSensitiveWarnThreshold,
@@ -273,21 +274,69 @@ function heldPage(
   );
 }
 
-/** GET /held, and the page that Retry, a refused Release and a Delete from /held answer with. */
+/**
+ * GET /held, and the page that Retry, a refused Release and a Delete from /held answer with. It
+ * takes the policy rather than the configuration, so an action reads the policy before it writes
+ * anything, and a configuration that can't be read answers 500 with nothing changed.
+ */
 export async function showHeld(
   db: Db,
   userId: string,
-  config: ReviewConfig,
+  policy: EnrichmentStatePolicy,
   outcome: Outcome | null = null,
   status = 200,
 ): Promise<Response> {
-  const toReview = await readBookmarksToReview(db, userId, readReviewPolicy(config));
-  return heldPage(toReview, outcome, status);
+  return heldPage(await readBookmarksToReview(db, userId, policy), outcome, status);
 }
 
 // The user's own bookmark, by ID.
 function owned(userId: string, bookmarkId: string) {
   return and(eq(bookmarks.id, bookmarkId), eq(bookmarks.userId, userId));
+}
+
+interface OwnBookmark {
+  title: string;
+  inputs: EnrichmentStateInputs;
+  state: EnrichmentState;
+}
+
+/**
+ * The user's bookmark with its state, derived as the page derives every bookmark's, or undefined
+ * when it isn't the user's. Release and Retry read it before they write, so each acts only on a
+ * bookmark in the state it is for.
+ */
+async function readOwnBookmark(
+  db: Db,
+  userId: string,
+  bookmarkId: string,
+  policy: EnrichmentStatePolicy,
+): Promise<OwnBookmark | undefined> {
+  const rows = await selectStateInputRows(
+    db,
+    userId,
+    policy.schemaVersion,
+    { title: bookmarks.title },
+    bookmarkId,
+  );
+  const [inputs] = collectStateInputs(rows, policy.schemaVersion);
+  return inputs === undefined
+    ? undefined
+    : { title: inputs.title, inputs, state: deriveEnrichmentState(inputs, policy) };
+}
+
+/**
+ * The answer when the bookmark isn't in the state the action is for, which happens when /held is
+ * open in two tabs, or the threshold changed since the page loaded. Nothing was written. It is a
+ * 409, because the request is well formed and the bookmark exists, but it conflicts with the
+ * bookmark's current state.
+ */
+function notInStatePage(
+  db: Db,
+  userId: string,
+  policy: EnrichmentStatePolicy,
+  outcome: Outcome,
+): Promise<Response> {
+  return showHeld(db, userId, policy, outcome, 409);
 }
 
 async function isNotPrivateConfirmed(request: Request): Promise<boolean> {
@@ -301,13 +350,26 @@ async function isNotPrivateConfirmed(request: Request): Promise<boolean> {
 
 /**
  * POST /bookmarks/:id/release. With the checkbox ticked, it records that the user confirmed the
- * link isn't private, which ends the Held state (isHeld), so the sweep can enrich it. A bookmark
- * that had reached the attempt limit before it was held is Failed once released, because Failed
- * comes after Held in the state's order, so the sweep leaves it alone. The page's own rows say
- * which it became, and the message says so, pointing to Retry. A reload
- * posts again and keeps the first time, which is what the calibration reads ("Probabilistic
- * check with Jev"). Without the checkbox, which only a browser that skips `required` or a request
- * built by hand can send, nothing changes, and the page says why.
+ * link isn't private, which ends the Held state (isHeld), so the sweep can enrich it. Only a
+ * bookmark that is Held is released, so an acknowledgment always means that the owner saw the
+ * link held back and released it. A bookmark that was never checked (a NULL noul) would
+ * otherwise skip the gate when Jev checks it later, and a lowered threshold wouldn't hold it.
+ *
+ * A bookmark that is acknowledged already gets the same answer as a first release, without a
+ * write, so a reload, or Release in a second tab, is harmless, and the first time is kept, which
+ * is what the calibration reads ("Probabilistic check with Jev"). Any other state writes nothing
+ * and gets a 409 (notInStatePage). Without the checkbox, which only a browser that skips
+ * `required` or a request built by hand can send, nothing changes, and the page says why.
+ *
+ * A bookmark that had reached the attempt limit before it was held is Failed once released,
+ * because Failed comes after Held in the state's order, so the sweep leaves it alone. The page's
+ * own rows say which it became, and the message says so, pointing to Retry.
+ *
+ * The state is read, then written, in two statements. Nothing else between them can make a Held
+ * bookmark stop being Held in a way that matters: the sweep never acknowledges a bookmark, and
+ * writes a noul only when there is none, which a Held bookmark has; the threshold changes only
+ * with a deploy; and another release keeps the first time (`coalesce`). A delete in between
+ * leaves nothing to update, which is the 404. So the write doesn't repeat isHeld in SQL.
  */
 export async function releaseBookmark(
   request: Request,
@@ -316,46 +378,54 @@ export async function releaseBookmark(
   bookmarkId: string,
   config: ReviewConfig,
 ): Promise<Response> {
-  if (!(await isNotPrivateConfirmed(request))) {
-    const bookmark = await db
-      .select({ title: bookmarks.title })
-      .from(bookmarks)
-      .where(owned(userId, bookmarkId))
-      .get();
-    if (bookmark === undefined) {
-      return notSavedPage();
-    }
+  const policy = readReviewPolicy(config);
+  const confirmed = await isNotPrivateConfirmed(request);
+  const bookmark = await readOwnBookmark(db, userId, bookmarkId, policy);
+  if (bookmark === undefined) {
+    return notSavedPage();
+  }
+  const { title } = bookmark;
+  if (!confirmed) {
     return showHeld(
       db,
       userId,
-      config,
+      policy,
       {
-        title: `Not released “${bookmark.title}”`,
-        message: `“${bookmark.title}” was not released. Tick “${NOT_PRIVATE_LABEL}” to release it.`,
+        title: `Not released “${title}”`,
+        message: `“${title}” was not released. Tick “${NOT_PRIVATE_LABEL}” to release it.`,
       },
       400,
     );
   }
-  const released = await db
-    .update(bookmarks)
-    .set({
-      sensitivityAcknowledgedAt: sql`coalesce(${bookmarks.sensitivityAcknowledgedAt}, ${Date.now()})`,
-    })
-    .where(owned(userId, bookmarkId))
-    .returning({ title: bookmarks.title })
-    .get();
-  if (released === undefined) {
-    return notSavedPage();
+  const acknowledged = bookmark.inputs.sensitivityAcknowledgedAt !== null;
+  if (!acknowledged && bookmark.state !== "held") {
+    return notInStatePage(db, userId, policy, {
+      title: `Nothing to release for “${title}”`,
+      message: `“${title}” isn't held back, so there was nothing to release.`,
+    });
   }
-  const toReview = await readBookmarksToReview(db, userId, readReviewPolicy(config));
+  if (!acknowledged) {
+    const released = await db
+      .update(bookmarks)
+      .set({
+        sensitivityAcknowledgedAt: sql`coalesce(${bookmarks.sensitivityAcknowledgedAt}, ${Date.now()})`,
+      })
+      .where(owned(userId, bookmarkId))
+      .returning({ id: bookmarks.id })
+      .get();
+    if (released === undefined) {
+      return notSavedPage();
+    }
+  }
+  const toReview = await readBookmarksToReview(db, userId, policy);
   const failed = toReview.failed.some((item) => item.id === bookmarkId);
   return heldPage(
     toReview,
     {
-      title: `Released “${released.title}”`,
+      title: `Released “${title}”`,
       message: failed
-        ? `Released “${released.title}”. Haystack couldn't describe it before, so it's now under “${FAILED_SECTION.heading}”, where you can retry it.`
-        : `Released “${released.title}”. Haystack can now describe it.`,
+        ? `Released “${title}”. Haystack couldn't describe it before, so it's now under “${FAILED_SECTION.heading}”, where you can retry it.`
+        : `Released “${title}”. Haystack can now describe it.`,
     },
     200,
   );
@@ -365,11 +435,19 @@ export async function releaseBookmark(
  * POST /bookmarks/:id/retry. Deletes the bookmark's failure record at the current schema
  * version, which ends the Failed state, so the sweep tries it again in its next run, outside any
  * backoff window, because the window is the record's too. A record at another version is left
- * alone, because it is that version's count. A reload posts again, which does nothing more.
+ * alone, because it is that version's count.
  *
- * The title is read first, for the message and for the 404. The deletion checks the owner again
- * itself, as release and delete do in their writes, so it can't touch another user's record
- * whatever the order of the statements.
+ * Only a Failed bookmark is retried, so Retry can't reset the backoff of a bookmark the sweep is
+ * still trying, and let it skip the queue. A bookmark with no record at the current version, as
+ * after a reload, gets the same answer as a retry, because there is nothing left to do. A
+ * bookmark that has a record but isn't Failed writes nothing and gets a 409 (notInStatePage).
+ *
+ * The state is read, then the record deleted, in two statements. The deletion checks the owner
+ * itself, as release and delete do in their writes, and that the record is at the attempt limit,
+ * which is the part of Failed that the record holds. In between, the sweep can only make a
+ * Failed bookmark more Failed, because it doesn't select one, and it can't make a bookmark Held,
+ * which Release alone ends. A bookmark that another run enriched in between has an enrichment at
+ * the current version, whose write deletes the record anyway.
  */
 export async function retryBookmark(
   db: Db,
@@ -377,30 +455,37 @@ export async function retryBookmark(
   bookmarkId: string,
   config: ReviewConfig,
 ): Promise<Response> {
-  const bookmark = await db
-    .select({ title: bookmarks.title })
-    .from(bookmarks)
-    .where(owned(userId, bookmarkId))
-    .get();
+  const policy = readReviewPolicy(config);
+  const bookmark = await readOwnBookmark(db, userId, bookmarkId, policy);
   if (bookmark === undefined) {
     return notSavedPage();
   }
-  await db.delete(enrichmentFailures).where(
-    and(
-      eq(enrichmentFailures.bookmarkId, bookmarkId),
-      eq(enrichmentFailures.schemaVersion, ENRICHMENT_SCHEMA_VERSION),
-      exists(
-        db
-          .select({ id: bookmarks.id })
-          .from(bookmarks)
-          .where(
-            and(eq(bookmarks.id, enrichmentFailures.bookmarkId), eq(bookmarks.userId, userId)),
-          ),
+  const { title } = bookmark;
+  if (bookmark.inputs.failure !== null && bookmark.state !== "failed") {
+    return notInStatePage(db, userId, policy, {
+      title: `Nothing to retry for “${title}”`,
+      message: `“${title}” isn't waiting for a retry.`,
+    });
+  }
+  if (bookmark.inputs.failure !== null) {
+    await db.delete(enrichmentFailures).where(
+      and(
+        eq(enrichmentFailures.bookmarkId, bookmarkId),
+        eq(enrichmentFailures.schemaVersion, policy.schemaVersion),
+        gte(enrichmentFailures.attempts, policy.attemptLimit),
+        exists(
+          db
+            .select({ id: bookmarks.id })
+            .from(bookmarks)
+            .where(
+              and(eq(bookmarks.id, enrichmentFailures.bookmarkId), eq(bookmarks.userId, userId)),
+            ),
+        ),
       ),
-    ),
-  );
-  return showHeld(db, userId, config, {
-    title: `Retrying “${bookmark.title}”`,
-    message: `Retrying “${bookmark.title}”. Haystack will try to describe it again soon.`,
+    );
+  }
+  return showHeld(db, userId, policy, {
+    title: `Retrying “${title}”`,
+    message: `Retrying “${title}”. Haystack will try to describe it again soon.`,
   });
 }

@@ -120,6 +120,27 @@ Feature: Reviewing links that Haystack held back or couldn't describe
       And the status message says "“A guide” was not released. Tick “This link does not give access to anything private” to release it."
       And the link stays held back
 
+    @integration:apps/worker/test/held.test.ts
+    Scenario: Releasing a link again, for example in a second tab
+      Given I released "A guide" in another tab
+      When I press "Release A guide" on this page, with its box ticked
+      Then the status message says "Released “A guide”. Haystack can now describe it."
+      And the time I first released it is kept
+
+    @integration:apps/worker/test/held.test.ts
+    Scenario: Releasing a link that isn't held back
+      A link is released only while it is held back, so a release always means
+      that I saw it held back. A link that was never checked can't be released
+      ahead of the check, because the release would let it skip the check. The
+      integration test sends the request by hand, because /held shows no
+      Release button for such a link.
+
+      Given "A guide" isn't held back, for example because the threshold for private links was raised after the page loaded
+      When a release of "A guide" arrives, with the box ticked
+      Then the page's title is "Nothing to release for “A guide” - Links to review - Haystack"
+      And the status message says "“A guide” isn't held back, so there was nothing to release."
+      And nothing changes in Haystack
+
   Rule: Retrying a link Haystack couldn't describe
 
     @playwright:apps/worker/e2e/held.e2e.ts
@@ -141,6 +162,24 @@ Feature: Reviewing links that Haystack held back or couldn't describe
         | with or without | turned on or off |
         | with            | turned on        |
         | without         | turned off       |
+
+    @integration:apps/worker/test/held.test.ts
+    Scenario: Retrying a link again, for example in a second tab
+      Given I retried "A guide" in another tab
+      When I press "Retry A guide" on this page
+      Then the status message says "Retrying “A guide”. Haystack will try to describe it again soon."
+
+    @integration:apps/worker/test/held.test.ts
+    Scenario: Retrying a link that Haystack is still trying to describe
+      Retry is only for a link that Haystack stopped trying to describe, so it
+      can't move a link that Haystack is still trying ahead of the others. The
+      integration test sends the request by hand.
+
+      Given Haystack failed to describe "A guide", but hasn't stopped trying
+      When a retry of "A guide" arrives
+      Then the page's title is "Nothing to retry for “A guide” - Links to review - Haystack"
+      And the status message says "“A guide” isn't waiting for a retry."
+      And nothing changes in Haystack
 
   Rule: Deleting a link from /held
 
