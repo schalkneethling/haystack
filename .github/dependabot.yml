@@ -33,6 +33,16 @@ updates:
         patterns:
           - "varlock"
           - "@varlock/*"
+      # @guidepup/playwright declares the lowest @guidepup/guidepup it works with as a peer
+      # dependency, which pnpm doesn't enforce (#178). The VoiceOver workflow runs on Dependabot
+      # branches whose group name starts with "guidepup".
+      guidepup:
+        patterns:
+          - "@guidepup/*"
+      guidepup-security:
+        applies-to: security-updates
+        patterns:
+          - "@guidepup/*"
   - package-ecosystem: github-actions
     directory: /
     schedule:
