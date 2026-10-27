@@ -239,7 +239,7 @@ for (const [colorScheme, ground] of [
       });
 
       // Each kind of card, a ticked checkbox, the saved links page's link to /held, the result
-      // of an action with its focus ring, and the delete dialog.
+      // of an action, and the delete dialog.
       test("the review page and the link to it", async ({ page, run }) => {
         await saveHeld(page, run, `https://example.com/axe-held-${colorScheme}`, "Held guide");
         await saveHeld(page, run, `https://example.com/axe-held-2-${colorScheme}`, "Other guide");
@@ -257,7 +257,7 @@ for (const [colorScheme, ground] of [
         await page.getByRole("checkbox").first().check();
         await expectNoViolations(page);
         await page.getByRole("button", { name: "Retry Failed guide" }).click();
-        await expect(page.locator("#list-status > p")).toBeFocused();
+        await expect(page.locator("#list-status > p")).toHaveText(/^Retrying “Failed guide”\./);
         await page.waitForLoadState("load");
         await expectNoViolations(page);
         await page.getByRole("button", { name: "Delete Held guide" }).click();

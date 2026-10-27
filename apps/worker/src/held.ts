@@ -249,8 +249,8 @@ async function readBookmarksToReview(
 const PAGE_TITLE = "Links to review";
 
 /**
- * The page every route here answers with. An outcome's message takes focus when the page loads
- * (`autofocus`), so a screen reader reads the result, and Tab goes on to the links that are left.
+ * The page every route here answers with. An outcome is in the page title and in the status
+ * message, and focus is the browser's to handle when the page loads, as on the saved links page.
  * The IDs of the heading, the status region and the empty state are the saved links page's,
  * because the dialog script (delete-dialog.js) finds them by those IDs.
  */
@@ -260,7 +260,7 @@ function heldPage(
   status: number,
 ): Response {
   const empty = held.length + failed.length === 0;
-  const message = outcome === null ? null : html`<p tabindex="-1" autofocus>${outcome.message}</p>`;
+  const message = outcome === null ? null : html`<p>${outcome.message}</p>`;
   return htmlResponse(
     outcome === null ? PAGE_TITLE : `${outcome.title} - ${PAGE_TITLE}`,
     html`<h1 id="list-heading">${PAGE_TITLE}</h1>
