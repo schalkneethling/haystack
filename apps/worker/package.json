@@ -33,7 +33,7 @@
     "@axe-core/playwright": "^4.14.0",
     "@cloudflare/vite-plugin": "^1.64.0",
     "@guidepup/guidepup": "^0.35.0",
-    "@guidepup/playwright": "^0.19.1",
+    "@guidepup/playwright": "^0.20.0",
     "@guidepup/setup": "^0.29.3",
     "@playwright/test": "catalog:",
     "@types/node": "^25.9.9",
