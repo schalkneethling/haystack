@@ -16,6 +16,16 @@ const MAX_PAGES = 100;
 const root = fileURLToPath(new URL("..", import.meta.url));
 const configPath = fileURLToPath(new URL("../.github/repository-controls.json", import.meta.url));
 
+// The order of Array.prototype.sort without a compare function: the values compared as strings,
+// by UTF-16 code units. The linter requires a compare function, and both sides of each comparison
+// between the config and GitHub's state must sort the same way.
+function compareAsStrings(left, right) {
+  const leftText = String(left);
+  const rightText = String(right);
+  if (leftText < rightText) return -1;
+  return leftText > rightText ? 1 : 0;
+}
+
 export function readBoundedJson(path, limit = CONFIG_LIMIT) {
   const before = lstatSync(path);
   if (!before.isFile()) throw new Error(`${path} must be a regular file.`);
@@ -152,11 +162,11 @@ export function desiredState(config, reviewerIds = []) {
       noBypassActors: true,
       codeScanning: config.mainRuleset.codeScanning ?? null,
       targetDefaultBranch: true,
-      requiredChecks: [...config.mainRuleset.requiredChecks].sort(),
+      requiredChecks: [...config.mainRuleset.requiredChecks].sort(compareAsStrings),
       strictStatusChecks: config.mainRuleset.requiredChecks.length > 0,
       allowBranchCreationWithoutChecks: false,
       requirePullRequest: true,
-      allowedMergeMethods: [...config.mainRuleset.allowedMergeMethods].sort(),
+      allowedMergeMethods: [...config.mainRuleset.allowedMergeMethods].sort(compareAsStrings),
       dismissStaleReviews: false,
       requireCodeOwnerReview: false,
       requireLastPushApproval: false,
@@ -168,7 +178,7 @@ export function desiredState(config, reviewerIds = []) {
     releaseEnvironment: config.releaseEnvironment
       ? {
           ...config.releaseEnvironment,
-          branches: [...config.releaseEnvironment.branches].sort(),
+          branches: [...config.releaseEnvironment.branches].sort(compareAsStrings),
           reviewers: [...reviewerIds]
             .sort((left, right) => left - right)
             .map((id) => ({ type: "User", id })),
@@ -229,7 +239,7 @@ export function normalizeCodeqlDefaultSetup(setup) {
   }
   return {
     state: setup.state,
-    languages: [...languages].sort(),
+    languages: [...languages].sort(compareAsStrings),
     querySuite: setup.query_suite ?? "default",
     threatModel: setup.threat_model ?? "remote",
     runnerType: setup.runner_type ?? "standard",
@@ -270,11 +280,11 @@ export function normalizeMainRuleset(ruleset, manageCodeScanning = true) {
           ruleset.conditions.ref_name.exclude.length === 0)),
     requiredChecks: (checkParameters.required_status_checks ?? [])
       .map((check) => check.context)
-      .sort(),
+      .sort(compareAsStrings),
     strictStatusChecks: Boolean(checkParameters.strict_required_status_checks_policy),
     allowBranchCreationWithoutChecks: Boolean(checkParameters.do_not_enforce_on_create),
     requirePullRequest: Boolean(pullRequest),
-    allowedMergeMethods: [...(pullParameters.allowed_merge_methods ?? [])].sort(),
+    allowedMergeMethods: [...(pullParameters.allowed_merge_methods ?? [])].sort(compareAsStrings),
     dismissStaleReviews: Boolean(pullParameters.dismiss_stale_reviews_on_push),
     requireCodeOwnerReview: Boolean(pullParameters.require_code_owner_review),
     requireLastPushApproval: Boolean(pullParameters.require_last_push_approval),
@@ -373,7 +383,7 @@ export function normalizeReleaseEnvironment(environment, policies, variables) {
     reviewers: (reviewRule?.reviewers ?? [])
       .map(({ type, reviewer }) => ({ type, id: reviewer.id }))
       .sort((left, right) => left.id - right.id),
-    branches: policies.map((policy) => policy.name).sort(),
+    branches: policies.map((policy) => policy.name).sort(compareAsStrings),
     customBranchesOnly: Boolean(
       environment.deployment_branch_policy?.custom_branch_policies &&
       !environment.deployment_branch_policy.protected_branches,
@@ -672,7 +682,7 @@ export async function runRepositoryControls(options = {}) {
       ...desired.security.codeqlDefaultSetup.languages,
       ...(current.state.security.codeqlDefaultSetup?.languages ?? []),
     ]),
-  ].sort();
+  ].sort(compareAsStrings);
   const changes = planRepositoryControlChanges(current.state, desired);
   printChanges(changes, log);
   if (config.manualControls.dependabotMalwareAlerts) {
