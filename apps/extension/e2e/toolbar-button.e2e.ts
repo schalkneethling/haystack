@@ -93,6 +93,42 @@ test.describe("the save form's prefill", () => {
     await expect(form.locator('input[name="og_site_name"]')).toHaveValue("Fixture Site");
   });
 
+  // A canonical URL that carries a secret never leaves the browser (#75). What does is the flag
+  // that the page declared one (#131), which the form passes on to POST /save as a hidden input.
+  test("drops a canonical URL that carries a secret, and says that it did", async ({
+    context,
+    fixturePages,
+    haystackWorker,
+    page,
+    signIn,
+    toolbar,
+  }) => {
+    await signIn();
+    fixturePages.serve(
+      ARTICLE,
+      fixtureWithHead(`<title>Document title</title>
+        <link rel="canonical" href="/articles/one?access_token=fixture-token">`),
+    );
+    await page.goto(ARTICLE);
+
+    const saveForm = context.waitForEvent("page", {
+      predicate: (opened) => opened.url().startsWith(`${haystackWorker.origin}/save?`),
+    });
+    await toolbar.click(page);
+    const form = await saveForm;
+
+    await expect(form).toHaveURL(
+      `${haystackWorker.origin}/save?${new URLSearchParams({
+        url: ARTICLE,
+        title: "Document title",
+        sensitive_canonical_dropped: "1",
+      })}`,
+    );
+    expect(form.url()).not.toContain("fixture-token");
+    await expect(form.locator('input[name="sensitive_canonical_dropped"]')).toHaveValue("1");
+    await expect(form.locator('input[name="canonical_url"]')).toHaveCount(0);
+  });
+
   test("falls back to the document title and the meta description without Open Graph tags", async ({
     context,
     fixturePages,

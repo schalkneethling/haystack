@@ -339,11 +339,19 @@ describe("signing in from a signed-out save link", () => {
 
   it.each([
     ["a clean link", clean, clean],
+    // The flag that a canonical URL was dropped (#131) takes the dropped URL's place, so the
+    // form after sign-in still knows that the page declared one.
     [
       "a flagged canonical URL",
       { ...clean, canonical_url: "https://example.com/article?access_token=secret-value" },
-      { url: clean.url, title: clean.title },
+      { url: clean.url, title: clean.title, sensitive_canonical_dropped: "1" },
     ],
+    [
+      "the flag that a canonical URL was dropped",
+      { url: clean.url, title: clean.title, sensitive_canonical_dropped: "1" },
+      { url: clean.url, title: clean.title, sensitive_canonical_dropped: "1" },
+    ],
+    ["a flag with a value other than 1", { ...clean, sensitive_canonical_dropped: "yes" }, clean],
   ])("returns to the save form for %s", async (_, fields, expected) => {
     const toSignIn = await server.fetch(`/save?${new URLSearchParams(fields).toString()}`, {
       headers: { accept: "text/html" },
@@ -368,6 +376,10 @@ describe("signing in from a signed-out save link", () => {
     const markup = await form.text();
     expect(markup).toContain('<form class="panel" method="post" action="/save">');
     expect(markup.includes('name="canonical_url"')).toBe("canonical_url" in expected);
+    // The form after sign-in carries the flag as a hidden input, for POST /save to store.
+    expect(markup.includes('name="sensitive_canonical_dropped" value="1"')).toBe(
+      "sensitive_canonical_dropped" in expected,
+    );
     expect(markup).not.toContain("secret-value");
   });
 });
@@ -501,11 +513,16 @@ describe("a save link given to sign-in directly", () => {
     },
   );
 
+  it("stores the flag in place of a flagged canonical URL, and not the URL", async () => {
+    const returnTo = `/save?url=${encodeURIComponent(article)}&canonical_url=${encodeURIComponent(`${article}?access_token=secret-value`)}`;
+    const start = await startSignIn(returnTo);
+    const expected = `/save?${new URLSearchParams({ url: article, sensitive_canonical_dropped: "1" }).toString()}`;
+    expect(await storedReturnTargets()).toEqual([{ return_to: expected }]);
+    const signedIn = await callBack(start);
+    expect(signedIn.headers.get("location")).toBe(expected);
+  });
+
   it.each([
-    [
-      "a flagged canonical URL",
-      `/save?url=${encodeURIComponent(article)}&canonical_url=${encodeURIComponent(`${article}?access_token=secret-value`)}`,
-    ],
     [
       "a second url",
       `/save?url=${encodeURIComponent(article)}&url=${encodeURIComponent(`${article}?access_token=secret-value`)}`,

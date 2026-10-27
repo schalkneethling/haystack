@@ -3,8 +3,10 @@
 // writes. The confirmation click is what stops other sites from saving into a user's account.
 import {
   CAPTURE_CAPS,
+  CAPTURE_KEYS,
   type CaptureField,
   type CapturePayload,
+  declaredSensitiveCanonical,
   detectSensitiveUrl,
   normalizeUrl,
   SAVE_URL_BUDGET,
@@ -54,10 +56,13 @@ const ADDRESS_ERRORS = {
   invalid: `Haystack saves only secure pages, so the address must be ${URL_RULE}.`,
 } as const;
 
-/** The captured fields from the query string. A repeated key uses its first value. */
+/**
+ * The captured fields from the query string, and the flag that a canonical URL was dropped
+ * (#131). A repeated key uses its first value.
+ */
 function capturedFields(parameters: URLSearchParams): Record<string, string> {
   const fields: Record<string, string> = {};
-  for (const name of Object.keys(CAPTURE_CAPS)) {
+  for (const name of CAPTURE_KEYS) {
     const value = parameters.get(name);
     if (value !== null) {
       fields[name] = value;
@@ -351,9 +356,11 @@ function screenSaveLink(
     : screened;
 }
 
-// A link with no captured field, such as a bare /save, carries nothing to screen or to save.
+// A link with no captured field, such as a bare /save, carries nothing to screen or to save. The
+// flag that a canonical URL was dropped does not count: it describes a page, and without an
+// address there is none, so a link that holds only the flag is a bare /save.
 function hasCapturedFields(captured: Record<string, string>): boolean {
-  return Object.keys(captured).length > 0;
+  return Object.keys(captured).some((name) => name in CAPTURE_CAPS);
 }
 
 /**
@@ -370,7 +377,8 @@ export async function showSaveForm(request: Request, db: Db, userId: string): Pr
   if ("page" in screened) {
     return screened.page;
   }
-  // A flagged canonical URL is left out of the form, so it is neither shown nor submitted.
+  // A flagged canonical URL is left out of the form, so it is neither shown nor submitted. The
+  // payload then carries the flag instead, which the form submits as a hidden input (#131).
   const payload = withoutSensitiveCanonicalUrl(screened.payload);
   const url = stripTrackingParameters(payload.url);
   const existing = await existingBookmark(db, userId, normalizeUrl(url));
@@ -416,6 +424,7 @@ export type SignedOutSave = { page: Response } | { returnTo: string };
  * leaves out, so it holds only screened values: no unknown key, no second `url`, and no empty
  * field, which validation omits. The extension builds its save URL the same way, with
  * URLSearchParams from the validated payload, so a link from the extension comes back unchanged.
+ * The flag that a canonical URL was dropped is a payload field, so it is kept (#131).
  * The values a user entered on the form are added after them, when the link carries them, as a
  * link built for a POST /save without a session does (#34, `withConfirmedValues`).
  * A link with no captured field, such as a bare /save, returns to the bare path, which shows the
@@ -473,7 +482,7 @@ function withConfirmedValues(query: URLSearchParams, link: URL): URLSearchParams
 /** The captured fields a form submission carries, with its line breaks as GET rendered them. */
 function submittedCapture(form: FormData): Record<string, string> {
   const captured: Record<string, string> = {};
-  for (const name of Object.keys(CAPTURE_CAPS)) {
+  for (const name of CAPTURE_KEYS) {
     const value = formField(form, name);
     if (value !== undefined) {
       captured[name] = normalizeLineBreaks(value);
@@ -595,6 +604,7 @@ export async function saveBookmark(request: Request, db: Db, userId: string): Pr
       : invalidPage(rejection.invalidFields, true);
   }
   // Hidden inputs can be tampered with, so this runs again, and the bookmark is stored without it.
+  // The payload then says whether a flagged URL was dropped here or on the way to this form.
   const payload = withoutSensitiveCanonicalUrl(screened.payload);
   const url = stripTrackingParameters(payload.url);
   const confirmed = confirmedValues((name) => formField(form, name), {
@@ -617,6 +627,10 @@ export async function saveBookmark(request: Request, db: Db, userId: string): Pr
       title: confirmed.title,
       description: confirmed.description === "" ? null : confirmed.description,
       canonicalUrl: payload.canonical_url ?? null,
+      // 1 when the page declared a canonical URL that was flagged: the form carried the flag, or
+      // withoutSensitiveCanonicalUrl dropped one just now. 0 otherwise, so a bookmark saved after
+      // this is told apart from one saved before it, which has NULL (#131).
+      sensitiveCanonicalDropped: declaredSensitiveCanonical(payload),
       capturedTitle: payload.title ?? null,
       capturedDescription: payload.description ?? null,
       ogTitle: payload.og_title ?? null,

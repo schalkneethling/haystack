@@ -319,8 +319,85 @@ describe("a page that says what it is", () => {
         <link rel="canonical" href="https://docs.test/d/1?access_token=secret-value"></head>`,
     );
     const response = await postAddress(fixture.url("/share"));
-    expect(savedLinkFields(response)).toEqual({ url: fixture.url("/share"), title: "Shared page" });
+    // The link says that a canonical URL was dropped (#131), and carries nothing of it.
+    expect(savedLinkFields(response)).toEqual({
+      url: fixture.url("/share"),
+      title: "Shared page",
+      sensitive_canonical_dropped: "1",
+    });
     expect(response.headers.get("location")).not.toContain("secret-value");
+  });
+
+  // The three ways a flagged canonical URL is dropped each end with the flag stored (#131). The
+  // address form's lookup builds the link here, and the form it opens passes the flag on. The
+  // popup's link and a hand-built one are tested in save-post.test.ts and save-form.test.ts.
+  it("stores the flag when the form from the lookup's link is saved", async () => {
+    fixture.page(
+      "/stored",
+      `<head><title>Shared page</title>
+        <link rel="canonical" href="https://docs.test/d/1?access_token=secret-value"></head>`,
+    );
+    const link = (await postAddress(fixture.url("/stored"))).headers.get("location") ?? "";
+    const form = await (
+      await server.fetch(link, { headers: { cookie: owner.cookie, accept: "text/html" } })
+    ).text();
+    const hidden = Object.fromEntries(
+      [...form.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g)].map((match) => [
+        match[1] ?? "",
+        match[2] ?? "",
+      ]),
+    );
+    expect(hidden).toMatchObject({ sensitive_canonical_dropped: "1" });
+
+    const saved = await server.fetch("/save", {
+      method: "POST",
+      headers: { origin, cookie: owner.cookie },
+      body: new URLSearchParams({ ...hidden, confirmed_title: "Shared page" }),
+    });
+    expect(saved.status).toBe(200);
+    const { results } = await (
+      await db()
+    )
+      .prepare("SELECT canonical_url, sensitive_canonical_dropped FROM bookmarks")
+      .all();
+    expect(results).toEqual([{ canonical_url: null, sensitive_canonical_dropped: 1 }]);
+  });
+
+  it("says a canonical URL was dropped when it is the only thing the page gives", async () => {
+    fixture.page(
+      "/bare-share",
+      `<head><link rel="canonical" href="https://docs.test/d/1?access_token=secret-value"></head>`,
+    );
+    const response = await postAddress(fixture.url("/bare-share"));
+    expect(savedLinkFields(response)).toEqual({
+      url: fixture.url("/bare-share"),
+      sensitive_canonical_dropped: "1",
+    });
+  });
+
+  it("keeps the flag when the budget drops optional fields", async () => {
+    const wide = (length: number) => "標".repeat(length);
+    fixture.page(
+      "/budget-share",
+      `<head><title>${wide(200)}</title>
+        <meta name="description" content="${wide(300)}">
+        <meta property="og:title" content="${wide(200)}">
+        <meta property="og:description" content="${wide(300)}">
+        <meta property="og:site_name" content="${wide(100)}">
+        <link rel="canonical" href="https://docs.test/d/1?access_token=secret-value"></head>`,
+    );
+    const response = await postAddress(fixture.url("/budget-share"));
+    expect(response.headers.get("location")?.length).toBeLessThanOrEqual(SAVE_URL_BUDGET);
+    expect(savedLinkFields(response).sensitive_canonical_dropped).toBe("1");
+  });
+
+  it("does not say a canonical URL was dropped when the page's is kept or absent", async () => {
+    fixture.page("/kept", FULL_PAGE);
+    fixture.page("/no-canonical", "<head><title>No canonical</title></head>");
+    for (const path of ["/kept", "/no-canonical"]) {
+      const response = await postAddress(fixture.url(path));
+      expect(savedLinkFields(response)).not.toHaveProperty("sensitive_canonical_dropped");
+    }
   });
 
   it("keeps the save link within the budget, dropping optional fields in the extension's order", async () => {

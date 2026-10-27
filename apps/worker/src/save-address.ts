@@ -111,8 +111,9 @@ export async function signedOutAddress(request: Request): Promise<SignedOutSave>
 
 // The payload the page's metadata gives, or why there is none. Every value is untrusted page
 // content: it is cut to its cap and validated like the extension's, and a canonical URL that
-// carries a secret is dropped, as GET /save drops it. A value that fails validation leaves the
-// address alone, so the save form looks as it does without a lookup.
+// carries a secret is dropped, as GET /save drops it, and the payload then carries the flag that
+// says so (#131), so a page that gives only that canonical URL still gives the flag. A value that
+// fails validation leaves the address alone, so the save form looks as it does without a lookup.
 async function pagePayload(
   url: string,
   fetchedUrl: string,

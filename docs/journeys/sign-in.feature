@@ -61,6 +61,23 @@ Feature: Signing in and out
     And the header shows only the Haystack wordmark
 
   @integration:apps/worker/test/sign-in.test.ts
+  @integration:apps/worker/test/save-form.test.ts
+  @integration:apps/worker/test/save-post.test.ts
+  Scenario: A save link for a page that declared a private address keeps that fact through sign-in
+    The address itself is never kept. What the link carries is the fact that
+    the page declared one, so the save form after sign-in records it, as it
+    would have without the detour. The tests check it in parts: the stored
+    return page and the form after sign-in in one, and what Save stores for
+    that form in another.
+
+    Given I am not signed in to Haystack
+    When I open a save link for a page that declared a canonical address containing an access token
+    Then I am sent to Google, and the stored return page does not contain the access token
+    When I sign in with a Google account that Haystack allows
+    Then I land on the save form for the page
+    And Haystack records, when I press Save, that the page declared an address with a secret
+
+  @integration:apps/worker/test/sign-in.test.ts
   Scenario: A hand-built sign-in link to a save link with a secret lands on my saved links
     Given I am not signed in to Haystack
     And someone gave me a Haystack sign-in link whose page to return to is a save link with an access token in its address

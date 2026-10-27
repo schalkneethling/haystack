@@ -1,9 +1,12 @@
 export {
   CAPTURE_CAPS,
+  CAPTURE_KEYS,
   type CaptureField,
   CapturePayload,
   type CaptureValidation,
+  declaredSensitiveCanonical,
   isHttpsUrl,
+  SENSITIVE_CANONICAL_DROPPED,
   validateCapturePayload,
 } from "./capture-payload.ts";
 export {

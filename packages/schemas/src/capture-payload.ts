@@ -16,6 +16,18 @@ export const CAPTURE_CAPS = {
   og_site_name: 100,
 } as const;
 
+/**
+ * The query key of the flag that says the page declared a canonical URL that `detectSensitiveUrl`
+ * flags, and that the URL was dropped (#131). It is the column's name. It is not a captured
+ * field: it has no cap and never holds a value from the page, so it is not in CAPTURE_CAPS. It
+ * is in the payload, so that it travels with the fields in the save link, in the form's hidden
+ * inputs and through the signed-out return target.
+ */
+export const SENSITIVE_CANONICAL_DROPPED = "sensitive_canonical_dropped";
+
+/** The only value of the flag that counts as set. Any other value is read as not set. */
+const FLAG_SET = "1";
+
 // The URL parser silently strips leading control characters, removes tab, CR, and LF
 // anywhere, trims trailing spaces, and percent-encodes inner ones. The stored URL is the
 // submitted string, so it must already be what the parser reads: no C0 control characters,
@@ -76,6 +88,17 @@ function omitUndefined<T extends object>(value: T): T {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
 }
 
+// The flag is a hint, so a value other than "1" is not an error: it is read as not set, and
+// `omitUndefined` leaves it out of the payload. `unknown` keeps even a non-string from failing.
+const canonicalDroppedFlag = v.optional(
+  v.pipe(
+    v.unknown(),
+    v.transform((value): typeof FLAG_SET | undefined =>
+      value === FLAG_SET ? FLAG_SET : undefined,
+    ),
+  ),
+);
+
 export const CapturePayload = v.pipe(
   v.object({
     url: v.pipe(
@@ -94,21 +117,44 @@ export const CapturePayload = v.pipe(
     og_title: optionalText(CAPTURE_CAPS.og_title),
     og_description: optionalText(CAPTURE_CAPS.og_description),
     og_site_name: optionalText(CAPTURE_CAPS.og_site_name),
+    // Last, so that a save link lists it after the fields, as the popup builds it.
+    [SENSITIVE_CANONICAL_DROPPED]: canonicalDroppedFlag,
   }),
   v.transform(omitUndefined),
 );
 
 export type CapturePayload = v.InferOutput<typeof CapturePayload>;
 
-// Every field has a cap, and every cap has a field.
+// Every field has a cap, and every cap has a field. The flag is the payload's only key without one.
 type SameKeys<A, B> = [keyof A] extends [keyof B]
   ? [keyof B] extends [keyof A]
     ? true
     : false
   : false;
-true satisfies SameKeys<typeof CAPTURE_CAPS, v.InferInput<typeof CapturePayload>>;
+true satisfies SameKeys<
+  typeof CAPTURE_CAPS,
+  Omit<v.InferInput<typeof CapturePayload>, typeof SENSITIVE_CANONICAL_DROPPED>
+>;
 
 export type CaptureField = keyof typeof CAPTURE_CAPS;
+
+/**
+ * Every query key `/save` reads: the captured fields and the flag. A link, a form submission and
+ * a return target keep the flag by reading and writing it with the fields.
+ */
+export const CAPTURE_KEYS: readonly string[] = [
+  ...Object.keys(CAPTURE_CAPS),
+  SENSITIVE_CANONICAL_DROPPED,
+];
+
+/**
+ * Whether the payload says that the page declared a canonical URL that `detectSensitiveUrl`
+ * flags (#131). Readers use this and do not compare the value themselves. The flag comes from
+ * the client, so it is evidence and not proof.
+ */
+export function declaredSensitiveCanonical(payload: CapturePayload): boolean {
+  return payload[SENSITIVE_CANONICAL_DROPPED] === FLAG_SET;
+}
 
 export type CaptureValidation =
   | { ok: true; payload: CapturePayload }
