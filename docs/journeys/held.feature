@@ -246,6 +246,14 @@ Feature: Reviewing links that Haystack held back or couldn't describe
       Release is sent only when its checkbox is ticked, so the checkbox is
       ticked before the session ends.
 
+      The integration tests send the form without a session, rather than
+      with one that has ended, and check the redirect to sign-in, which
+      names /held as the page to return to, and that nothing changes. No
+      test signs in afterwards and lands on /held, but the sign-in tests
+      follow other return targets through sign-in, and the authentication
+      tests check that an ended session is rejected and deleted, so the
+      request is handled as one without a session.
+
       Given my browser has JavaScript turned off
       And I opened /held while I was signed in
       And I ticked "This link does not give access to anything private" on the card for "A guide"
@@ -256,6 +264,9 @@ Feature: Reviewing links that Haystack held back or couldn't describe
 
     @integration:apps/worker/test/held.test.ts
     Scenario Outline: Pressing another button on /held after my session ended
+      The integration tests check these buttons as far as they check
+      Release in the scenario above.
+
       Given my browser has JavaScript turned off
       And I opened <the page> while I was signed in
       And my session has ended since
