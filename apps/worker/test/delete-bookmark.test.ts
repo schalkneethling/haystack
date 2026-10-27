@@ -226,7 +226,10 @@ describe("the list's delete buttons", () => {
       headers: { accept: "text/html", cookie: owner.cookie },
     });
     const markup = await response.text();
-    expect(markup).toContain(`<form method="post" action="/bookmarks/${bookmarkId}/delete">`);
+    // The attribute is how the dialog script tells a Delete button's form from the page's others.
+    expect(markup).toContain(
+      `<form method="post" action="/bookmarks/${bookmarkId}/delete" data-delete-form>`,
+    );
     expect(markup).toContain(
       `<button class="button button-small button-danger-outline" type="submit" id="delete-${bookmarkId}" aria-labelledby="delete-${bookmarkId} title-${bookmarkId}">Delete</button>`,
     );

@@ -2,18 +2,18 @@
 import { isHttpsUrl } from "@haystack/schemas";
 import { and, count, desc, eq, gt, or } from "drizzle-orm";
 import { ADDRESS_FORM_SCRIPT, addressFormCard } from "./address-form.ts";
+import { DELETE_DIALOG_SCRIPT, deleteForm, savedDate } from "./bookmark-card.ts";
+import { HELD_PATH } from "./bookmark-paths.ts";
 import type { Db } from "./db/client.ts";
 import { bookmarks } from "./db/schema.ts";
+import { errorCode } from "./error-code.ts";
+import { countBookmarksToReview, readReviewPolicy, type ReviewConfig } from "./held.ts";
 import { html, type SafeHtml } from "./html.ts";
-import { deleteAction } from "./bookmark-paths.ts";
-import { SENSITIVE_NOTICE } from "./notices.ts";
+import { type Outcome, SENSITIVE_NOTICE } from "./notices.ts";
 import { htmlResponse } from "./page.ts";
 
 // Until search arrives, the list shows the newest links only.
 export const RECENT_SAVES_LIMIT = 50;
-
-// Dates are shown in UTC: the server does not know the reader's time zone.
-const SAVED_DATE = new Intl.DateTimeFormat("en", { dateStyle: "long", timeZone: "UTC" });
 
 /**
  * Links `content` to a saved address. Escaping does not make a URL safe, so only an https URL
@@ -42,26 +42,19 @@ function withLineBreaks(text: string): SafeHtml {
 // An optional part starts with its own line break and sits at the end of the line before it,
 // so leaving it out leaves no blank line in the page.
 function item(save: RecentSave): SafeHtml {
-  const saved = new Date(save.createdAt);
   const description =
     save.description === null
       ? null
       : html`
         <p class="card-description">${withLineBreaks(save.description)}</p>`;
   // The date comes first, as the card shows it, so the reading order matches what is seen.
-  // The button's name is "Delete" followed by the title, so a list of them is told apart.
   return html`<li id="bookmark-${save.id}">
-        <p class="card-date">Saved <time datetime="${saved.toISOString()}">${SAVED_DATE.format(saved)}</time></p>
+        <p class="card-date">${savedDate(save.createdAt)}</p>
         <h2 id="title-${save.id}">${savedLink(save.url, save.title)}</h2>
         <p class="address">${save.url}</p>${description}
-        <form method="post" action="${deleteAction(save.id)}">
-          <button class="button button-small button-danger-outline" type="submit" id="delete-${save.id}" aria-labelledby="delete-${save.id} title-${save.id}">Delete</button>
-        </form>
+        ${deleteForm(save.id)}
       </li>`;
 }
-
-// The dialog script deletes items in place, so it reveals the empty state after the last one.
-const DELETE_DIALOG_SCRIPT = "/assets/delete-dialog.js";
 
 function list(saves: readonly RecentSave[], more: boolean): SafeHtml {
   // With older links beyond the limit, an emptied list does not mean nothing is saved.
@@ -113,22 +106,40 @@ export async function isInRecentSaves(
   return (newer?.n ?? 0) < RECENT_SAVES_LIMIT;
 }
 
-/** The result of an action, such as deleting a bookmark, shown on the list page. */
-export interface Outcome {
-  // Comes first in the page title.
-  title: string;
-  // Shown in the list's live region, which is on the page on every load, so the dialog
-  // script can announce a deletion in it.
-  message: SafeHtml;
+/**
+ * How many of the user's bookmarks wait on /held, or 0 when the configuration the state depends
+ * on can't be read. /held throws for that, as the sweep does, because it can't tell which
+ * bookmarks to show. The saved links page doesn't need the state to save or list links, so it
+ * logs the error's code and goes on without the link.
+ */
+async function countToReview(db: Db, userId: string, config: ReviewConfig): Promise<number> {
+  let policy;
+  try {
+    policy = readReviewPolicy(config);
+  } catch (error) {
+    console.error("Review count skipped:", errorCode(error));
+    return 0;
+  }
+  return countBookmarksToReview(db, userId, policy);
+}
+
+// Shown only when there is something to review, before the notice and the list.
+function reviewLink(count: number): SafeHtml | null {
+  if (count === 0) {
+    return null;
+  }
+  return html`
+      <p class="callout"><a href="${HELD_PATH}">Review ${count} ${count === 1 ? "link" : "links"}</a> that Haystack held back or couldn't describe.</p>`;
 }
 
 export async function showRecentSaves(
   db: Db,
   userId: string,
+  config: ReviewConfig,
   outcome: Outcome | null = null,
 ): Promise<Response> {
   // One extra row says whether there are more than the page shows.
-  const rows = await db
+  const listed = db
     .select({
       id: bookmarks.id,
       url: bookmarks.url,
@@ -140,13 +151,15 @@ export async function showRecentSaves(
     .where(eq(bookmarks.userId, userId))
     .orderBy(desc(bookmarks.createdAt), desc(bookmarks.id))
     .limit(RECENT_SAVES_LIMIT + 1);
+  const [rows, reviewCount] = await Promise.all([listed, countToReview(db, userId, config)]);
   const saves = rows.slice(0, RECENT_SAVES_LIMIT);
+  const message = outcome === null ? null : html`<p>${outcome.message}</p>`;
   return htmlResponse(
     outcome === null ? "Saved links" : `${outcome.title} - Saved links`,
     // The address form comes first, above the heading, as the design shows it.
     html`${addressFormCard()}
       <h1 id="list-heading">Saved links</h1>
-      <div id="list-status" class="status" role="status">${outcome?.message}</div>
+      <div id="list-status" class="status" role="status">${message}</div>${reviewLink(reviewCount)}
       ${SENSITIVE_NOTICE}
       ${list(saves, rows.length > RECENT_SAVES_LIMIT)}`,
     200,

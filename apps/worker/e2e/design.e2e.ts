@@ -7,6 +7,7 @@ import { expect, test } from "./fixtures.ts";
 import { INVALID_LINK, openRefusalPage } from "./rejected-save-pages.ts";
 import { saveThroughForm } from "./save-through-form.ts";
 import { ADDRESS_FORM_STATES, bringAddressFormTo, holdLookups } from "./held-lookups.ts";
+import { saveFailed, saveHeld } from "./review-items.ts";
 
 // One unbroken word, with no hyphen or slash a line could break at, so only `overflow-wrap` can
 // keep it inside the page (#33). The address is under the 2,048-character cap, and the title at
@@ -117,6 +118,19 @@ test.describe("at a 320 px viewport, nothing scrolls horizontally", () => {
       await expectNoHorizontalScroll(page);
     });
 
+    // A host is one label up to 63 characters long, so the longest has no break inside it either.
+    test("the review page with a long title and host on each kind of card", async ({
+      page,
+      run,
+    }) => {
+      const host = `${"h".repeat(63)}.example.com`;
+      await saveHeld(page, run, `https://${host}/reflow-held`, LONG_TITLE);
+      await saveFailed(page, run, `https://${host}/reflow-failed`, `${LONG_TITLE.slice(1)}F`);
+      await page.goto("/held");
+      await expect(page.getByText(host)).toHaveCount(2);
+      await expectNoHorizontalScroll(page);
+    });
+
     test("the recent saves list with a long address and title, and its delete dialog", async ({
       page,
     }) => {
@@ -217,6 +231,39 @@ for (const [colorScheme, ground] of [
           await expectNoViolations(page);
         });
       }
+
+      test("the empty review page", async ({ page }) => {
+        await page.goto("/held");
+        await expect(page.getByText("Nothing to review.")).toBeVisible();
+        await expectNoViolations(page);
+      });
+
+      // Each kind of card, a ticked checkbox, the saved links page's link to /held, the result
+      // of an action with its focus ring, and the delete dialog.
+      test("the review page and the link to it", async ({ page, run }) => {
+        await saveHeld(page, run, `https://example.com/axe-held-${colorScheme}`, "Held guide");
+        await saveHeld(page, run, `https://example.com/axe-held-2-${colorScheme}`, "Other guide");
+        await saveFailed(
+          page,
+          run,
+          `https://example.com/axe-failed-${colorScheme}`,
+          "Failed guide",
+        );
+        await page.goto("/");
+        await expect(page.getByRole("link", { name: "Review 3 links" })).toBeVisible();
+        await expectNoViolations(page);
+
+        await page.goto("/held");
+        await page.getByRole("checkbox").first().check();
+        await expectNoViolations(page);
+        await page.getByRole("button", { name: "Retry Failed guide" }).click();
+        await expect(page.locator("#list-status > p")).toBeFocused();
+        await page.waitForLoadState("load");
+        await expectNoViolations(page);
+        await page.getByRole("button", { name: "Delete Held guide" }).click();
+        await expect(page.getByRole("dialog")).toBeVisible();
+        await expectNoViolations(page);
+      });
 
       test("the recent saves list with the delete dialog open", async ({ page }) => {
         await openDeleteDialog(page, `https://example.com/axe-${colorScheme}`, "A guide");
@@ -394,6 +441,21 @@ test.describe("in forced colors", () => {
     await expect(message).toBeFocused();
     await expect(message).toHaveCSS("outline-style", "solid");
     await expect(message).toHaveCSS("outline-width", "3px");
+  });
+
+  // The checkbox is drawn in site.css, and its tick is a border, which forced colors keep.
+  test("Release's ticked checkbox keeps its tick", async ({ page, run }) => {
+    await saveHeld(page, run, "https://example.com/forced-colors-checkbox", "Held guide");
+    await page.goto("/held");
+    const checkbox = page.getByRole("checkbox");
+    const tick = () =>
+      checkbox.evaluate((element) => {
+        const style = getComputedStyle(element, "::before");
+        return { visibility: style.visibility, border: style.borderBottomStyle };
+      });
+    expect(await tick()).toEqual({ visibility: "hidden", border: "solid" });
+    await checkbox.check();
+    expect(await tick()).toEqual({ visibility: "visible", border: "solid" });
   });
 
   test("only the current page's link is outlined and underlined", async ({ page }) => {

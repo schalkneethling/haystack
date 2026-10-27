@@ -47,10 +47,11 @@ Feature: Pages a person can reach by mistake
   @integration:apps/worker/test/save-post.test.ts
   @integration:apps/worker/test/save-address.test.ts
   @integration:apps/worker/test/delete-bookmark.test.ts
+  @integration:apps/worker/test/held.test.ts
   Scenario Outline: A request from another site
     Every form that changes something must come from a Haystack page. A form
-    on another site that tries to save, delete or sign me out is refused, even
-    while I am signed in.
+    on another site that tries to save, delete, release, retry or sign me
+    out is refused, even while I am signed in.
 
     Given I am signed in to Haystack
     When a page on another site sends a form that would <change something>
@@ -58,11 +59,13 @@ Feature: Pages a person can reach by mistake
     And nothing changes in Haystack
 
     Examples:
-      | change something                    |
-      | save a link to my collection        |
-      | look a page up for the address form |
-      | delete one of my saved links        |
-      | sign me out                         |
+      | change something                        |
+      | save a link to my collection            |
+      | look a page up for the address form     |
+      | delete one of my saved links            |
+      | release a link Haystack held back       |
+      | retry a link Haystack couldn't describe |
+      | sign me out                             |
 
   @integration:apps/worker/test/save-form.test.ts
   @integration:apps/worker/test/save-post.test.ts

@@ -12,7 +12,10 @@ export interface PageOptions {
    * Sign out button. Every other page shows the wordmark only.
    */
   readonly signedIn: boolean;
-  /** The saved links page is wide, so its grid has room for columns. Every other page is narrow. */
+  /**
+   * The saved links page and /held are wide, so their grids have room for columns. Every other
+   * page is narrow.
+   */
   readonly width?: "narrow" | "wide";
   /** The navigation link to mark as the current page. */
   readonly current?: "saved-links";

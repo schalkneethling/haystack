@@ -146,7 +146,8 @@ export async function seedEnrichment(
 /**
  * A failure record for the bookmark at `schemaVersion`, with `attempts` permanent failures, and
  * `consecutiveFailures` in all, which are the permanent ones unless a test says otherwise. The
- * last attempt is now unless a test says otherwise.
+ * last attempt is now, and the last error is a placeholder that isn't in `last_error`'s format,
+ * unless a test says otherwise.
  */
 export async function seedEnrichmentFailure(
   db: D1Like,
@@ -155,12 +156,13 @@ export async function seedEnrichmentFailure(
   attempts: number,
   consecutiveFailures = attempts,
   lastAttemptAt = Date.now(),
+  lastError = "Seeded failure",
 ): Promise<void> {
   await db
     .prepare(
       "INSERT INTO enrichment_failures (bookmark_id, schema_version, attempts, consecutive_failures, last_error, last_attempt_at) VALUES (?, ?, ?, ?, ?, ?)",
     )
-    .bind(bookmarkId, schemaVersion, attempts, consecutiveFailures, "Seeded failure", lastAttemptAt)
+    .bind(bookmarkId, schemaVersion, attempts, consecutiveFailures, lastError, lastAttemptAt)
     .run();
 }
 
