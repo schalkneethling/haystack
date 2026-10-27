@@ -7,6 +7,7 @@ import {
   declaredSensitiveCanonical,
   SENSITIVE_CANONICAL_DROPPED,
   validateCapturePayload,
+  withSensitiveCanonicalDropped,
 } from "../src/index.ts";
 
 const full = {
@@ -175,6 +176,13 @@ describe("the flag that a canonical URL was dropped (#131)", () => {
     const payload = v.parse(CapturePayload, { url, [SENSITIVE_CANONICAL_DROPPED]: "1" });
     expect(payload).toEqual({ url, sensitive_canonical_dropped: "1" });
     expect(declaredSensitiveCanonical(payload)).toBe(true);
+  });
+
+  it("is written by withSensitiveCanonicalDropped, which the reader and the schema both accept", () => {
+    const written = withSensitiveCanonicalDropped({ url });
+    expect(written).toEqual({ url, sensitive_canonical_dropped: "1" });
+    expect(declaredSensitiveCanonical(written)).toBe(true);
+    expect(v.parse(CapturePayload, written)).toEqual(written);
   });
 
   it("is not set when the payload does not carry it", () => {

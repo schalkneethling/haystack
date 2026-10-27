@@ -156,6 +156,15 @@ export function declaredSensitiveCanonical(payload: CapturePayload): boolean {
   return payload[SENSITIVE_CANONICAL_DROPPED] === FLAG_SET;
 }
 
+/**
+ * The payload with the flag set (#131). It is the writer beside `declaredSensitiveCanonical`, so
+ * the flag's value is in this file alone. The flag is a fact about a drop, so only the code that
+ * drops a flagged canonical URL calls it.
+ */
+export function withSensitiveCanonicalDropped(payload: CapturePayload): CapturePayload {
+  return { ...payload, [SENSITIVE_CANONICAL_DROPPED]: FLAG_SET };
+}
+
 export type CaptureValidation =
   | { ok: true; payload: CapturePayload }
   | { ok: false; invalidFields: CaptureField[] };

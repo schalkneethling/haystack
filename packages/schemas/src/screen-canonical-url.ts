@@ -1,6 +1,6 @@
 // What both the extension's popup and the Worker's /save do with a canonical URL that carries
 // a secret. See "Sensitive URLs" in plans/haystack-v1-implementation-plan.md.
-import { type CapturePayload, SENSITIVE_CANONICAL_DROPPED } from "./capture-payload.ts";
+import { type CapturePayload, withSensitiveCanonicalDropped } from "./capture-payload.ts";
 import { detectSensitiveUrl } from "./detect-sensitive-url.ts";
 
 /**
@@ -27,5 +27,5 @@ export function withoutSensitiveCanonicalUrl(payload: CapturePayload): CapturePa
     return payload;
   }
   const { canonical_url: _dropped, ...rest } = payload;
-  return flagged ? { ...rest, [SENSITIVE_CANONICAL_DROPPED]: "1" } : rest;
+  return flagged ? withSensitiveCanonicalDropped(rest) : rest;
 }

@@ -56,8 +56,10 @@ function without(payload: CapturePayload, field: DroppableField): CapturePayload
  * that fits. A `url` that passed validation encodes to at most 6,144 characters and a title to
  * at most 1,800, so with a short origin the two fit without the rest. A very long origin could
  * leave that pair a few characters over, and then the URL is returned as it is, because it is
- * still far below the 16 KB limit that the budget keeps clear of. The flag adds 30 characters
- * to that, which is well within the same margin.
+ * still far below the 16 KB limit that the budget keeps clear of. The flag that a canonical URL
+ * was dropped adds 30 characters to that pair, so a page at every cap with a flagged canonical
+ * URL is a few characters over at any realistic origin, and still far below the limit. The
+ * arithmetic is in the plan, in the "Built in #73" bullet about the title.
  *
  * Run it on the payload that is sent, after `withoutSensitiveCanonicalUrl`, so that a canonical
  * URL dropped for carrying a secret does not cost another field its place.
