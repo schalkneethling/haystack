@@ -88,6 +88,20 @@ Feature: Reviewing links that Haystack held back or couldn't describe
         | with            | turned on        |
         | without         | turned off       |
 
+    @integration:apps/worker/test/held.test.ts
+    Scenario: Releasing a link that Haystack had already failed to describe
+      A link can be held back after Haystack tried to describe it several
+      times, for example when the threshold for private links is lowered.
+      Once released, it is one that Haystack couldn't describe, so it moves to
+      the other list, where Retry brings it back.
+
+      Given Haystack held back "A guide", and had already stopped trying to describe it
+      When I tick "This link does not give access to anything private" on its card
+      And I press "Release A guide"
+      Then the page's title is "Released “A guide” - Links to review - Haystack"
+      And the status message "Released “A guide”. Haystack couldn't describe it before, so it's now under “Not described”, where you can retry it." has focus
+      And the card for "A guide" is under the heading "Not described", with the button "Retry"
+
     @playwright:apps/worker/e2e/held.e2e.ts
     Scenario: Pressing Release without ticking the box
       Given Haystack held back "A guide"
@@ -156,6 +170,7 @@ Feature: Reviewing links that Haystack held back or couldn't describe
       And Haystack couldn't describe "A guide"
       When I press "Delete A guide"
       Then I see the page titled "Delete this link? - Haystack"
+      And it shows "Title: A guide" and "Site:" with the link's host, not its whole address, as the card does
       When I press "Delete"
       Then I am back on /held, and the page's title is "Deleted “A guide” - Links to review - Haystack"
       And the status message "Deleted “A guide”." has focus

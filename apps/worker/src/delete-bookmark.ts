@@ -2,11 +2,12 @@
 // Every lookup matches the bookmark's ID and the session's user together, and a miss is a 404
 // either way, so a response never reveals that another user's bookmark exists.
 import { and, eq } from "drizzle-orm";
+import { bookmarkHost } from "./bookmark-card.ts";
 import type { Db } from "./db/client.ts";
 import { bookmarks } from "./db/schema.ts";
 import { bookmarkAction, HELD_PATH, RETURN_FIELD } from "./bookmark-paths.ts";
 import { type ReviewConfig, showHeld } from "./held.ts";
-import { html } from "./html.ts";
+import { html, type SafeHtml } from "./html.ts";
 import type { Outcome } from "./notices.ts";
 import { htmlResponse } from "./page.ts";
 import { notSavedPage } from "./pages.ts";
@@ -21,6 +22,14 @@ export type DeleteReturnPage = "/" | typeof HELD_PATH;
  */
 export function deleteReturnPage(form: FormData | undefined): DeleteReturnPage {
   return form?.get(RETURN_FIELD) === HELD_PATH ? HELD_PATH : "/";
+}
+
+// What the confirmation shows of the address. From /held it shows the host only, as the card
+// does, because the rest of a Held link's address may be what makes it private.
+function addressLine(url: string, returnPage: DeleteReturnPage): SafeHtml {
+  return returnPage === HELD_PATH
+    ? html`<p><strong>Site:</strong> <span class="address">${bookmarkHost(url)}</span></p>`
+    : html`<p><strong>Address:</strong> <span class="address">${url}</span></p>`;
 }
 
 // Where "Keep it" goes back to, at the bookmark's card.
@@ -45,7 +54,7 @@ function confirmationPage(
     "Delete this link?",
     html`<h1>Delete this link?</h1>
       <p><strong>Title:</strong> ${title}</p>
-      <p><strong>Address:</strong> <span class="address">${url}</span></p>
+      ${addressLine(url, returnPage)}
       <p>Deleting is permanent. You can save the link again later.</p>
       <form method="post" action="${bookmarkAction(bookmarkId, "delete")}">
         <input type="hidden" name="confirm" value="yes">${returnField}

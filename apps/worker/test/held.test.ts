@@ -389,6 +389,29 @@ describe("POST /bookmarks/:id/release", () => {
     expect(await sweepSelection()).toEqual([id]);
   });
 
+  // Failed comes after Held in the state's order, so the sweep leaves it alone, and the message
+  // says where it went.
+  it("says a released bookmark at the attempt limit is now Failed, and lists it there", async () => {
+    const id = await saveFailed("https://example.com/held-and-failed", {
+      title: "A guide",
+      sensitivityNoul: threshold,
+      sensitivityCheckedAt: 1,
+    });
+    expect(sectionIds(await heldMarkup(), "held")).toEqual([id]);
+
+    const response = await release(id);
+    expect(response.status).toBe(200);
+    const markup = await response.text();
+    expect(markup).toContain("<title>Released “A guide” - Links to review - Haystack</title>");
+    expect(markup).toContain(
+      '<p tabindex="-1" autofocus>Released “A guide”. Haystack couldn&#39;t describe it before, so it&#39;s now under “Not described”, where you can retry it.</p>',
+    );
+    expect(sectionIds(markup, "held")).toEqual([]);
+    expect(sectionIds(markup, "failed")).toEqual([id]);
+    await expectValidHtml(markup);
+    expect(await sweepSelection()).toEqual([]);
+  });
+
   it("keeps the first acknowledgment when it is sent again, as a reload does", async () => {
     const id = await saveHeld("https://example.com/held", { sensitivityAcknowledgedAt: 5 });
     const response = await release(id);
@@ -484,6 +507,9 @@ describe("POST /bookmarks/:id/retry", () => {
     // Attempts at an older version are that version's, so they stay.
     await seedEnrichmentFailure(await d1(), id, OLDER_VERSION, attemptLimit);
     const other = await saveFailed("https://example.com/other", { title: "Another guide" });
+    // Another user's record for the same address, which the deletion must not reach.
+    const second = await seedSignedInUser(await d1(), "second@example.com");
+    const theirs = await saveFailed("https://example.com/failed", {}, second);
     expect(await sweepSelection()).toEqual([]);
 
     const response = await retry(id);
@@ -498,6 +524,7 @@ describe("POST /bookmarks/:id/retry", () => {
 
     expect(await failureVersions(id)).toEqual([OLDER_VERSION]);
     expect(await failureVersions(other)).toEqual([ENRICHMENT_SCHEMA_VERSION]);
+    expect(await failureVersions(theirs)).toEqual([ENRICHMENT_SCHEMA_VERSION]);
     // The record held the backoff window too, so the bookmark is tried in the next run.
     expect(await sweepSelection()).toEqual([id]);
   });
@@ -549,11 +576,19 @@ describe("deleting from /held", () => {
   }
 
   it("asks first, and the confirmation returns to /held, or keeps the link there", async () => {
-    const id = await saveHeld("https://example.com/held", { title: "A guide" });
+    const id = await saveHeld("https://drive.example.com/share/9f8e7d6c?key=s3cret", {
+      title: "A guide",
+    });
     const response = await deleteFromHeld(id);
     expect(response.status).toBe(200);
     const markup = await response.text();
     expect(markup).toContain("<h1>Delete this link?</h1>");
+    // The host only, as the card shows it, because the rest may be what makes the link private.
+    expect(markup).toContain(
+      '<p><strong>Site:</strong> <span class="address">drive.example.com</span></p>',
+    );
+    expect(markup).not.toContain("9f8e7d6c");
+    expect(markup).not.toContain("s3cret");
     expect(markup).toContain('<input type="hidden" name="confirm" value="yes">');
     expect(markup).toContain('<input type="hidden" name="return_to" value="/held">');
     expect(markup).toContain(

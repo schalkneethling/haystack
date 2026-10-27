@@ -3,25 +3,30 @@
 // them. See "Reviewing Held bookmarks" and "Enrichment sweep" in
 // plans/haystack-v1-implementation-plan.md.
 //
-// Each bookmark's state comes from readEnrichmentStateInputs and deriveEnrichmentState, which the
-// sweep's selection also derives its state with, so the page and the sweep can't disagree about
-// which bookmarks are Held or Failed. Every lookup matches the bookmark's ID and the session's
+// Each bookmark's state comes from the user's state input rows (state-inputs.ts), through
+// collectStateInputs and deriveEnrichmentState, which the sweep's selection also derives its
+// state with, so the page and the sweep can't disagree about which bookmarks are Held or Failed. Every lookup matches the bookmark's ID and the session's
 // user together, and a miss gets the delete's 404 page, so no answer reveals that another user's
 // bookmark exists.
 //
 // Release and Retry are ordinary forms that load the page again, with or without JavaScript,
 // because each is one quick write. Delete is the delete endpoint's (delete-bookmark.ts), whose
 // dialog script works here as on the saved links page.
-import { and, desc, eq, sql } from "drizzle-orm";
-import { DELETE_DIALOG_SCRIPT, deleteForm, savedDate } from "./bookmark-card.ts";
+import { and, eq, exists, sql } from "drizzle-orm";
+import { bookmarkHost, DELETE_DIALOG_SCRIPT, deleteForm, savedDate } from "./bookmark-card.ts";
 import { bookmarkAction, HELD_PATH } from "./bookmark-paths.ts";
 import type { Db } from "./db/client.ts";
 import { bookmarks, enrichmentFailures } from "./db/schema.ts";
 import type { EnrichmentFailureReason, EnrichmentStep } from "./enrichment/enrich-bookmark.ts";
 import { ENRICHMENT_SCHEMA_VERSION } from "./enrichment/enrichment-schema.ts";
-import { readEnrichmentStateInputs } from "./enrichment/state-inputs.ts";
+import {
+  collectStateInputs,
+  readEnrichmentStateInputs,
+  selectStateInputRows,
+} from "./enrichment/state-inputs.ts";
 import {
   deriveEnrichmentState,
+  type EnrichmentStateInputs,
   type EnrichmentStatePolicy,
   readSensitiveWarnThreshold,
   type SensitiveWarnThresholdConfig,
@@ -48,24 +53,16 @@ export function readReviewPolicy(config: ReviewConfig): EnrichmentStatePolicy {
   };
 }
 
-interface IdsToReview {
-  held: Set<string>;
-  failed: Set<string>;
-}
+/** The two kinds of bookmark that /held lists. */
+type ReviewKind = "held" | "failed";
 
-async function idsToReview(
-  db: Db,
-  userId: string,
+// The kind the bookmark is listed as, or undefined when it needs no review.
+function reviewKind(
+  inputs: EnrichmentStateInputs,
   policy: EnrichmentStatePolicy,
-): Promise<IdsToReview> {
-  const ids: IdsToReview = { held: new Set(), failed: new Set() };
-  for (const inputs of await readEnrichmentStateInputs(db, userId, policy.schemaVersion)) {
-    const state = deriveEnrichmentState(inputs, policy);
-    if (state === "held" || state === "failed") {
-      ids[state].add(inputs.bookmarkId);
-    }
-  }
-  return ids;
+): ReviewKind | undefined {
+  const state = deriveEnrichmentState(inputs, policy);
+  return state === "held" || state === "failed" ? state : undefined;
 }
 
 /** How many of the user's bookmarks are Held or Failed, for the link on the saved links page. */
@@ -74,8 +71,8 @@ export async function countBookmarksToReview(
   userId: string,
   policy: EnrichmentStatePolicy,
 ): Promise<number> {
-  const { held, failed } = await idsToReview(db, userId, policy);
-  return held.size + failed.size;
+  const inputs = await readEnrichmentStateInputs(db, userId, policy.schemaVersion);
+  return inputs.filter((bookmark) => reviewKind(bookmark, policy) !== undefined).length;
 }
 
 /**
@@ -123,16 +120,6 @@ export function failureInPlainWords(lastError: string | null): string {
   return `${stepWords} failed, because ${reasonWords}.`;
 }
 
-// The page shows the host, not the whole address, because a Held link may carry a secret.
-function host(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    // POST /save stores only URLs that parse, so only a change made by hand gets here.
-    return "an address Haystack can't read";
-  }
-}
-
 interface ReviewItem {
   id: string;
   url: string;
@@ -146,7 +133,7 @@ interface ReviewItem {
 function itemStart(item: ReviewItem): SafeHtml {
   return html`<p class="card-date">${savedDate(item.createdAt)}</p>
         <h3 id="title-${item.id}">${item.title}</h3>
-        <p class="address">${host(item.url)}</p>`;
+        <p class="address">${bookmarkHost(item.url)}</p>`;
 }
 
 /** The checkbox's label, which a release without it quotes. */
@@ -226,45 +213,33 @@ function section(content: SectionContent, items: readonly ReviewItem[]): SafeHtm
       </section>`;
 }
 
+/** The user's bookmarks of each kind, newest first, as the saved links page lists them. */
+type BookmarksToReview = Record<ReviewKind, ReviewItem[]>;
+
 /**
- * The user's bookmarks of each kind, newest first, as the saved links page lists them. The state
- * is derived first, from readEnrichmentStateInputs, and a second query reads what the page shows.
- * It reads every one of the user's bookmarks rather than the ones to review by ID, because D1
- * takes at most 100 bound parameters, and lowering the threshold could hold more than that.
+ * Reads the user's state input rows with the columns the page shows, in one query, and keeps the
+ * Held and Failed bookmarks. The failure record is the one at the current schema version, which
+ * the state is derived from, so `lastError` is that record's.
  */
 async function readBookmarksToReview(
   db: Db,
   userId: string,
   policy: EnrichmentStatePolicy,
-): Promise<{ held: ReviewItem[]; failed: ReviewItem[] }> {
-  const ids = await idsToReview(db, userId, policy);
-  const toReview = { held: [] as ReviewItem[], failed: [] as ReviewItem[] };
-  if (ids.held.size + ids.failed.size === 0) {
-    return toReview;
-  }
-  const rows = await db
-    .select({
-      id: bookmarks.id,
-      url: bookmarks.url,
-      title: bookmarks.title,
-      createdAt: bookmarks.createdAt,
-      lastError: enrichmentFailures.lastError,
-    })
-    .from(bookmarks)
-    .leftJoin(
-      enrichmentFailures,
-      and(
-        eq(enrichmentFailures.bookmarkId, bookmarks.id),
-        eq(enrichmentFailures.schemaVersion, policy.schemaVersion),
-      ),
-    )
-    .where(eq(bookmarks.userId, userId))
-    .orderBy(desc(bookmarks.createdAt), desc(bookmarks.id));
-  for (const row of rows) {
-    if (ids.held.has(row.id)) {
-      toReview.held.push(row);
-    } else if (ids.failed.has(row.id)) {
-      toReview.failed.push(row);
+): Promise<BookmarksToReview> {
+  const rows = await selectStateInputRows(db, userId, policy.schemaVersion, {
+    url: bookmarks.url,
+    title: bookmarks.title,
+    createdAt: bookmarks.createdAt,
+    lastError: enrichmentFailures.lastError,
+  });
+  const toReview: BookmarksToReview = { held: [], failed: [] };
+  // The rows are oldest first, by the date saved and then the ID, so going through them backwards
+  // gives the saved links page's order.
+  for (const bookmark of collectStateInputs(rows, policy.schemaVersion).reverse()) {
+    const kind = reviewKind(bookmark, policy);
+    if (kind !== undefined) {
+      const { bookmarkId: id, url, title, createdAt, lastError } = bookmark;
+      toReview[kind].push({ id, url, title, createdAt, lastError });
     }
   }
   return toReview;
@@ -273,19 +248,16 @@ async function readBookmarksToReview(
 const PAGE_TITLE = "Links to review";
 
 /**
- * GET /held, and the page every action here answers with. An outcome's message takes focus when
- * the page loads (`autofocus`), so a screen reader reads the result, and Tab goes on to the
- * links that are left. The IDs of the heading, the status region and the empty state are the
- * saved links page's, because the dialog script (delete-dialog.js) finds them by those IDs.
+ * The page every route here answers with. An outcome's message takes focus when the page loads
+ * (`autofocus`), so a screen reader reads the result, and Tab goes on to the links that are left.
+ * The IDs of the heading, the status region and the empty state are the saved links page's,
+ * because the dialog script (delete-dialog.js) finds them by those IDs.
  */
-export async function showHeld(
-  db: Db,
-  userId: string,
-  config: ReviewConfig,
-  outcome: Outcome | null = null,
-  status = 200,
-): Promise<Response> {
-  const { held, failed } = await readBookmarksToReview(db, userId, readReviewPolicy(config));
+function heldPage(
+  { held, failed }: BookmarksToReview,
+  outcome: Outcome | null,
+  status: number,
+): Response {
   const empty = held.length + failed.length === 0;
   const message = outcome === null ? null : html`<p tabindex="-1" autofocus>${outcome.message}</p>`;
   return htmlResponse(
@@ -299,6 +271,18 @@ export async function showHeld(
     status,
     { signedIn: true, width: "wide", scripts: [DELETE_DIALOG_SCRIPT] },
   );
+}
+
+/** GET /held, and the page that Retry, a refused Release and a Delete from /held answer with. */
+export async function showHeld(
+  db: Db,
+  userId: string,
+  config: ReviewConfig,
+  outcome: Outcome | null = null,
+  status = 200,
+): Promise<Response> {
+  const toReview = await readBookmarksToReview(db, userId, readReviewPolicy(config));
+  return heldPage(toReview, outcome, status);
 }
 
 // The user's own bookmark, by ID.
@@ -317,7 +301,10 @@ async function isNotPrivateConfirmed(request: Request): Promise<boolean> {
 
 /**
  * POST /bookmarks/:id/release. With the checkbox ticked, it records that the user confirmed the
- * link isn't private, which ends the Held state (isHeld), so the sweep can enrich it. A reload
+ * link isn't private, which ends the Held state (isHeld), so the sweep can enrich it. A bookmark
+ * that had reached the attempt limit before it was held is Failed once released, because Failed
+ * comes after Held in the state's order, so the sweep leaves it alone. The page's own rows say
+ * which it became, and the message says so, pointing to Retry. A reload
  * posts again and keeps the first time, which is what the calibration reads ("Probabilistic
  * check with Jev"). Without the checkbox, which only a browser that skips `required` or a request
  * built by hand can send, nothing changes, and the page says why.
@@ -360,10 +347,18 @@ export async function releaseBookmark(
   if (released === undefined) {
     return notSavedPage();
   }
-  return showHeld(db, userId, config, {
-    title: `Released “${released.title}”`,
-    message: `Released “${released.title}”. Haystack can now describe it.`,
-  });
+  const toReview = await readBookmarksToReview(db, userId, readReviewPolicy(config));
+  const failed = toReview.failed.some((item) => item.id === bookmarkId);
+  return heldPage(
+    toReview,
+    {
+      title: `Released “${released.title}”`,
+      message: failed
+        ? `Released “${released.title}”. Haystack couldn't describe it before, so it's now under “${FAILED_SECTION.heading}”, where you can retry it.`
+        : `Released “${released.title}”. Haystack can now describe it.`,
+    },
+    200,
+  );
 }
 
 /**
@@ -371,6 +366,10 @@ export async function releaseBookmark(
  * version, which ends the Failed state, so the sweep tries it again in its next run, outside any
  * backoff window, because the window is the record's too. A record at another version is left
  * alone, because it is that version's count. A reload posts again, which does nothing more.
+ *
+ * The title is read first, for the message and for the 404. The deletion checks the owner again
+ * itself, as release and delete do in their writes, so it can't touch another user's record
+ * whatever the order of the statements.
  */
 export async function retryBookmark(
   db: Db,
@@ -386,14 +385,20 @@ export async function retryBookmark(
   if (bookmark === undefined) {
     return notSavedPage();
   }
-  await db
-    .delete(enrichmentFailures)
-    .where(
-      and(
-        eq(enrichmentFailures.bookmarkId, bookmarkId),
-        eq(enrichmentFailures.schemaVersion, ENRICHMENT_SCHEMA_VERSION),
+  await db.delete(enrichmentFailures).where(
+    and(
+      eq(enrichmentFailures.bookmarkId, bookmarkId),
+      eq(enrichmentFailures.schemaVersion, ENRICHMENT_SCHEMA_VERSION),
+      exists(
+        db
+          .select({ id: bookmarks.id })
+          .from(bookmarks)
+          .where(
+            and(eq(bookmarks.id, enrichmentFailures.bookmarkId), eq(bookmarks.userId, userId)),
+          ),
       ),
-    );
+    ),
+  );
   return showHeld(db, userId, config, {
     title: `Retrying “${bookmark.title}”`,
     message: `Retrying “${bookmark.title}”. Haystack will try to describe it again soon.`,

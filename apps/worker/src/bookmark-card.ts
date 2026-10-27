@@ -1,5 +1,5 @@
 // The parts of a bookmark's card that the saved links page and the review page at /held share:
-// the date it was saved, and its Delete button, which the dialog script enhances.
+// the date it was saved, its host, and its Delete button, which the dialog script enhances.
 import { bookmarkAction, HELD_PATH, RETURN_FIELD } from "./bookmark-paths.ts";
 import { html, type SafeHtml } from "./html.ts";
 
@@ -17,6 +17,19 @@ const SAVED_DATE = new Intl.DateTimeFormat("en", { dateStyle: "long", timeZone: 
 export function savedDate(createdAt: number): SafeHtml {
   const saved = new Date(createdAt);
   return html`Saved <time datetime="${saved.toISOString()}">${SAVED_DATE.format(saved)}</time>`;
+}
+
+/**
+ * The host of a bookmark's address, which /held and its delete confirmation show instead of the
+ * whole address, because the rest of a Held link's address may be what makes it private.
+ */
+export function bookmarkHost(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    // POST /save stores only URLs that parse, so only a change made by hand gets here.
+    return "an address Haystack can't read";
+  }
 }
 
 /**
