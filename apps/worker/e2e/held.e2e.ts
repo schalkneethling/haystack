@@ -1,8 +1,8 @@
 // The review page at /held (#129). Release and Retry are ordinary forms that load the page again,
 // with or without JavaScript, and their result is in the page title and the status message, while
-// focus is left to the browser. Delete is the delete dialog's with
-// JavaScript, which deletes in place, and the confirmation page's without (plan, "Deleting
-// bookmarks"). The page's design is tested in design.e2e.ts.
+// focus is left to the browser. Delete is the delete dialog's with JavaScript, which deletes in
+// place, and the confirmation page's without (plan, "Deleting bookmarks"). The page's design is
+// tested in design.e2e.ts.
 import type { Locator, Page } from "@playwright/test";
 import { expect, type HaystackWorker, test } from "./fixtures.ts";
 import { listStatus } from "./list-status.ts";
@@ -19,9 +19,14 @@ function card(page: Page, title: string): Locator {
 /**
  * Checks that nothing took focus when the page loaded, so the page starts from the top, as the
  * browser leaves it. Only the body has focus, and the result message is not focusable.
+ *
+ * The test waits for the load event first, because the browser applies `autofocus` only once the
+ * page's stylesheets have loaded, so a look at the focus before then would pass with `autofocus`
+ * still on the message.
  */
 async function expectFocusNotMoved(page: Page): Promise<void> {
-  expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+  await page.waitForLoadState("load");
+  await expect(page.locator("body")).toBeFocused();
   await expect(listStatus(page).locator("p")).not.toHaveAttribute("tabindex");
 }
 

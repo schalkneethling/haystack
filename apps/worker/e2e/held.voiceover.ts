@@ -10,8 +10,8 @@
 // so the test presses it the same way: the VoiceOver cursor is moved to the focused button, and
 // VoiceOver's own action presses it, capturing what is spoken until it stops. Once the page that
 // loads has its title, the whole log is searched, and if the result isn't in it yet,
-// waitForSpoken looks at later phrases, as address-form.voiceover.ts does. It was written without
-// a local run, so its first CI run is its first check.
+// waitForSpoken looks at later phrases, as address-form.voiceover.ts does. The test can't run
+// locally, so its first CI run after #181 is its first check with nothing focused.
 import type { VoiceOverPlaywright } from "@guidepup/playwright";
 import type { Page } from "@playwright/test";
 import { saveFailed, saveHeld } from "./review-items.ts";
@@ -67,7 +67,9 @@ test("releasing a Held link announces that it was released", async ({
     voiceOver,
     `Release ${TITLE}`,
     `Released “${TITLE}” - Links to review - Haystack`,
-    new RegExp(`\\breleased\\b.*${TITLE}.*\\blinks to review\\b`, "i"),
+    // Only the title's first words, because Guidepup sometimes records only part of an
+    // announcement (#151, save-pages.voiceover.ts). Nothing is focused, so only the title says it.
+    new RegExp(`\\breleased\\b.*${TITLE}`, "i"),
   );
   await expect(page.getByRole("button", { name: `Release ${TITLE}` })).toHaveCount(0);
   const [row] = await query(
@@ -91,7 +93,7 @@ test("retrying a Failed link announces that it is being retried", async ({
     voiceOver,
     `Retry ${TITLE}`,
     `Retrying “${TITLE}” - Links to review - Haystack`,
-    new RegExp(`\\bretrying\\b.*${TITLE}.*\\blinks to review\\b`, "i"),
+    new RegExp(`\\bretrying\\b.*${TITLE}`, "i"),
   );
   await expect(page.getByRole("button", { name: `Retry ${TITLE}` })).toHaveCount(0);
   const records = await query(
