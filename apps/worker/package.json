@@ -41,7 +41,7 @@
     "@varlock/1password-plugin": "^2.0.5",
     "@varlock/cloudflare-integration": "^1.6.1",
     "drizzle-kit": "^0.31.11",
-    "html-validate": "^11.16.2",
+    "html-validate": "^11.17.0",
     "msw": "^3.0.3",
     "varlock": "^1.22.0",
     "vite": "catalog:",
