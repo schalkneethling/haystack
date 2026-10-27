@@ -5,8 +5,9 @@ Feature: Pages a person can reach by mistake
   their behalf. Each answer says what happened without revealing anything
   that isn't theirs and, where there is one, offers a way back. A form sent
   after the session ended usually has no page of its own, because Haystack
-  sends it through sign-in and on to the page it was for. Only a form that
-  carries a secret gets a page, before anything is stored.
+  sends it through sign-in and on to the page it was for. A form that Haystack
+  would reject anyway gets a page before sign-in, so nothing is stored for it:
+  one that carries a secret is the example the scenarios below show.
 
   Some of these answers are plain text rather than a page, because they are
   meant for requests that are not a person opening a page or pressing a

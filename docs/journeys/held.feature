@@ -242,7 +242,20 @@ Feature: Reviewing links that Haystack held back or couldn't describe
         | held back                      | delete  |
 
     @integration:apps/worker/test/held.test.ts
-    Scenario Outline: Pressing a button on /held after my session ended
+    Scenario: Pressing Release on /held after my session ended
+      Release is sent only when its checkbox is ticked, so the checkbox is
+      ticked before the session ends.
+
+      Given my browser has JavaScript turned off
+      And I opened /held while I was signed in
+      And I ticked "This link does not give access to anything private" on the card for "A guide"
+      And my session has ended since
+      When I press "Release A guide"
+      Then I am sent to Google to sign in, and back to /held afterwards
+      And nothing changes in Haystack
+
+    @integration:apps/worker/test/held.test.ts
+    Scenario Outline: Pressing another button on /held after my session ended
       Given my browser has JavaScript turned off
       And I opened <the page> while I was signed in
       And my session has ended since
@@ -252,7 +265,6 @@ Feature: Reviewing links that Haystack held back or couldn't describe
 
       Examples:
         | the page                                | the button      |
-        | /held                                   | Release A guide |
         | /held                                   | Retry A guide   |
         | /held                                   | Delete A guide  |
         | the delete confirmation page from /held | Delete          |
