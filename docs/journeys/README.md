@@ -1,6 +1,6 @@
 # User journeys
 
-The files in this folder describe, in plain language, what a person can do with Haystack and what happens when something goes wrong. Each journey is a scenario written in Gherkin, the language that Cucumber reads, in which every step starts with Given, When or Then. The scenarios cover Milestone 1 and the review page at /held, which Milestone 2 adds (#129). They were last checked against the code and tests of `main` at df18c58.
+The files in this folder describe, in plain language, what a person can do with Haystack and what happens when something goes wrong. Each journey is a scenario written in Gherkin, the language that Cucumber reads, in which every step starts with Given, When or Then. The scenarios cover Milestone 1 and the review page at /held, which Milestone 2 adds (#129). They are kept in step with `main`, as the section "Keeping them in step with the code" below describes.
 
 They are documentation, and the input for new Playwright tests. They do not run: there is no Cucumber, no other Gherkin runner and no step definitions, so nothing checks a scenario against the code except the tests named in its tags and the people who read it.
 
@@ -35,7 +35,7 @@ A tag means that the test checks the behaviour the scenario describes, which was
 
 ## Keeping them in step with the code
 
-The journeys change with the behaviour they describe, in the same pull request.
+The journeys change with the behaviour they describe, in the same pull request. Every pull request that changes behaviour updates the journeys that describe it, so `main` and its journeys agree.
 
 - **New behaviour** gets its journey written before or with its tests, and the scenario names those tests in its tags.
 - **A change to wording** that a person sees or hears, such as a message or a button label, changes every scenario that quotes it. Searching this folder for the old wording finds them.

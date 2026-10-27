@@ -244,14 +244,15 @@ Feature: Reviewing links that Haystack held back or couldn't describe
     @integration:apps/worker/test/held.test.ts
     Scenario Outline: Pressing a button on /held after my session ended
       Given my browser has JavaScript turned off
-      And I opened /held while I was signed in
+      And I opened <the page> while I was signed in
       And my session has ended since
       When I press "<the button>"
       Then I am sent to Google to sign in, and back to /held afterwards
       And nothing changes in Haystack
 
       Examples:
-        | the button      |
-        | Release A guide |
-        | Retry A guide   |
-        | Delete A guide  |
+        | the page                                | the button      |
+        | /held                                   | Release A guide |
+        | /held                                   | Retry A guide   |
+        | /held                                   | Delete A guide  |
+        | the delete confirmation page from /held | Delete          |
