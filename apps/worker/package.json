@@ -45,6 +45,6 @@
     "msw": "^3.0.3",
     "varlock": "^1.23.0",
     "vite": "catalog:",
-    "wrangler": "4.151.0"
+    "wrangler": "4.151.3"
   }
 }
