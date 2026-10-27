@@ -49,10 +49,16 @@ export const JEV_MAX_RETRY_DELAY_MS = 5000;
 // clients that failed together don't all retry at the same moment.
 const BACKOFF_JITTER = 0.25;
 
-/** The time limits. The tests shorten them. */
+/**
+ * How long a question may take: each attempt's time limit, the first backoff, and how many
+ * attempts it makes. The tests shorten them, and the save form's check (#132) makes one attempt.
+ */
 export interface JevTiming {
   readonly attemptTimeoutMs: number;
   readonly backoffInitialMs: number;
+  // At most JEV_ATTEMPT_LIMIT, which a larger value is capped to, and JEV_ATTEMPT_LIMIT when
+  // absent.
+  readonly attemptLimit?: number;
 }
 
 export const JEV_TIMING: JevTiming = {
@@ -312,7 +318,8 @@ export function assertJevConfig(config: JevConfig): void {
 
 /**
  * Asks Jev one question. Transient failures are retried, with a backoff between attempts, up to
- * JEV_ATTEMPT_LIMIT requests in all; a permanent or `account` failure ends the question at once.
+ * the timing's attempt limit, which is JEV_ATTEMPT_LIMIT requests in all at most; a permanent or
+ * `account` failure ends the question at once.
  * Throws for an empty key, or for a base URL that is missing, doesn't parse, or is neither https
  * nor http on a loopback host, before anything is sent, because those are configuration errors
  * rather than failures of the question.
@@ -341,6 +348,7 @@ export async function askJev<Answer>(
     body: JSON.stringify({ model: config.JEV_MODEL, state, questions: { [id]: question } }),
     redirect: "manual",
   };
+  const attemptLimit = Math.min(timing.attemptLimit ?? JEV_ATTEMPT_LIMIT, JEV_ATTEMPT_LIMIT);
   for (let attempts = 1; ; attempts += 1) {
     const outcome = await attempt(url, init, timing.attemptTimeoutMs);
     if (outcome.ok) {
@@ -358,7 +366,7 @@ export async function askJev<Answer>(
     };
     // An `account` failure would get the same answer again, as a permanent one would. A run that
     // has stopped wants no more paid attempts.
-    if (outcome.failure !== "transient" || attempts === JEV_ATTEMPT_LIMIT || signal?.aborted) {
+    if (outcome.failure !== "transient" || attempts >= attemptLimit || signal?.aborted) {
       return failure;
     }
     const delay = retryDelayMs(attempts, outcome.headers, timing);

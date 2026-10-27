@@ -1,6 +1,8 @@
-// The save flow. See "Save flow", "Sensitive URLs", and "URL normalization" in
-// plans/haystack-v1-implementation-plan.md. GET /save shows the confirmation form and never
-// writes. The confirmation click is what stops other sites from saving into a user's account.
+// The save flow. See "Save flow", "Sensitive URLs", "Probabilistic check with Jev", and "URL
+// normalization" in plans/haystack-v1-implementation-plan.md. GET /save shows the confirmation
+// form and never writes. The confirmation click is what stops other sites from saving into a
+// user's account. Both GET and POST ask Jev whether the link looks private (save-sensitivity.ts),
+// and above the threshold the form warns and asks for a checkbox before it saves (#132).
 import {
   CAPTURE_CAPS,
   CAPTURE_KEYS,
@@ -21,10 +23,21 @@ import { and, eq } from "drizzle-orm";
 import { addressFormPage, type AddressFormState } from "./address-form.ts";
 import type { Db } from "./db/client.ts";
 import { bookmarks } from "./db/schema.ts";
-import { html } from "./html.ts";
+import { html, type SafeHtml } from "./html.ts";
+import {
+  isNotPrivateConfirmed,
+  NOT_PRIVATE_LABEL,
+  notPrivateCheckbox,
+} from "./not-private-checkbox.ts";
 import { fieldError, SENSITIVE_NOTICE } from "./notices.ts";
 import { htmlResponse } from "./page.ts";
 import { isInRecentSaves, RECENT_SAVES_LIMIT, type ListPosition } from "./recent-saves.ts";
+import {
+  checkSaveSensitivity,
+  logWarningShown,
+  type SaveSensitivityConfig,
+  type SensitivityCheck,
+} from "./save-sensitivity.ts";
 
 const FIELD_LABELS: Record<CaptureField, string> = {
   url: "The address of the page",
@@ -143,12 +156,25 @@ const NOT_KEPT = { name: "confirmed_values", value: "not-kept" } as const;
  */
 type Resumed = "kept" | "not-kept";
 
+/** A field the form can reject: the title, the description, or the unticked checkbox (#132). */
+type FormField = ConfirmedField | "acknowledgment";
+
+/** Jev's check warned that the link might be private (save-sensitivity.ts). */
+interface SensitivityWarning {
+  // Logged when the form shows the warning, for the calibration.
+  noul: number;
+  // The box was ticked, on a form that comes back for another reason.
+  acknowledged: boolean;
+}
+
 interface FormState {
   title: string;
   description: string;
   // Set when a submitted value was rejected; the form is shown again with it.
-  invalid?: ConfirmedField;
+  invalid?: FormField;
   resumed?: Resumed;
+  // Set when the form warns and asks for the checkbox.
+  warning?: SensitivityWarning;
 }
 
 // The message after the heading of a form that came back after sign-in. Pressing Save did not
@@ -162,9 +188,10 @@ const RESUMED_MESSAGES: Record<Resumed, string> = {
     "This link is not saved yet, and its address is too long to keep the title and description with it. Enter them again, then press Save.",
 };
 
-const CONFIRMED_ERRORS: Record<ConfirmedField, string> = {
+const FORM_ERRORS: Record<FormField, string> = {
   title: `Enter a title of up to ${CAPTURE_CAPS.title} characters.`,
   description: `Shorten the description to ${CAPTURE_CAPS.description} characters or fewer.`,
+  acknowledgment: `Tick “${NOT_PRIVATE_LABEL}” to save this link.`,
 };
 
 // The prefill for a new form. A text input drops line breaks, which would join words, so
@@ -197,9 +224,43 @@ function formTitle(state: FormState): string {
   return state.resumed === undefined ? "Save a link" : "Not saved yet";
 }
 
+/** The warning, when the form has one, for a form state built from Jev's check. */
+function warningFrom(check: SensitivityCheck, acknowledged: boolean): Pick<FormState, "warning"> {
+  return check.answered && check.warns ? { warning: { noul: check.noul, acknowledged } } : {};
+}
+
+// The warning comes right after the notice about private links, because both are about the
+// address, and the checkbox right after the warning, which describes it. So a screen reader reads
+// the warning first, whether the user reads on or moves straight to the checkbox. A rejected box
+// reads the error first, then the warning, as a rejected field reads its error.
+function sensitivityCheck({ warning, invalid }: FormState): SafeHtml | null {
+  if (warning === undefined) {
+    return null;
+  }
+  const rejected = invalid === "acknowledgment";
+  return html`<div class="sensitivity-check">
+          <p id="sensitivity-warning" class="warning">
+            <strong>This link looks as if it might be private.</strong> Haystack checked its
+            address, and it looks like a link that lets in anyone who has it, such as a private
+            share, an invitation, or a sign-in or download link. Save it only if it doesn't give
+            access to anything private.
+          </p>
+          ${notPrivateCheckbox({
+            id: "not-private",
+            describedBy: rejected ? "save-error sensitivity-warning" : "sensitivity-warning",
+            checked: warning.acknowledged,
+            invalid: rejected,
+          })}
+        </div>`;
+}
+
 function formPage(payload: CapturePayload, url: string, state: FormState): Response {
+  // Every form that shows the warning is a warning shown, whether or not a save follows.
+  if (state.warning !== undefined) {
+    logWarningShown(state.warning.noul);
+  }
   const error =
-    state.invalid === undefined ? "" : fieldError("save-error", CONFIRMED_ERRORS[state.invalid]);
+    state.invalid === undefined ? "" : fieldError("save-error", FORM_ERRORS[state.invalid]);
   const resumed =
     state.resumed === undefined
       ? ""
@@ -209,7 +270,7 @@ function formPage(payload: CapturePayload, url: string, state: FormState): Respo
     html`<h1>Save a link</h1>${error}${resumed}
       <form class="panel" method="post" action="/save">
         <p class="address-field"><strong>Address:</strong> <span id="save-address" class="address">${url}</span></p>
-        ${SENSITIVE_NOTICE}
+        ${SENSITIVE_NOTICE}${sensitivityCheck(state)}
         <p class="field">
           <label for="confirmed-title">Title</label>
           <input
@@ -365,9 +426,17 @@ function hasCapturedFields(captured: Record<string, string>): boolean {
 
 /**
  * GET /save: without a captured field, the address form. Otherwise validate, refuse sensitive
- * URLs, drop a sensitive canonical URL, find duplicates, then show the form.
+ * URLs, drop a sensitive canonical URL, find duplicates, ask Jev whether the link looks private,
+ * then show the form, with the warning and the checkbox when it does. Only a signed-in request
+ * gets here, so a request that hasn't signed in spends nothing on Jev, and neither does a link
+ * that is saved already.
  */
-export async function showSaveForm(request: Request, db: Db, userId: string): Promise<Response> {
+export async function showSaveForm(
+  request: Request,
+  db: Db,
+  userId: string,
+  config: SaveSensitivityConfig,
+): Promise<Response> {
   const parameters = new URL(request.url).searchParams;
   const captured = capturedFields(parameters);
   if (!hasCapturedFields(captured)) {
@@ -385,7 +454,13 @@ export async function showSaveForm(request: Request, db: Db, userId: string): Pr
   if (existing !== undefined) {
     return alreadySavedPage(db, userId, existing);
   }
-  return formPage(payload, url, formState(parameters, prefill(payload, url)));
+  // #131 supplies the flag that the page declared a flagged canonical URL. Until then, no save
+  // has it.
+  const check = await checkSaveSensitivity(config, url, payload.title, false);
+  return formPage(payload, url, {
+    ...formState(parameters, prefill(payload, url)),
+    ...warningFrom(check, false),
+  });
 }
 
 function hasConfirmedValues(parameters: URLSearchParams): boolean {
@@ -582,10 +657,25 @@ function notAFormPage(): Response {
 
 /**
  * POST /save: validate again (hidden inputs can be tampered with), refuse sensitive URLs, drop a
- * sensitive canonical URL, strip tracking parameters, and insert. The user comes from the
- * session, never from the form.
+ * sensitive canonical URL, strip tracking parameters, ask Jev again, and insert. The user comes
+ * from the session, never from the form.
+ *
+ * The check runs again rather than trusting anything from the form, which can be tampered with.
+ * Above the threshold, a submission without the checkbox gets the form again, with the warning
+ * and the error, and nothing is saved. That happens to a browser that skips `required`, to a
+ * request built by hand, and to a form whose GET got no answer from Jev, so it showed no box. The
+ * bookmark stores the noul and when it was checked, or neither when Jev gave no answer, and the
+ * acknowledgment only when this check warned and the box was ticked. So an acknowledgment always
+ * means that the owner was warned and said the link isn't private, as a release on /held does: a
+ * ticked box on a link Jev didn't warn about, or couldn't check, isn't stored, and the gate can
+ * still hold the link later.
  */
-export async function saveBookmark(request: Request, db: Db, userId: string): Promise<Response> {
+export async function saveBookmark(
+  request: Request,
+  db: Db,
+  userId: string,
+  config: SaveSensitivityConfig,
+): Promise<Response> {
   let form: FormData;
   try {
     form = await request.formData();
@@ -611,10 +701,27 @@ export async function saveBookmark(request: Request, db: Db, userId: string): Pr
     title: "",
     description: "",
   });
-  if (confirmed.invalid !== undefined) {
-    return formPage(payload, url, confirmed);
-  }
   const normalizedUrl = normalizeUrl(url);
+  // A link that is saved already gets its page whatever the form holds, so it costs no request
+  // to Jev, and its form never comes back asking for a box that would change nothing.
+  const saved = await existingBookmark(db, userId, normalizedUrl);
+  if (saved !== undefined) {
+    return alreadySavedPage(db, userId, saved);
+  }
+  // #131 supplies the flag that the page declared a flagged canonical URL, as on GET /save.
+  const check = await checkSaveSensitivity(config, url, payload.title, false);
+  const acknowledged = check.answered && check.warns && isNotPrivateConfirmed(form);
+  if (confirmed.invalid !== undefined) {
+    return formPage(payload, url, { ...confirmed, ...warningFrom(check, acknowledged) });
+  }
+  if (check.answered && check.warns && !acknowledged) {
+    return formPage(payload, url, {
+      ...confirmed,
+      invalid: "acknowledgment",
+      ...warningFrom(check, false),
+    });
+  }
+  const now = Date.now();
   // The unique (user_id, normalized_url) index decides duplicates, including a concurrent
   // submission that inserted first: then nothing is returned and the existing row is shown.
   const inserted = await db
@@ -636,7 +743,10 @@ export async function saveBookmark(request: Request, db: Db, userId: string): Pr
       ogTitle: payload.og_title ?? null,
       ogDescription: payload.og_description ?? null,
       ogSiteName: payload.og_site_name ?? null,
-      createdAt: Date.now(),
+      sensitivityNoul: check.answered ? check.noul : null,
+      sensitivityCheckedAt: check.answered ? check.checkedAt : null,
+      sensitivityAcknowledgedAt: acknowledged ? now : null,
+      createdAt: now,
     })
     .onConflictDoNothing({ target: [bookmarks.userId, bookmarks.normalizedUrl] })
     .returning({ id: bookmarks.id })

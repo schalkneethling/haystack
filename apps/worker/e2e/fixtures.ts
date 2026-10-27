@@ -7,12 +7,51 @@
 // fails any other. So no test, here or in the extension's suite, makes a request to the internet
 // through the Worker. `pages` gives a test the fixture, and fails the test if the Worker made a
 // request the test did not plan for.
+//
+// Jev, which the save form asks whether a link looks private (#132), is answered through the
+// same fixture, at JEV_ORIGIN under the reserved `.test` domain, with a test key. Every test
+// starts with Jev answering DEFAULT_NOUL, far below the threshold, so the save form shows no
+// warning unless a test asks for one with `jev`.
 import { type BrowserContext, expect, type Page, test as base } from "@playwright/test";
 import { createTestHarness } from "wrangler";
+import { noul } from "../test/jev-answers.ts";
+import { JEV_ORIGIN, status, SYSTEM_ONE_URL } from "../test/jev-fixture.ts";
 import { type PageFixture, startPageFixture } from "../test/page-fixture.ts";
 import { seedSignedInUser } from "../test/seed.ts";
 
 const SIGNED_IN_EMAIL = "e2e@example.com";
+
+/** Not a real key: the Jev client only checks that one is set. */
+const TYPESAFE_TEST_KEY = "ts-e2e-key-6c2f90ab";
+
+/** Jev's answer at the start of every test, below SENSITIVE_WARN_THRESHOLD in wrangler.jsonc. */
+const DEFAULT_NOUL = 0.05;
+
+/** How Jev answers the Worker's sensitivity question, from the next request on. */
+export interface JevAnswers {
+  /**
+   * Answers with these nouls, one per request, in order. The last one answers every request
+   * after it.
+   */
+  noul(...values: [number, ...number[]]): void;
+  /** Answers every request with a 503, as an outage would. */
+  unavailable(): void;
+}
+
+function jevAnswers(pages: PageFixture): JevAnswers {
+  return {
+    noul: (...values) => {
+      const queue = [...values];
+      pages.route(SYSTEM_ONE_URL, (request) => {
+        const value = queue.length > 1 ? queue.shift() : queue[0];
+        return noul(value ?? DEFAULT_NOUL)(request);
+      });
+    },
+    unavailable: () => {
+      pages.route(SYSTEM_ONE_URL, status(503));
+    },
+  };
+}
 
 /**
  * How the browser carries the seeded session to the Worker, which runs on http://127.0.0.1.
@@ -78,6 +117,11 @@ export interface HaystackWorker {
   /** The pages the Worker can fetch, and the requests it made. */
   pages: PageFixture;
   /**
+   * Forgets the pages' routes and requests, and has Jev answer DEFAULT_NOUL again. Each test
+   * starts with it.
+   */
+  reset(): void;
+  /**
    * Stops the Worker and the page fixture. Throws when the Worker made a request that no test
    * planned for, so a suite that does not check after each test still fails.
    */
@@ -101,10 +145,12 @@ export async function startHaystackWorker(): Promise<HaystackWorker> {
     workers: [
       {
         configPath: new URL("../wrangler.jsonc", import.meta.url),
-        vars: { ALLOWED_EMAILS: SIGNED_IN_EMAIL },
+        vars: { ALLOWED_EMAILS: SIGNED_IN_EMAIL, JEV_BASE_URL: JEV_ORIGIN },
+        secrets: { TYPESAFE_API_KEY: TYPESAFE_TEST_KEY },
       },
     ],
   });
+  jevAnswers(pages).noul(DEFAULT_NOUL);
   const stop = async () => {
     await server.close();
     pages.close();
@@ -157,6 +203,10 @@ export async function startHaystackWorker(): Promise<HaystackWorker> {
           .run();
       },
       pages,
+      reset: () => {
+        pages.reset();
+        jevAnswers(pages).noul(DEFAULT_NOUL);
+      },
       close: async () => {
         await stop();
         if (pages.unplanned.length > 0) {
@@ -179,19 +229,24 @@ export const test = base.extend<
     query: HaystackWorker["query"];
     run: HaystackWorker["run"];
     pages: PageFixture;
+    jev: JevAnswers;
   },
   { haystackWorker: HaystackWorker }
 >({
-  // Automatic, so every test starts with no routes, and fails on a request it did not plan for,
-  // whether or not it registers pages.
+  // Automatic, so every test starts with no routes but Jev's default answer, and fails on a
+  // request it did not plan for, whether or not it registers pages.
   pages: [
     async ({ haystackWorker }, use) => {
-      haystackWorker.pages.reset();
+      haystackWorker.reset();
       await use(haystackWorker.pages);
       expect(haystackWorker.pages.unplanned).toEqual([]);
     },
     { auto: true },
   ],
+  // After `pages`, which sets the default answer, so a test's own answer is the one that holds.
+  jev: async ({ pages }, use) => {
+    await use(jevAnswers(pages));
+  },
   haystackWorker: [
     // Playwright reads fixture dependencies from this destructuring pattern, so it must be one.
     // oxlint-disable-next-line no-empty-pattern

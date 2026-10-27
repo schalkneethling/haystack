@@ -72,7 +72,7 @@ export const test = base.extend<
   // Worker's close at the end.
   workerRequests: [
     async ({ haystackWorker }, use) => {
-      haystackWorker.pages.reset();
+      haystackWorker.reset();
       await use(undefined);
       expect(
         haystackWorker.pages.unplanned,

@@ -130,6 +130,23 @@ Feature: Pages a person can reach by mistake
     And the Title and Description fields hold the page's own values, not mine
     And nothing is saved
 
+  @integration:apps/worker/test/save-sensitivity.test.ts
+  Scenario: Pressing Save after my session ended, on a form with the warning
+    The box I ticked doesn't travel through sign-in with what I entered,
+    because Haystack asks Jev again when the form comes back, and the box
+    answers that warning. The test checks the return target and the form it
+    opens, but doesn't sign in.
+
+    Given the save form is open for a link that Haystack thinks might be private
+    And I ticked "This link does not give access to anything private" and changed the title to "My planning doc"
+    And I left it open until my session expired
+    When I press "Save"
+    And I sign in with a Google account that Haystack allows
+    Then I see the page titled "Not saved yet - Haystack", under the heading "Save a link"
+    And the Title field holds "My planning doc"
+    And the form shows the warning again, with the box not ticked
+    And nothing is saved
+
   @integration:apps/worker/test/save-form.test.ts
   Scenario: Pressing Save after my session ended, with a title I can't use
     Haystack checks the title and description I entered when the form comes
