@@ -1,6 +1,6 @@
 # User journeys
 
-The files in this folder describe, in plain language, what a person can do with Haystack and what happens when something goes wrong. Each journey is a scenario written in Gherkin, the language that Cucumber reads, in which every step starts with Given, When or Then. The scenarios cover Milestone 1 as it is deployed, from `main` at fae17b3, and the review page at /held, which Milestone 2 adds (#129).
+The files in this folder describe, in plain language, what a person can do with Haystack and what happens when something goes wrong. Each journey is a scenario written in Gherkin, the language that Cucumber reads, in which every step starts with Given, When or Then. The scenarios cover Milestone 1 and the review page at /held, which Milestone 2 adds (#129). They are kept in step with `main`, as the section "Keeping them in step with the code" below describes.
 
 They are documentation, and the input for new Playwright tests. They do not run: there is no Cucumber, no other Gherkin runner and no step definitions, so nothing checks a scenario against the code except the tests named in its tags and the people who read it.
 
@@ -8,16 +8,16 @@ They are documentation, and the input for new Playwright tests. They do not run:
 
 There is one file per area, and each starts with a `Feature` that says who the journeys are for and why they matter.
 
-| File                     | What it covers                                                                                                 |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| `sign-in.feature`        | Signing in with Google, the ways sign-in can fail, coming back to the page you started on, and signing out     |
-| `extension-save.feature` | Saving the current page from the extension's popup in Chrome and Firefox, and the pages it refuses             |
-| `address-form.feature`   | Saving a link by typing or pasting its address in the "Save a link" form (#97, #105)                           |
-| `save-form.feature`      | Confirming a link on the save form, its errors, and the "already saved" page                                   |
-| `saved-links.feature`    | The saved links list, and moving through it with a screen reader                                               |
-| `delete.feature`         | Deleting a link, with and without JavaScript                                                                   |
-| `held.feature`           | Reviewing links that Haystack held back or couldn't describe at /held: releasing, retrying and deleting (#129) |
-| `errors.feature`         | Pages a person can reach by mistake, such as a page that doesn't exist or a request from another site          |
+| File                     | What it covers                                                                                                                              |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sign-in.feature`        | Signing in with Google, the ways sign-in can fail, coming back to the page you started on, and signing out                                  |
+| `extension-save.feature` | Saving the current page from the extension's popup in Chrome and Firefox, and the pages it refuses                                          |
+| `address-form.feature`   | Saving a link by typing or pasting its address in the "Save a link" form (#97, #105)                                                        |
+| `save-form.feature`      | Confirming a link on the save form, its errors, and the "already saved" page                                                                |
+| `saved-links.feature`    | The saved links list, and moving through it with a screen reader                                                                            |
+| `delete.feature`         | Deleting a link, with and without JavaScript                                                                                                |
+| `held.feature`           | Reviewing links that Haystack held back or couldn't describe at /held: releasing, retrying and deleting (#129)                              |
+| `errors.feature`         | Pages a person can reach by mistake, such as a page that doesn't exist, a form sent after the session ended, or a request from another site |
 
 Every message, button label, page title and heading in quotation marks is copied from the code that shows it. Where a keyboard or screen reader user's experience differs, the scenario says so, or a separate scenario describes it.
 
@@ -35,7 +35,7 @@ A tag means that the test checks the behaviour the scenario describes, which was
 
 ## Keeping them in step with the code
 
-The journeys change with the behaviour they describe, in the same pull request.
+The journeys change with the behaviour they describe, in the same pull request. Every pull request that changes behaviour updates the journeys that describe it, so `main` and its journeys agree.
 
 - **New behaviour** gets its journey written before or with its tests, and the scenario names those tests in its tags.
 - **A change to wording** that a person sees or hears, such as a message or a button label, changes every scenario that quotes it. Searching this folder for the old wording finds them.
