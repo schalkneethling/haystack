@@ -153,6 +153,22 @@ Feature: Confirming and saving a link
     And Haystack has recorded that the page declared an address with a secret
 
   @integration:apps/worker/test/save-sensitivity.test.ts
+  Scenario: The check knows that the page declared a private address for itself
+    A page that names a canonical address with a secret in it is a strong
+    sign that its own address is a private share too, so Haystack tells Jev,
+    as a yes or no, that the page declared such an address. It never sends
+    the address itself, in any form. A page that declared no such address is
+    checked without that statement. The integration test checks what Jev is
+    sent and what is stored, not how Jev answers.
+
+    Given I opened the save form for a page that declares a canonical address containing an access token
+    Then Haystack's check tells Jev that the page declared an address with a secret
+    And nothing Haystack sends to Jev contains that address, or any part of it
+    When I press Save
+    Then the check on Save tells Jev the same
+    And the link is saved with the fact recorded, and without the address
+
+  @integration:apps/worker/test/save-sensitivity.test.ts
   @playwright:apps/worker/e2e/save-sensitivity.e2e.ts
   Scenario: Saving a link that Haystack warns might be private, after ticking the box
     A private share can look like any other address, with no part that

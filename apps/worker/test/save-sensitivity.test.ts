@@ -11,7 +11,11 @@
 // TypeSafe key, find the configuration error before they send anything, whatever key the shell
 // holds, and their forms have no warning. This file gives a test key. The tests at its end show
 // that a configuration error never blocks saving.
-import { describeUrlForJudgment, normalizeUrl } from "@haystack/schemas";
+import {
+  describeUrlForJudgment,
+  normalizeUrl,
+  SENSITIVE_CANONICAL_DROPPED,
+} from "@haystack/schemas";
 import { delay } from "msw";
 import {
   afterAll,
@@ -240,7 +244,7 @@ describe("GET /save", () => {
     // The random part of the path is masked, and the tracking parameter is gone.
     expect(request?.body).not.toContain("k9Xq2Lm7");
     expect(request?.body).not.toContain("utm_source");
-    // #131 supplies the flag. Without it, the description has no such key.
+    // A page that declared no flagged canonical URL is checked without the statement.
     expect(JSON.parse(request?.body ?? "").state.link).not.toHaveProperty(
       "declares_sensitive_canonical",
     );
@@ -270,6 +274,83 @@ describe("GET /save", () => {
   it("makes no Jev request for the address form", async () => {
     expect((await getSave({})).status).toBe(200);
     expect(fixture.requests).toEqual([]);
+  });
+});
+
+// The flag that the page declared a canonical URL that detectSensitiveUrl flags (#131) is evidence
+// for Jev, as `declares_sensitive_canonical`, and the canonical URL itself is never sent, in raw
+// or redacted form. The flag reaches the check in three ways: the save link carries it, as the
+// popup and the address form build it; GET /save drops a flagged canonical URL itself; or the
+// form's hidden input carries it to POST /save.
+describe("the flag that the page declared a flagged canonical URL", () => {
+  // On another host than the page, with a token, so every part of it can be searched for.
+  const CANONICAL = "https://files.share.test/d/Kq7Lr2Zx?access_token=canonical-token-6b1e9d";
+  const CANONICAL_PARTS = [
+    "files.share.test",
+    "Kq7Lr2Zx",
+    "access_token",
+    "canonical-token-6b1e9d",
+    encodeURIComponent(CANONICAL),
+  ];
+  const FLAGGED_STATE = {
+    link: describeUrlForJudgment(new URL(SAVED_URL), SHARED.title, true),
+  };
+
+  function sentState(index = 0): unknown {
+    return JSON.parse(fixture.requests[index]?.body ?? "").state;
+  }
+
+  function expectNoCanonicalUrlSent(): void {
+    for (const request of fixture.requests) {
+      for (const part of CANONICAL_PARTS) {
+        expect(request.body).not.toContain(part);
+      }
+    }
+  }
+
+  it.each([
+    ["a save link that carries the flag", { [SENSITIVE_CANONICAL_DROPPED]: "1" }],
+    ["a save link whose canonical URL GET /save drops", { canonical_url: CANONICAL }],
+  ])("is in the state Jev gets for %s", async (_, fields) => {
+    fixture.respond(noul(0.1));
+    const markup = await (await getSave({ ...SHARED, ...fields })).text();
+    expect(sentState()).toEqual(FLAGGED_STATE);
+    expect(FLAGGED_STATE.link).toHaveProperty("declares_sensitive_canonical", true);
+    expectNoCanonicalUrlSent();
+    // The form carries the flag on, and never the canonical URL.
+    expect(markup).toContain(`name="${SENSITIVE_CANONICAL_DROPPED}" value="1"`);
+    expect(markup).not.toContain("canonical-token-6b1e9d");
+  });
+
+  it.each([
+    ["the form's hidden input", { [SENSITIVE_CANONICAL_DROPPED]: "1" }],
+    ["a canonical URL POST /save drops", { canonical_url: CANONICAL }],
+  ])("is in the state Jev gets on POST /save from %s, and is stored", async (_, fields) => {
+    fixture.respond(noul(0.1));
+    expect((await postSave({ ...SUBMISSION, ...fields })).status).toBe(200);
+    expect(sentState()).toEqual(FLAGGED_STATE);
+    expectNoCanonicalUrlSent();
+    const { results } = await (
+      await db()
+    )
+      .prepare("SELECT canonical_url, sensitive_canonical_dropped FROM bookmarks")
+      .all();
+    expect(results).toEqual([{ canonical_url: null, sensitive_canonical_dropped: 1 }]);
+  });
+
+  it("is left out of the state for a bookmark saved without it, which stores 0", async () => {
+    fixture.respond(noul(0.1));
+    expect((await postSave(SUBMISSION)).status).toBe(200);
+    expect(sentState()).toEqual({
+      link: describeUrlForJudgment(new URL(SAVED_URL), SHARED.title, false),
+    });
+    expect(JSON.stringify(sentState())).not.toContain("declares_sensitive_canonical");
+    const { results } = await (
+      await db()
+    )
+      .prepare("SELECT sensitive_canonical_dropped FROM bookmarks")
+      .all();
+    expect(results).toEqual([{ sensitive_canonical_dropped: 0 }]);
   });
 });
 

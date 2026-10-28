@@ -454,9 +454,14 @@ export async function showSaveForm(
   if (existing !== undefined) {
     return alreadySavedPage(db, userId, existing);
   }
-  // #131 supplies the flag that the page declared a flagged canonical URL. Until then, no save
-  // has it.
-  const check = await checkSaveSensitivity(config, url, payload.title, false);
+  // The flag is evidence for Jev, as `declares_sensitive_canonical`, and the URL it is about is
+  // never sent: the payload no longer has it.
+  const check = await checkSaveSensitivity(
+    config,
+    url,
+    payload.title,
+    declaredSensitiveCanonical(payload),
+  );
   return formPage(payload, url, {
     ...formState(parameters, prefill(payload, url)),
     ...warningFrom(check, false),
@@ -713,8 +718,14 @@ export async function saveBookmark(
       return alreadySavedPage(db, userId, saved);
     }
   }
-  // #131 supplies the flag that the page declared a flagged canonical URL, as on GET /save.
-  const check = await checkSaveSensitivity(config, url, payload.title, false);
+  // With the flag the payload says it carries, or that withoutSensitiveCanonicalUrl set just
+  // now, which the bookmark stores as `sensitive_canonical_dropped` below, as on GET /save.
+  const check = await checkSaveSensitivity(
+    config,
+    url,
+    payload.title,
+    declaredSensitiveCanonical(payload),
+  );
   const acknowledged = check.answered && check.warns && isNotPrivateConfirmed(form);
   if (confirmed.invalid !== undefined) {
     return formPage(payload, url, { ...confirmed, ...warningFrom(check, acknowledged) });
