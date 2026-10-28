@@ -16,6 +16,8 @@
 //   bookmark is Pending, and the sweep's next run selects it.
 // - Its time limits fit `ctx.waitUntil`'s 30 seconds (ON_SAVE_TIMING), so the module finishes,
 //   and stores and logs its outcome, before the runtime would cancel it.
+// - It has no switch yet: `sweep-enabled` (flags.ts) stops only the sweep, so until #199 is done,
+//   switching it off doesn't stop this path.
 import type { Db } from "../db/client.ts";
 import {
   type BookmarkToEnrich,
@@ -39,9 +41,9 @@ import { JEV_BACKOFF_INITIAL_MS } from "./jev-client.ts";
  *   question always: 5 seconds at most. The save form's check has one attempt of 2 seconds for a
  *   smaller state, and the documentation's examples answer in a fraction of a second.
  * - GitHub: its own limit of 3 seconds for each of its 2 requests, for a GitHub bookmark only: 6.
- * - The LLM: 8 seconds for each of its 2 calls, the second only after invalid output: 16. The
- *   sweep's LLM requests in #130 took at most 4.4 seconds on Workers Paid, the whole run's wall
- *   time, so 8 seconds is still about twice the longest.
+ * - The LLM: 8 seconds for each of its 2 calls, the second only after invalid or truncated
+ *   output (writeProseEnrichment): 16. The sweep's LLM requests in #130 took at most 4.4 seconds
+ *   on Workers Paid, the whole run's wall time, so 8 seconds is still about twice the longest.
  *
  * That leaves 3 seconds for the up to 3 D1 statements and the CPU time. A call that runs into a
  * limit fails transiently, which leaves the bookmark to the sweep, whose own limits are the

@@ -73,6 +73,12 @@ const SERVICE_SECRETS = {
 // milliseconds against the fixtures, so this is headroom for a busy machine, not a wait.
 const ON_SAVE_DONE_MS = 4000;
 
+// Each suite's test timeout: the poll limit plus 4 seconds for the save, the queries and a sweep
+// run around it, so a slow on-save path fails with the poll's message rather than the test's
+// timeout. It is set on each suite, as save-address.test.ts sets its own, so a change to
+// Vitest's default can't change it.
+const SUITE = { timeout: ON_SAVE_DONE_MS + 4000 } as const;
+
 let fixtures: EnrichmentFixtures;
 let server: TestWorker;
 let origin: string;
@@ -278,7 +284,7 @@ function expectNoPrivatePartsLogged(): void {
   }
 }
 
-describe("POST /save's on-save enrichment", () => {
+describe("POST /save's on-save enrichment", SUITE, () => {
   it("enriches the new bookmark, and logs its outcome without the address", async () => {
     fixtures.jev.respond(noul(0.05), kind("tutorial"));
     fixtures.llm.respond(output(VALID_OUTPUT));
@@ -360,7 +366,7 @@ describe("POST /save's on-save enrichment", () => {
   });
 });
 
-describe("a failure on save", () => {
+describe("a failure on save", SUITE, () => {
   it("records a failed outcome as the sweep does, so the sweep tries the bookmark again", async () => {
     fixtures.jev.respond(noul(0.05), kind());
     fixtures.llm.respond(llmStatus(529));
@@ -411,7 +417,7 @@ describe("a failure on save", () => {
   });
 });
 
-describe("the on-save path and the sweep together", () => {
+describe("the on-save path and the sweep together", SUITE, () => {
   it("stays harmless when the sweep enriches the bookmark while the on-save path is under way", async () => {
     vi.spyOn(console, "info").mockImplementation(() => {});
     const held = heldAnswer();
@@ -436,7 +442,7 @@ describe("the on-save path and the sweep together", () => {
   });
 });
 
-describe("the on-save timing", () => {
+describe("the on-save timing", SUITE, () => {
   it("makes one attempt at a Jev question, where the sweep's timing would make three", async () => {
     // The kind question fails transiently. The sweep's timing would retry it.
     expect(ENRICHMENT_TIMING.jev.attemptLimit ?? JEV_ATTEMPT_LIMIT).toBe(3);
@@ -461,7 +467,7 @@ describe("the on-save timing", () => {
       2 * jev.attemptTimeoutMs +
       // GitHub's repository and README requests.
       2 * github.requestTimeoutMs +
-      // The LLM call and its one retry after invalid output.
+      // The LLM call and its one retry after invalid or truncated output.
       2 * provider.requestTimeoutMs;
     expect(worstCaseMs).toBe(27_000);
     // At least 2 seconds left for the D1 statements and the CPU time.

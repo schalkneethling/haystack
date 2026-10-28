@@ -244,8 +244,8 @@ Feature: Confirming and saving a link
     Then the link is saved
 
   @integration:apps/worker/test/save-sensitivity.test.ts
-  @playwright:apps/worker/e2e/save-sensitivity.e2e.ts
   @integration:apps/worker/test/save-enrichment.test.ts
+  @playwright:apps/worker/e2e/save-sensitivity.e2e.ts
   Scenario: Saving when Haystack can't check the link
     Jev can be down, slow or unreachable. The check waits 2 seconds at most,
     and saving never depends on it. Haystack checks the link again right

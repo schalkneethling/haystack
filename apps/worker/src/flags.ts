@@ -44,7 +44,8 @@ export interface FlagReader {
 /**
  * Whether the scheduled run enriches bookmarks: a boolean flag. The owner turns it off in the
  * Flagship app, under this key, to stop the sweep without a deploy. It stops only the sweep: the
- * scheduled run still deletes expired sessions and sign-in flows (scheduled.ts).
+ * scheduled run still deletes expired sessions and sign-in flows (scheduled.ts), and POST /save
+ * still enriches each new bookmark (enrich-on-save.ts, #133) until #199 gives that a switch.
  */
 export const SWEEP_ENABLED_FLAG = "sweep-enabled";
 

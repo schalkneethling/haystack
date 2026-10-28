@@ -322,11 +322,10 @@ function bookmarkFailure(
  * brings that forward: after two permanent failures, the third transient failure in a row is the
  * 5th failure, so it counts, and the bookmark reaches Failed. An outage shorter than that can't
  * fail a bookmark on its own, because the sweep stops a run when its first calls all fail
- * transiently. A longer one can fail the
- * bookmarks each run tries first, which the owner accepted, because recording those failures is
- * what grows their backoff (OUTAGE_STOP_CALLS in enrich-pending.ts). The owner's decision of
- * 2026-10-25, which chose this reading over a count of transient failures alone, which would
- * need a column of its own.
+ * transiently. A longer one can fail the bookmarks each run tries first, which the owner
+ * accepted, because recording those failures is what grows their backoff (OUTAGE_STOP_CALLS in
+ * enrich-pending.ts). The owner's decision of 2026-10-25, which chose this reading over a count
+ * of transient failures alone, which would need a column of its own.
  */
 export const TRANSIENT_FAILURES_PER_ATTEMPT = 5;
 
