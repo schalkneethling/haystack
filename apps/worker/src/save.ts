@@ -702,11 +702,16 @@ export async function saveBookmark(
     description: "",
   });
   const normalizedUrl = normalizeUrl(url);
-  // A link that is saved already gets its page whatever the form holds, so it costs no request
-  // to Jev, and its form never comes back asking for a box that would change nothing.
-  const saved = await existingBookmark(db, userId, normalizedUrl);
-  if (saved !== undefined) {
-    return alreadySavedPage(db, userId, saved);
+  // A rejected field gets the form again, before the link is looked up, as it did before #132.
+  // Otherwise a link that is saved already gets its page, so it costs no request to Jev, and its
+  // form never comes back asking for a box that would change nothing. A rejected field still
+  // asks Jev, because the form it comes back with shows the warning and the box, so the user
+  // isn't sent back a second time for the box after correcting the field.
+  if (confirmed.invalid === undefined) {
+    const saved = await existingBookmark(db, userId, normalizedUrl);
+    if (saved !== undefined) {
+      return alreadySavedPage(db, userId, saved);
+    }
   }
   // #131 supplies the flag that the page declared a flagged canonical URL, as on GET /save.
   const check = await checkSaveSensitivity(config, url, payload.title, false);

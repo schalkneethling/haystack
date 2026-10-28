@@ -6,15 +6,26 @@
 // form" and "Calibration" under "Probabilistic check with Jev" in
 // plans/haystack-v1-implementation-plan.md.
 //
-// The other save tests (save-form.test.ts, save-post.test.ts) configure no TypeSafe key, so their
-// check finds the configuration error before it sends anything, and their forms have no
-// warning. The tests at the end of this file show that a configuration error never blocks saving.
+// Every test Worker starts with its secrets empty and Jev at the fixture's `.test` address
+// (test-worker.ts), so the other save tests (save-form.test.ts, save-post.test.ts), which give no
+// TypeSafe key, find the configuration error before they send anything, whatever key the shell
+// holds, and their forms have no warning. This file gives a test key. The tests at its end show
+// that a configuration error never blocks saving.
 import { describeUrlForJudgment, normalizeUrl } from "@haystack/schemas";
 import { delay } from "msw";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
-import { createTestHarness } from "wrangler";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
+import type { JevTiming } from "../src/enrichment/jev-client.ts";
 import { SENSITIVITY_QUESTION } from "../src/enrichment/jev-questions.ts";
-import { SAVE_CHECK_TIMEOUT_MS } from "../src/save-sensitivity.ts";
+import { checkSaveSensitivity } from "../src/save-sensitivity.ts";
 import { noul } from "./jev-answers.ts";
 import {
   answer,
@@ -26,29 +37,23 @@ import {
   status,
 } from "./jev-fixture.ts";
 import { seedBookmark, seedSignedInUser, type SeededUser } from "./seed.ts";
+import { createTestWorker, type TestWorker } from "./test-worker.ts";
 import { expectValidHtml } from "./validate-html.ts";
 
 // Not a real key: a string that appears nowhere else.
 const KEY = "ts-test-key-3d9a61c4";
 
-const CONFIG_PATH = new URL("../wrangler.jsonc", import.meta.url);
-
 let fixture: JevFixture;
-let server: ReturnType<typeof createTestHarness>;
+let server: TestWorker;
 let origin: string;
 
 // The fixture starts first, because the harness sends the Worker's requests through this
 // process's `fetch`, which it patches (page-fixture.ts).
 beforeAll(async () => {
   fixture = startJevFixture();
-  server = createTestHarness({
-    workers: [
-      {
-        configPath: CONFIG_PATH,
-        vars: { ALLOWED_EMAILS: "owner@example.com", JEV_BASE_URL: JEV_ORIGIN },
-        secrets: { TYPESAFE_API_KEY: KEY },
-      },
-    ],
+  server = createTestWorker({
+    vars: { ALLOWED_EMAILS: "owner@example.com" },
+    secrets: { TYPESAFE_API_KEY: KEY },
   });
   origin = (await server.listen()).url.origin;
   await server.getWorker().applyD1Migrations("DB");
@@ -162,12 +167,6 @@ function expectNoWarning(markup: string): void {
   expect(markup).not.toContain(WARNING);
 }
 
-// A Jev answer that arrives well after the check's time limit.
-const tooSlow: JevResolver = async (request) => {
-  await delay(SAVE_CHECK_TIMEOUT_MS * 3);
-  return noul(0.9)(request);
-};
-
 // Every way Jev can fail to answer, with the code the Worker logs for it. A request that fails
 // without a response reaches the Worker as a 500 under the harness (page-fixture.ts says why), so
 // the `network` code isn't tested here.
@@ -260,14 +259,6 @@ describe("GET /save", () => {
       expect(logs()).toEqual([{ level: "warn", message: `Sensitivity check skipped: ${code}` }]);
     },
   );
-
-  it("treats an answer after the time limit as an outage", async () => {
-    fixture.respond(tooSlow);
-    const response = await getSave(SHARED);
-    expect(response.status).toBe(200);
-    expectNoWarning(await response.text());
-    expect(logs()).toEqual([{ level: "warn", message: "Sensitivity check skipped: timeout" }]);
-  });
 
   it("makes no Jev request for a link that is saved already", async () => {
     await seedBookmark(await db(), owner.userId, SAVED_URL, normalizeUrl(SAVED_URL));
@@ -380,14 +371,6 @@ describe("POST /save", () => {
     expect(logs()).toEqual([{ level: "warn", message: `Sensitivity check skipped: ${code}` }]);
   });
 
-  it("saves after an answer that comes too late, with the noul left empty", async () => {
-    fixture.respond(tooSlow);
-    const response = await postSave(SUBMISSION);
-    expect(response.status).toBe(200);
-    expect(await bookmarks()).toEqual([expect.objectContaining({ sensitivity_noul: null })]);
-    expect(logs()).toEqual([{ level: "warn", message: "Sensitivity check skipped: timeout" }]);
-  });
-
   it("shows a rejected title with the warning, and keeps the box ticked", async () => {
     fixture.respond(noul(0.82));
     const response = await postSave({ ...SUBMISSION, confirmed_title: "   ", not_private: "yes" });
@@ -406,6 +389,64 @@ describe("POST /save", () => {
     const response = await postSave(SUBMISSION);
     expect(await response.text()).toContain("You already saved this link");
     expect(fixture.requests).toEqual([]);
+  });
+
+  // The fields are checked before the link is looked up, as before #132, so a rejected title
+  // gets its error even for a link that is saved already. The form it comes back with asks Jev,
+  // so it can show the warning.
+  it("rejects a blank title on a link that is saved already", async () => {
+    await seedBookmark(await db(), owner.userId, SAVED_URL, normalizeUrl(SAVED_URL));
+    fixture.respond(noul(0.1));
+    const response = await postSave({ ...SUBMISSION, confirmed_title: "   " });
+    expect(response.status).toBe(400);
+    const markup = await response.text();
+    expect(markup).toContain("<title>Check the form - Haystack</title>");
+    expect(markup).toContain('<p id="save-error">Enter a title of up to 200 characters.</p>');
+    expect(markup).not.toContain("You already saved this link");
+    expect(fixture.requests).toHaveLength(1);
+  });
+});
+
+// The check's time limit, in this process, with a short limit in place of SAVE_CHECK_TIMING's
+// 2 seconds, so the test doesn't wait for it. The routes' tests above show what the form and the
+// save do when the check gives no answer, which a timeout is.
+describe("checkSaveSensitivity", () => {
+  const config = {
+    JEV_BASE_URL: JEV_ORIGIN,
+    JEV_MODEL: "jev-1.13.0",
+    TYPESAFE_API_KEY: KEY,
+    SENSITIVE_WARN_THRESHOLD: "0.5",
+  };
+  // Short enough to keep the test fast, long enough for a delayed answer to miss it.
+  const timing: JevTiming = { attemptTimeoutMs: 100, backoffInitialMs: 1, attemptLimit: 1 };
+
+  it("treats an answer after the time limit as no answer, and logs the timeout", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      fixture.respond(async (request) => {
+        await delay(timing.attemptTimeoutMs * 5);
+        return noul(0.9)(request);
+      });
+      const check = await checkSaveSensitivity(config, SAVED_URL, SHARED.title, false, timing);
+      expect(check).toEqual({ answered: false });
+      expect(fixture.requests).toHaveLength(1);
+      expect(warn.mock.calls).toEqual([["Sensitivity check skipped:", "timeout"]]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("answers with the noul, when it was checked, and whether it warns", async () => {
+    fixture.respond(noul(0.5));
+    const before = Date.now();
+    const check = await checkSaveSensitivity(config, SAVED_URL, SHARED.title, false, timing);
+    expect(check).toEqual({
+      answered: true,
+      noul: 0.5,
+      checkedAt: expect.any(Number),
+      warns: true,
+    });
+    expect(check.answered && check.checkedAt).toBeGreaterThanOrEqual(before);
   });
 });
 
@@ -455,19 +496,14 @@ describe.each([
     "SENSITIVE_WARN_THRESHOLD_INVALID",
   ],
 ])("with %s", (_, vars, secrets, code) => {
-  let misconfigured: ReturnType<typeof createTestHarness>;
+  let misconfigured: TestWorker;
   let misconfiguredOrigin: string;
   let cookie: string;
 
   beforeAll(async () => {
-    misconfigured = createTestHarness({
-      workers: [
-        {
-          configPath: CONFIG_PATH,
-          vars: { ALLOWED_EMAILS: "owner@example.com", JEV_BASE_URL: JEV_ORIGIN, ...vars },
-          secrets,
-        },
-      ],
+    misconfigured = createTestWorker({
+      vars: { ALLOWED_EMAILS: "owner@example.com", ...vars },
+      secrets,
     });
     misconfiguredOrigin = (await misconfigured.listen()).url.origin;
     await misconfigured.getWorker().applyD1Migrations("DB");

@@ -2,7 +2,6 @@
 // Failed one, and Delete, which returns here. See "Reviewing Held bookmarks" in the plan.
 import { normalizeUrl } from "@haystack/schemas";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
-import { createTestHarness } from "wrangler";
 import { createDb, type Db } from "../src/db/client.ts";
 import { selectBookmarksToEnrich } from "../src/enrichment/enrich-pending.ts";
 import { ENRICHMENT_SCHEMA_VERSION } from "../src/enrichment/enrichment-schema.ts";
@@ -19,14 +18,10 @@ import {
   type SeededUser,
 } from "./seed.ts";
 import { expectValidHtml } from "./validate-html.ts";
+import { createTestWorker } from "./test-worker.ts";
 
-const server = createTestHarness({
-  workers: [
-    {
-      configPath: new URL("../wrangler.jsonc", import.meta.url),
-      vars: { ALLOWED_EMAILS: "owner@example.com, second@example.com" },
-    },
-  ],
+const server = createTestWorker({
+  vars: { ALLOWED_EMAILS: "owner@example.com, second@example.com" },
 });
 
 let origin: string;
@@ -761,13 +756,8 @@ describe("the saved links page's link to /held", () => {
 // A configuration the state can't be derived with. The sweep and /held refuse it rather than
 // guess, and the saved links page goes on without the link.
 describe("with an attempt limit that can't be read", () => {
-  const misconfigured = createTestHarness({
-    workers: [
-      {
-        configPath: new URL("../wrangler.jsonc", import.meta.url),
-        vars: { ALLOWED_EMAILS: "owner@example.com", SWEEP_ATTEMPT_LIMIT: "three" },
-      },
-    ],
+  const misconfigured = createTestWorker({
+    vars: { ALLOWED_EMAILS: "owner@example.com", SWEEP_ATTEMPT_LIMIT: "three" },
   });
   let user: SeededUser;
   let misconfiguredOrigin: string;

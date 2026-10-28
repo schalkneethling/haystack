@@ -8,16 +8,18 @@
 // through the Worker. `pages` gives a test the fixture, and fails the test if the Worker made a
 // request the test did not plan for.
 //
-// Jev, which the save form asks whether a link looks private (#132), is answered through the
-// same fixture, at JEV_ORIGIN under the reserved `.test` domain, with a test key. Every test
+// The Worker is started as the integration tests start theirs (test/test-worker.ts), with every
+// secret empty and every outside service at a `.test` address, so a key in the shell that runs
+// the tests never reaches it. Jev, which the save form asks whether a link looks private (#132),
+// is answered through the page fixture, at its `.test` address, with a test key. Every test
 // starts with Jev answering DEFAULT_NOUL, far below the threshold, so the save form shows no
 // warning unless a test asks for one with `jev`.
 import { type BrowserContext, expect, type Page, test as base } from "@playwright/test";
-import { createTestHarness } from "wrangler";
 import { noul } from "../test/jev-answers.ts";
-import { JEV_ORIGIN, status, SYSTEM_ONE_URL } from "../test/jev-fixture.ts";
+import { status, SYSTEM_ONE_URL } from "../test/jev-fixture.ts";
 import { type PageFixture, startPageFixture } from "../test/page-fixture.ts";
 import { seedSignedInUser } from "../test/seed.ts";
+import { createTestWorker } from "../test/test-worker.ts";
 
 const SIGNED_IN_EMAIL = "e2e@example.com";
 
@@ -141,14 +143,9 @@ function parseCookieHeader(header: string): SessionCookie {
 export async function startHaystackWorker(): Promise<HaystackWorker> {
   // Before the harness, so that the Worker's first request is already answered here.
   const pages = startPageFixture();
-  const server = createTestHarness({
-    workers: [
-      {
-        configPath: new URL("../wrangler.jsonc", import.meta.url),
-        vars: { ALLOWED_EMAILS: SIGNED_IN_EMAIL, JEV_BASE_URL: JEV_ORIGIN },
-        secrets: { TYPESAFE_API_KEY: TYPESAFE_TEST_KEY },
-      },
-    ],
+  const server = createTestWorker({
+    vars: { ALLOWED_EMAILS: SIGNED_IN_EMAIL },
+    secrets: { TYPESAFE_API_KEY: TYPESAFE_TEST_KEY },
   });
   jevAnswers(pages).noul(DEFAULT_NOUL);
   const stop = async () => {

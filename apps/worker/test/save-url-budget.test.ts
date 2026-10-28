@@ -19,7 +19,7 @@ import {
   validateCapturePayload,
 } from "@haystack/schemas";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
-import { createTestHarness } from "wrangler";
+import { createTestWorker } from "./test-worker.ts";
 
 // Cloudflare's "Request and response limits" table on
 // https://developers.cloudflare.com/workers/platform/limits/ gives the URL size as "16 KB". The
@@ -32,9 +32,7 @@ const CLOUDFLARE_URL_LIMIT = 16_000;
 // redirect against it.
 const ORIGIN = "https://haystack.example";
 
-const server = createTestHarness({
-  workers: [{ configPath: new URL("../wrangler.jsonc", import.meta.url) }],
-});
+const server = createTestWorker();
 
 // The Worker's own origin in the harness. The save form's values are kept only while the save
 // link, with this origin, is within the budget (#34).

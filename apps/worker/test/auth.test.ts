@@ -1,22 +1,15 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
-import { createTestHarness } from "wrangler";
 import {
   generateSessionId,
   hashSessionId,
   SESSION_LIFETIME_MS,
 } from "../src/auth/session-token.ts";
+import { createTestWorker } from "./test-worker.ts";
 
 const ALLOWED = "Owner@Example.com, second@example.com";
 const DAY = 24 * 60 * 60 * 1000;
 
-const server = createTestHarness({
-  workers: [
-    {
-      configPath: new URL("../wrangler.jsonc", import.meta.url),
-      vars: { ALLOWED_EMAILS: ALLOWED },
-    },
-  ],
-});
+const server = createTestWorker({ vars: { ALLOWED_EMAILS: ALLOWED } });
 let origin: string;
 
 beforeAll(async () => {

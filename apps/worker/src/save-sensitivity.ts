@@ -62,14 +62,16 @@ const NO_ANSWER: SensitivityCheck = { answered: false };
  * Asks Jev whether the link the form saves gives access to something private. `url` is the
  * address that is saved, with tracking parameters removed, and `title` is the payload's `title`.
  * `declaresSensitiveCanonical` is whether the page declared a canonical URL that
- * detectSensitiveUrl flagged. Resolves to no answer, having logged why, rather than throwing for
- * a failure or a configuration error, because the check must never block saving.
+ * detectSensitiveUrl flagged. `timing` is SAVE_CHECK_TIMING, which the tests shorten. Resolves to
+ * no answer, having logged why, rather than throwing for a failure or a configuration error,
+ * because the check must never block saving.
  */
 export async function checkSaveSensitivity(
   config: SaveSensitivityConfig,
   url: string,
   title: string | undefined,
   declaresSensitiveCanonical: boolean,
+  timing: JevTiming = SAVE_CHECK_TIMING,
 ): Promise<SensitivityCheck> {
   let threshold: number;
   let result;
@@ -78,7 +80,7 @@ export async function checkSaveSensitivity(
     result = await askSensitivity(
       config,
       describeUrlForJudgment(new URL(url), title, declaresSensitiveCanonical),
-      SAVE_CHECK_TIMING,
+      timing,
     );
   } catch (error) {
     // A threshold that can't be read, an empty key or a base URL that isn't valid. The sweep

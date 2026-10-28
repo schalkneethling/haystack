@@ -6,7 +6,6 @@
 import { normalizeUrl, SAVE_URL_BUDGET } from "@haystack/schemas";
 import { HttpResponse } from "msw";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
-import { createTestHarness } from "wrangler";
 import {
   LOOKUP_ELEMENT_BUDGET,
   LOOKUP_READ_LIMIT_BYTES,
@@ -15,21 +14,15 @@ import {
 import { type PageFixture, startPageFixture } from "./page-fixture.ts";
 import { seedBookmark, seedSignedInUser, type SeededUser } from "./seed.ts";
 import { expectValidHtml } from "./validate-html.ts";
+import { createTestWorker, type TestWorker } from "./test-worker.ts";
 
 let fixture: PageFixture;
-let server: ReturnType<typeof createTestHarness>;
+let server: TestWorker;
 let origin: string;
 
 beforeAll(async () => {
   fixture = startPageFixture();
-  server = createTestHarness({
-    workers: [
-      {
-        configPath: new URL("../wrangler.jsonc", import.meta.url),
-        vars: { ALLOWED_EMAILS: "owner@example.com" },
-      },
-    ],
-  });
+  server = createTestWorker({ vars: { ALLOWED_EMAILS: "owner@example.com" } });
   origin = (await server.listen()).url.origin;
   await server.getWorker().applyD1Migrations("DB");
 });

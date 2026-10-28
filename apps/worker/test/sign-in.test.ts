@@ -5,7 +5,7 @@ import type { webcrypto } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
-import { createTestHarness } from "wrangler";
+import { createTestWorker, type TestWorker } from "./test-worker.ts";
 
 const CLIENT_ID = "test-client.apps.googleusercontent.com";
 const CLIENT_SECRET = "test-client-secret";
@@ -120,9 +120,8 @@ function startFixture(): Promise<void> {
 }
 
 // The Worker under test, with the given Google client secret.
-function workerInput(clientSecret: string) {
-  return {
-    configPath: new URL("../wrangler.jsonc", import.meta.url),
+function createWorker(clientSecret: string): TestWorker {
+  return createTestWorker({
     vars: {
       ALLOWED_EMAILS: "owner@example.com, second@example.com",
       GOOGLE_CLIENT_ID: CLIENT_ID,
@@ -132,19 +131,17 @@ function workerInput(clientSecret: string) {
       GOOGLE_JWKS_URI: `${fixtureOrigin}/jwks`,
     },
     secrets: { GOOGLE_CLIENT_SECRET: clientSecret },
-  };
+  });
 }
 
-let server: ReturnType<typeof createTestHarness>;
+let server: TestWorker;
 let workerOrigin: string;
 
 beforeAll(async () => {
   googleKey = await generateKey();
   otherKey = await generateKey();
   await startFixture();
-  server = createTestHarness({
-    workers: [workerInput(CLIENT_SECRET)],
-  });
+  server = createWorker(CLIENT_SECRET);
   workerOrigin = (await server.listen()).url.origin;
   await server.getWorker().applyD1Migrations("DB");
 });
@@ -636,10 +633,10 @@ describe("a rejected sign-in", () => {
 });
 
 describe("a Worker whose Google client secret is empty", () => {
-  let emptySecretServer: ReturnType<typeof createTestHarness>;
+  let emptySecretServer: TestWorker;
 
   beforeAll(async () => {
-    emptySecretServer = createTestHarness({ workers: [workerInput("")] });
+    emptySecretServer = createWorker("");
     await emptySecretServer.listen();
     await emptySecretServer.getWorker().applyD1Migrations("DB");
   });

@@ -1,5 +1,4 @@
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
-import { createTestHarness } from "wrangler";
 import {
   accountNotAllowedPage,
   notFoundPage,
@@ -8,6 +7,7 @@ import {
   signInLinkExpiredPage,
 } from "../src/pages.ts";
 import { expectValidHtml } from "./validate-html.ts";
+import { createTestWorker } from "./test-worker.ts";
 
 describe.each([
   ["sign-in link expired", signInLinkExpiredPage, 400, false],
@@ -48,9 +48,7 @@ describe.each([
 });
 
 describe("routes serve the pages", () => {
-  const server = createTestHarness({
-    workers: [{ configPath: new URL("../wrangler.jsonc", import.meta.url) }],
-  });
+  const server = createTestWorker();
 
   beforeAll(async () => {
     await server.listen();

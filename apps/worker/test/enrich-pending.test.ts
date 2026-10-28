@@ -16,7 +16,6 @@ import {
   it,
   vi,
 } from "vite-plus/test";
-import { createTestHarness } from "wrangler";
 import { createDb, type Db } from "../src/db/client.ts";
 import { enrichmentFailures, enrichments } from "../src/db/schema.ts";
 import type { EnrichmentConfig, EnrichmentTiming } from "../src/enrichment/enrich-bookmark.ts";
@@ -68,10 +67,9 @@ import {
   type SeededBookmarkFields,
   seedSignedInUser,
 } from "./seed.ts";
+import { createTestWorker } from "./test-worker.ts";
 
-const server = createTestHarness({
-  workers: [{ configPath: new URL("../wrangler.jsonc", import.meta.url) }],
-});
+const server = createTestWorker();
 
 let fixtures: EnrichmentFixtures;
 let db: Db;

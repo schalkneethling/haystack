@@ -44,9 +44,10 @@ test("the warning is read before the checkbox, and with it as its description", 
     await voiceOver.next();
   }
   // The warning must be in an earlier phrase than the checkbox. The checkbox's own phrase can
-  // hold the warning too, as its description, which doesn't count.
+  // hold the warning too, as its description, which doesn't count. VoiceOver can say the heading's
+  // role before or after its text, as save-pages.voiceover.ts allows.
   expectInOrder(await voiceOver.spokenPhraseLog(), [
-    /\bheading\b.*\blevel 1\b.*save a link/i,
+    /\bheading\b.*\blevel 1\b.*save a link|save a link.*\bheading\b.*\blevel 1\b/i,
     /do not save links that contain access tokens/i,
     WARNING,
     /\bcheckbox\b/i,

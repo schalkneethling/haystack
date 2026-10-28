@@ -1,6 +1,5 @@
 import { normalizeUrl } from "@haystack/schemas";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
-import { createTestHarness } from "wrangler";
 import { RECENT_SAVES_LIMIT, savedLink } from "../src/recent-saves.ts";
 import {
   seedBookmark,
@@ -10,14 +9,10 @@ import {
   type SeededUser,
 } from "./seed.ts";
 import { expectValidHtml } from "./validate-html.ts";
+import { createTestWorker } from "./test-worker.ts";
 
-const server = createTestHarness({
-  workers: [
-    {
-      configPath: new URL("../wrangler.jsonc", import.meta.url),
-      vars: { ALLOWED_EMAILS: "owner@example.com, second@example.com" },
-    },
-  ],
+const server = createTestWorker({
+  vars: { ALLOWED_EMAILS: "owner@example.com, second@example.com" },
 });
 
 beforeAll(async () => {
