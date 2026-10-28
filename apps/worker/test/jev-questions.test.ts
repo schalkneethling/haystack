@@ -16,7 +16,7 @@ import { answer, JEV_ORIGIN, type JevFixture, startJevFixture } from "./jev-fixt
 
 const config: JevConfig = {
   JEV_BASE_URL: JEV_ORIGIN,
-  JEV_MODEL: "jev-1.13.0",
+  JEV_MODEL: "jev-1.14.0",
   TYPESAFE_API_KEY: "ts-test-key-7f3a9c1e",
 };
 
@@ -57,7 +57,7 @@ describe("askSensitivity", () => {
   const description = describeUrlForJudgment(url, title, true);
 
   const response = {
-    model: "jev-1.13.0",
+    model: "jev-1.14.0",
     answers: { private_access: { type: "noul", noul: 0.93 } },
     usage: { input_tokens: 412, output_tokens: 9 },
   };
@@ -67,7 +67,7 @@ describe("askSensitivity", () => {
     expect(await askSensitivity(config, description, timing)).toEqual({
       ok: true,
       answer: 0.93,
-      model: "jev-1.13.0",
+      model: "jev-1.14.0",
       inputTokens: 412,
       attempts: 1,
     });
@@ -77,7 +77,7 @@ describe("askSensitivity", () => {
     fixture.respond(answer(response));
     await askSensitivity(config, description, timing);
     const body = sentBody();
-    expect(body.model).toBe("jev-1.13.0");
+    expect(body.model).toBe("jev-1.14.0");
     expect(body.state).toEqual({ link: description });
     expect(Object.keys(body.questions)).toEqual(["private_access"]);
     expect(body.questions.private_access).toMatchObject({ type: "noul" });
@@ -116,7 +116,7 @@ describe("askKind", () => {
 
   function kindResponse(kindAnswer: JsonBodyType) {
     return {
-      model: "jev-1.13.0",
+      model: "jev-1.14.0",
       answers: { kind: kindAnswer },
       usage: { input_tokens: 655, output_tokens: 40 },
     };
@@ -129,7 +129,7 @@ describe("askKind", () => {
     expect(await askKind(config, evidence, timing)).toEqual({
       ok: true,
       answer: { kind: "tool", probabilities },
-      model: "jev-1.13.0",
+      model: "jev-1.14.0",
       inputTokens: 655,
       attempts: 1,
     });

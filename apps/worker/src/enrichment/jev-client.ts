@@ -5,7 +5,8 @@
 //
 // The request and response fields, the status codes and the retry advice come from TypeSafe's API
 // reference (https://docs.typesafe.ai/api/system-one.md) and its errors page
-// (https://docs.typesafe.ai/api/errors.md), read on 2026-10-22.
+// (https://docs.typesafe.ai/api/errors.md), read on 2026-10-22, and again on 2026-10-28 for
+// jev-1.14.0 (#201), when the fields read here were unchanged.
 //
 // The limits:
 // - At most JEV_ATTEMPT_LIMIT requests per question, because Q3 counts 3 per question when it

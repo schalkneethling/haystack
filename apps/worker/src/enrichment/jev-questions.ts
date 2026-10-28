@@ -67,7 +67,8 @@ export function askSensitivity(
 /**
  * What a bookmark is, judged by what a person does with it, and not where it is hosted: a
  * repository of a test runner is a `tool`, and its host is already in the URL. `other` comes
- * last, because Jev 1.13 leans toward the first option when options compete.
+ * last, because Jev leans toward the first option when options compete. The Jev 1.13 jaggedness
+ * page says so, and on 2026-10-28 it was the newest such page, with none for 1.14 (#201).
  */
 export const KINDS = [
   "tool",

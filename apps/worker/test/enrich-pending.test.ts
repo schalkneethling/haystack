@@ -108,7 +108,7 @@ beforeAll(async () => {
   config = {
     SENSITIVE_WARN_THRESHOLD,
     JEV_BASE_URL: JEV_ORIGIN,
-    JEV_MODEL: "jev-1.13.0",
+    JEV_MODEL: "jev-1.14.0",
     TYPESAFE_API_KEY: "ts-test-key-7f3a9c1e",
     GITHUB_API_BASE_URL: GITHUB_ORIGIN,
     GITHUB_TOKEN: "github_pat_test_4d9e2b7a",
