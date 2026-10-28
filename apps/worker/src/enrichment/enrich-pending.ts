@@ -70,9 +70,12 @@ import {
 } from "./state.ts";
 
 /**
- * The most bookmarks one run may enrich on Workers Free (Q3). Each makes at most 10 outside
- * requests and 3 D1 statements, and the run itself up to 8 D1 statements and 2 flag reads, so 3
- * bookmarks make at most 49 subrequests, under the limit of 50, and a 4th would make 62.
+ * The most bookmarks one run may enrich (Q3). It was sized for Workers Free's 50 subrequests:
+ * each bookmark makes at most 10 outside requests and 3 D1 statements, and the run itself up to
+ * 8 D1 statements and 2 flag reads, so 3 bookmarks make at most 49 subrequests, and a 4th would
+ * make 62. The account moved to Workers Paid on 2026-10-28 (10,000 subrequests), but #130 kept
+ * the ceiling at 3, because the backlog is drained and a larger batch would only drain a future
+ * one faster. Raise it only for a real backlog, after recomputing the count against Paid's limit.
  * enrichPending refuses a larger batch, and the configuration module (flags.ts, #128) uses this
  * as the batch size flag's ceiling.
  */

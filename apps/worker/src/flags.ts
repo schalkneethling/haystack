@@ -64,9 +64,8 @@ export interface SweepFlags {
 
 /**
  * The defaults: the sweep enabled, because it is the retry mechanism for every failure, and Q3's
- * starting batch of 3, which is also its ceiling. The batch size must never be above the
- * ceiling, because a Flagship outage runs with it, and a fourth bookmark could take a run over
- * the subrequest limit.
+ * starting batch of 3, which is also its ceiling (kept at 3 by #130, see Q3). The batch size must
+ * never be above the ceiling, because a Flagship outage runs with it.
  */
 export const SWEEP_FLAG_DEFAULTS: SweepFlags = Object.freeze({
   enabled: true,
@@ -74,8 +73,8 @@ export const SWEEP_FLAG_DEFAULTS: SweepFlags = Object.freeze({
 });
 
 // The live batch size, or the default for a value that isn't a whole number from 1 to the
-// ceiling, such as 4, 0 or 2.5, so a mistyped flag can't take a run over the subrequest limit,
-// or make enrichPending throw.
+// ceiling, such as 4, 0 or 2.5, so a mistyped flag can't take a run over the ceiling, or make
+// enrichPending throw.
 function checkedBatchSize(value: unknown): number {
   if (
     typeof value === "number" &&
