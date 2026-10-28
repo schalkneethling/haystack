@@ -2,7 +2,8 @@
 // normalization" in plans/haystack-v1-implementation-plan.md. GET /save shows the confirmation
 // form and never writes. The confirmation click is what stops other sites from saving into a
 // user's account. Both GET and POST ask Jev whether the link looks private (save-sensitivity.ts),
-// and above the threshold the form warns and asks for a checkbox before it saves (#132).
+// and above the threshold the form warns and asks for a checkbox before it saves (#132). A new
+// bookmark is then enriched without delaying the "Saved" page (`afterSave`, #133).
 import {
   CAPTURE_CAPS,
   CAPTURE_KEYS,
@@ -23,6 +24,7 @@ import { and, eq } from "drizzle-orm";
 import { addressFormPage, type AddressFormState } from "./address-form.ts";
 import type { Db } from "./db/client.ts";
 import { bookmarks } from "./db/schema.ts";
+import { BOOKMARK_TO_ENRICH_COLUMNS, type BookmarkToEnrich } from "./enrichment/enrich-bookmark.ts";
 import { html, type SafeHtml } from "./html.ts";
 import {
   isNotPrivateConfirmed,
@@ -661,9 +663,17 @@ function notAFormPage(): Response {
 }
 
 /**
+ * What POST /save does with a bookmark it has just inserted, given the row the enrichment module
+ * reads. index.ts hands it to `ctx.waitUntil` with the on-save path (enrich-on-save.ts, #133), so
+ * the "Saved" page doesn't wait for the enrichment.
+ */
+export type AfterSave = (bookmark: BookmarkToEnrich) => void;
+
+/**
  * POST /save: validate again (hidden inputs can be tampered with), refuse sensitive URLs, drop a
  * sensitive canonical URL, strip tracking parameters, ask Jev again, and insert. The user comes
- * from the session, never from the form.
+ * from the session, never from the form. A bookmark that is inserted is passed to `afterSave`
+ * before the "Saved" page is returned, and a link that is saved already is not.
  *
  * The check runs again rather than trusting anything from the form, which can be tampered with.
  * Above the threshold, a submission without the checkbox gets the form again, with the warning
@@ -680,6 +690,7 @@ export async function saveBookmark(
   db: Db,
   userId: string,
   config: SaveSensitivityConfig,
+  afterSave: AfterSave,
 ): Promise<Response> {
   let form: FormData;
   try {
@@ -765,9 +776,11 @@ export async function saveBookmark(
       createdAt: now,
     })
     .onConflictDoNothing({ target: [bookmarks.userId, bookmarks.normalizedUrl] })
-    .returning({ id: bookmarks.id })
+    // The columns the enrichment module reads, as stored, so the on-save path reads no row.
+    .returning(BOOKMARK_TO_ENRICH_COLUMNS)
     .get();
   if (inserted !== undefined) {
+    afterSave(inserted);
     return savedPage(inserted.id);
   }
   const existing = await existingBookmark(db, userId, normalizedUrl);

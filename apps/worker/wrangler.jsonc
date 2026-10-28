@@ -63,12 +63,14 @@
     // the sweep, not the cleanup, and fails the scheduled run (src/scheduled.ts).
     "SWEEP_ATTEMPT_LIMIT": "3",
   },
-  // The enrichment sweep and the cleanup of expired sessions and sign-in flows (#128). Every 5
-  // minutes is Q3's starting schedule, which drains the backlog at up to 864 bookmarks a day.
-  // #133 moves it to hourly once the backlog is empty. The schedule is the run frequency, so
-  // changing it is a reviewed deploy, like a `var`. The sweep's switch and batch size are
-  // Flagship flags (src/flags.ts).
-  "triggers": { "crons": ["*/5 * * * *"] },
+  // The enrichment sweep and the cleanup of expired sessions and sign-in flows (#128). Hourly, at
+  // the start of each hour, is the steady state (#133): POST /save enriches each new bookmark
+  // itself, and the sweep retries what that misses. Q3's starting schedule was every 5 minutes
+  // (`*/5 * * * *`), which drains a backlog at up to 864 bookmarks a day, so go back to it while
+  // a backlog drains, such as after a schema version change, or while a `match_text` refresh is
+  // under way (plan, Q3). The schedule is the run frequency, so changing it is a reviewed deploy,
+  // like a `var`. The sweep's switch and batch size are Flagship flags (src/flags.ts).
+  "triggers": { "crons": ["0 * * * *"] },
   // Values come from .env.schema through varlock. A secret is added here in the change
   // whose code first reads it, even before production calls that code, as with
   // TYPESAFE_API_KEY (#122), GITHUB_TOKEN (#123), ANTHROPIC_API_KEY (#124) and

@@ -140,8 +140,18 @@ async function bookmarks(): Promise<Record<string, unknown>[]> {
   return results;
 }
 
+// The Worker's logs, less the on-save path's (#133). A save starts it, and with no LLM key bound
+// here it logs a configuration error, whose elapsed time varies. save-enrichment.test.ts checks
+// what it logs, and expectNoPrivatePartsLogged still reads every log.
+function withoutOnSave(worker: TestWorker): { level: string; message: string }[] {
+  return worker
+    .getLogs()
+    .map(({ level, message }) => ({ level, message }))
+    .filter(({ message }) => !message.startsWith("On-save enrichment"));
+}
+
 function logs(): { level: string; message: string }[] {
-  return server.getLogs().map(({ level, message }) => ({ level, message }));
+  return withoutOnSave(server);
 }
 
 function warningLogs(): string[] {
@@ -612,7 +622,7 @@ describe.each([
     const { results } = await DB.prepare("SELECT sensitivity_noul FROM bookmarks").all();
     expect(results).toEqual([{ sensitivity_noul: null }]);
     expect(fixture.requests).toEqual([]);
-    expect(misconfigured.getLogs().map(({ level, message }) => ({ level, message }))).toEqual([
+    expect(withoutOnSave(misconfigured)).toEqual([
       { level: "warn", message: `Sensitivity check skipped: ${code}` },
       { level: "warn", message: `Sensitivity check skipped: ${code}` },
     ]);

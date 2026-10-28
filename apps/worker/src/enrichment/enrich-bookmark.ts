@@ -3,7 +3,8 @@
 // "Probabilistic check with Jev" and Q3 in plans/haystack-v1-implementation-plan.md. It takes the
 // bookmark's row and returns an outcome, and it knows nothing about how it was called, so the
 // sweep (#127) and the on-save path (#133) call the same code. In production, the scheduled run
-// (#128) calls the sweep. The on-save path comes with #133.
+// (#128) calls the sweep, and POST /save calls the on-save path (enrich-on-save.ts) for each new
+// bookmark.
 //
 // The steps, in order:
 // 1. The sensitivity gate, only when the bookmark's `sensitivity_noul` is empty. Jev is sent
@@ -50,6 +51,7 @@ import { describeUrlForJudgment, type UrlDescription } from "@haystack/schemas";
 import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import { bookmarks, enrichmentFailures, enrichments } from "../db/schema.ts";
+import { errorCode } from "../error-code.ts";
 import { type AnthropicTiming, ANTHROPIC_TIMING } from "./anthropic-messages.ts";
 import type { EnrichmentInput } from "./enrichment-prompt.ts";
 import {
@@ -83,8 +85,9 @@ export type EnrichmentConfig = JevConfig &
   SensitiveWarnThresholdConfig;
 
 /**
- * The time limits of each client. The on-save path passes shorter ones, because `ctx.waitUntil`
- * has 30 seconds and the defaults' worst case is longer (see "Jev client" in the plan).
+ * The time limits of each client. The on-save path passes shorter ones (ON_SAVE_TIMING in
+ * enrich-on-save.ts), because `ctx.waitUntil` has 30 seconds and the defaults' worst case is
+ * longer (see "Jev client" in the plan).
  */
 export interface EnrichmentTiming {
   readonly jev: JevTiming;
@@ -137,6 +140,27 @@ export type BookmarkToEnrich = Pick<
   | "sensitivityNoul"
   | "sensitivityAcknowledgedAt"
 >;
+
+/**
+ * The columns of BookmarkToEnrich, for a caller's query to select: the sweep's selection, and
+ * POST /save's insert, which returns them for the on-save path (#133). The type requires every
+ * column of BookmarkToEnrich, so a column the module starts to read can't be left out of either.
+ */
+export const BOOKMARK_TO_ENRICH_COLUMNS = {
+  id: bookmarks.id,
+  url: bookmarks.url,
+  title: bookmarks.title,
+  description: bookmarks.description,
+  canonicalUrl: bookmarks.canonicalUrl,
+  capturedTitle: bookmarks.capturedTitle,
+  capturedDescription: bookmarks.capturedDescription,
+  ogTitle: bookmarks.ogTitle,
+  ogDescription: bookmarks.ogDescription,
+  ogSiteName: bookmarks.ogSiteName,
+  sensitiveCanonicalDropped: bookmarks.sensitiveCanonicalDropped,
+  sensitivityNoul: bookmarks.sensitivityNoul,
+  sensitivityAcknowledgedAt: bookmarks.sensitivityAcknowledgedAt,
+} satisfies { readonly [Column in keyof BookmarkToEnrich]: (typeof bookmarks)[Column] };
 
 /**
  * The step whose request failed: the sensitivity question, the `kind` question or the LLM.
@@ -221,6 +245,22 @@ export class EnrichmentAccountError extends Error {
   }
 }
 
+/**
+ * What a caller may log about an error that enrichBookmark threw: an EnrichmentAccountError's
+ * fixed fields, or any other error's code or name (error-code.ts). Never a message, because one
+ * such as SENSITIVE_WARN_THRESHOLD_INVALID's holds the value. The sweep and the on-save path both
+ * log their errors with it, so the two can't log an error differently.
+ */
+export function loggableError(
+  error: unknown,
+): Pick<EnrichmentAccountError, "code" | "step" | "reason" | "status"> | { readonly code: string } {
+  if (error instanceof EnrichmentAccountError) {
+    const { code, step, reason, status } = error;
+    return { code, step, reason, status };
+  }
+  return { code: errorCode(error) };
+}
+
 // What the clients report about a failed step, once an account failure has been thrown.
 interface StepFailure {
   readonly failure: BookmarkFailureClass;
@@ -277,15 +317,15 @@ function bookmarkFailure(
  * So a transient failure that is the 5th, 10th, 15th… failure in a row, of either class, counts
  * as one attempt: the count is `consecutive_failures`, which every failure raises. With the
  * attempt limit of 3, a bookmark that only ever fails transiently reaches Failed after 15 tries,
- * which the backoff (`backoffWindowMs` in state.ts) spreads over about two and a half days. A
- * permanent failure in the run brings that forward: after two permanent failures, the third
- * transient failure in a row is the 5th failure, so it counts, and the bookmark reaches Failed.
- * An outage shorter than about two and a half days can't fail a bookmark on its own, because the
- * sweep stops a run when its first calls all fail transiently. A longer one can fail the
- * bookmarks each run tries first, which the owner accepted, because recording those failures is
- * what grows their backoff (OUTAGE_STOP_CALLS in enrich-pending.ts). The owner's decision of
- * 2026-10-25, which chose this reading over a count of transient failures alone, which would
- * need a column of its own.
+ * which the backoff (`backoffWindowMs` in state.ts) spreads over about three days at the hourly
+ * schedule (#133), and about two and a half at every 5 minutes. A permanent failure in the run
+ * brings that forward: after two permanent failures, the third transient failure in a row is the
+ * 5th failure, so it counts, and the bookmark reaches Failed. An outage shorter than that can't
+ * fail a bookmark on its own, because the sweep stops a run when its first calls all fail
+ * transiently. A longer one can fail the bookmarks each run tries first, which the owner
+ * accepted, because recording those failures is what grows their backoff (OUTAGE_STOP_CALLS in
+ * enrich-pending.ts). The owner's decision of 2026-10-25, which chose this reading over a count
+ * of transient failures alone, which would need a column of its own.
  */
 export const TRANSIENT_FAILURES_PER_ATTEMPT = 5;
 

@@ -21,6 +21,12 @@
 //   internet. Google's issuer and authorization endpoint stay as wrangler.jsonc has them,
 //   because the Worker never fetches them: the issuer is compared, and the browser is sent to the
 //   authorization endpoint, which no test follows.
+//
+// A Worker without an LLM key, which is every Worker here unless a test gives one, logs one
+// `On-save enrichment error:` with a configuration error's code for each bookmark POST /save
+// inserts (#133, enrich-on-save.ts). That stays a log line, with no request to any service, only
+// because enrichBookmark checks the configuration of every service a bookmark could need before
+// its first request.
 import { readFileSync } from "node:fs";
 import { createTestHarness } from "wrangler";
 import { ANTHROPIC_ORIGIN, GATEWAY_ORIGIN } from "./anthropic-fixture.ts";

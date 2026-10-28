@@ -234,7 +234,7 @@ describe("the scheduled handler", () => {
     fixtures.jev.respond(noul(0.05), kind());
     fixtures.llm.respond(output(VALID_OUTPUT));
 
-    const result = await server.getWorker().scheduled({ cron: "*/5 * * * *" });
+    const result = await server.getWorker().scheduled({ cron: "0 * * * *" });
 
     expect(result.outcome).toBe("ok");
     expect(await enrichedIds()).toEqual([bookmarkId]);

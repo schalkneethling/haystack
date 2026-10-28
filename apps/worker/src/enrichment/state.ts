@@ -121,7 +121,10 @@ export function deriveEnrichmentState(
 /**
  * The backoff window after a bookmark's first failure in a row. While there is a backlog the
  * sweep is to run every 5 minutes, so a bookmark that just failed would sit out the next two
- * runs, and the others take its place. The owner's decision of 2026-10-25 (#127).
+ * runs, and the others take its place. At the hourly steady state (#133), the window ends before
+ * the next run for a bookmark that failed in a run, which is then tried in the next run. One that
+ * failed on save in the last 15 minutes before a run waits for the run after it. The owner's
+ * decision of 2026-10-25 (#127).
  */
 export const BACKOFF_INITIAL_MS = 15 * 60 * 1000;
 
@@ -129,7 +132,10 @@ export const BACKOFF_INITIAL_MS = 15 * 60 * 1000;
  * The longest backoff window, also the owner's decision of 2026-10-25 (#127). A bookmark that
  * keeps failing is still tried 4 times a day, so its 15 tries to Failed
  * (TRANSIENT_FAILURES_PER_ATTEMPT in enrich-bookmark.ts) take about two and a half days rather
- * than weeks, and a fixed outage is caught up within 6 hours.
+ * than weeks, and a fixed outage is caught up within 6 hours. Those figures are for a sweep every
+ * 5 minutes. At the hourly steady state (#133), a bookmark waits for the first run after its
+ * window ends, which comes 7 hours after a run whose failure started a 6-hour window, so the 15
+ * tries take about three days, and a fixed outage is caught up within 7 hours.
  */
 export const BACKOFF_MAX_MS = 6 * 60 * 60 * 1000;
 
