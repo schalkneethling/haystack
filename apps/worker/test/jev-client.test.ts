@@ -38,16 +38,18 @@ const KEY = "ts-test-key-7f3a9c1e";
 
 const config: JevConfig = {
   JEV_BASE_URL: JEV_ORIGIN,
-  JEV_MODEL: "jev-1.13.0",
+  JEV_MODEL: "jev-1.14.0",
   TYPESAFE_API_KEY: KEY,
 };
 
 // Short enough to keep the tests fast, long enough for a delayed fixture response to miss it.
 const timing: JevTiming = { attemptTimeoutMs: 100, backoffInitialMs: 1 };
 
-// A response in the shape of the Noul page's jev-1.13.0 example.
+// The API reference's Noul response example (https://docs.typesafe.ai/api/system-one.md, read
+// on 2026-10-28), with the pinned model in place of the alias the example names, because a
+// response names the model that answered.
 const noulResponse = {
-  model: "jev-1.13.0",
+  model: "jev-1.14.0",
   answers: { billing: { type: "noul", noul: 0.98 } },
   usage: { input_tokens: 120, output_tokens: 12 },
 };
@@ -129,7 +131,7 @@ describe("askJev", () => {
     expect(await ask()).toEqual({
       ok: true,
       answer: 0.98,
-      model: "jev-1.13.0",
+      model: "jev-1.14.0",
       inputTokens: 120,
       attempts: 1,
     });
@@ -144,7 +146,7 @@ describe("askJev", () => {
     expect(request?.method).toBe("POST");
     expect(request?.headers.get("content-type")).toBe("application/json");
     expect(JSON.parse(request?.body ?? "")).toEqual({
-      model: "jev-1.13.0",
+      model: "jev-1.14.0",
       state: "I was charged twice for my subscription this month.",
       questions: { billing: { type: "noul", instructions: "Is this message about billing?" } },
     });
@@ -485,7 +487,7 @@ describe("askJev", () => {
         new HttpResponse(
           new ReadableStream({
             async start(controller) {
-              controller.enqueue(new TextEncoder().encode('{"model":"jev-1.13.0",'));
+              controller.enqueue(new TextEncoder().encode('{"model":"jev-1.14.0",'));
               await delay(timing.attemptTimeoutMs * 3);
               try {
                 controller.close();

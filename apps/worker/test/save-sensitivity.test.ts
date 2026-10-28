@@ -191,7 +191,7 @@ const OUTAGES: [string, JevResolver, string][] = [
   ["a request that fails without a response", networkError, "status:500"],
   [
     "an answer that isn't a noul",
-    answer({ model: "jev-1.13.0", answers: {}, usage: { input_tokens: 1 } }),
+    answer({ model: "jev-1.14.0", answers: {}, usage: { input_tokens: 1 } }),
     "invalid-response",
   ],
 ];
@@ -245,7 +245,7 @@ describe("GET /save", () => {
     const [request] = fixture.requests;
     expect(request?.headers.get("authorization")).toBe(`Bearer ${KEY}`);
     expect(JSON.parse(request?.body ?? "")).toEqual({
-      model: "jev-1.13.0",
+      model: "jev-1.14.0",
       // Without the tracking parameter, as the gate describes the stored address, and with the
       // payload's `title`, which `captured_title` stores, not the sharing title or the user's.
       state: { link: describeUrlForJudgment(new URL(SAVED_URL), SHARED.title, false) },
@@ -504,7 +504,7 @@ describe("POST /save", () => {
 describe("checkSaveSensitivity", () => {
   const config = {
     JEV_BASE_URL: JEV_ORIGIN,
-    JEV_MODEL: "jev-1.13.0",
+    JEV_MODEL: "jev-1.14.0",
     TYPESAFE_API_KEY: KEY,
     SENSITIVE_WARN_THRESHOLD: "0.5",
   };
