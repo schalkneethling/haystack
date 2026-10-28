@@ -4,6 +4,7 @@
 // plain HTML, so each test runs with and without JavaScript. The design is tested in
 // design.e2e.ts.
 import type { Page } from "@playwright/test";
+import { escapeRegExp } from "../test/escape-regexp.ts";
 import { expect, type HaystackWorker, test } from "./fixtures.ts";
 import {
   ABOVE_THRESHOLD,
@@ -52,7 +53,7 @@ for (const javaScriptEnabled of [true, false]) {
       const checkbox = page.getByRole("checkbox", { name: NOT_PRIVATE });
       await expect(checkbox).not.toBeChecked();
       // The warning is the checkbox's description, so it is read with the box.
-      await expect(checkbox).toHaveAccessibleDescription(new RegExp(`^${WARNING}`));
+      await expect(checkbox).toHaveAccessibleDescription(new RegExp(`^${escapeRegExp(WARNING)}`));
       await checkbox.check();
       await page.getByRole("button", { name: "Save" }).click();
       await expect(page.getByRole("heading", { level: 1 })).toHaveText("Saved");
@@ -102,7 +103,7 @@ for (const javaScriptEnabled of [true, false]) {
       await expect(checkbox).toHaveAttribute("aria-invalid", "true");
       // The error first, then the warning, as a rejected field reads its error first.
       await expect(checkbox).toHaveAccessibleDescription(
-        new RegExp(`^${UNTICKED_ERROR} ${WARNING}`),
+        new RegExp(`^${escapeRegExp(`${UNTICKED_ERROR} ${WARNING}`)}`),
       );
       await expectFocusNotMoved(page);
       expect(await stored(query, url)).toEqual([]);

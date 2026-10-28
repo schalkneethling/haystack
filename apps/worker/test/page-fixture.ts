@@ -26,6 +26,7 @@
 // `https`; and Node adds headers of its own, such as `accept-language`.
 import { http, HttpResponse, passthrough } from "msw";
 import { setupServer } from "msw/node";
+import { escapeRegExp } from "./escape-regexp.ts";
 
 /** The address the test pages are served at, unless a test names another `.test` address. */
 export const PAGES_ORIGIN = "https://pages.test";
@@ -104,7 +105,7 @@ export function startPageFixture(): PageFixture {
       );
     },
     allow: (origin) => {
-      const escaped = new URL(origin).origin.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+      const escaped = escapeRegExp(new URL(origin).origin);
       mock.use(http.all(new RegExp(`^${escaped}/`), () => passthrough()));
     },
     reset: () => {

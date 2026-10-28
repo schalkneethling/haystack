@@ -5,7 +5,7 @@
 // The harness binds more than the options a test gives it. wrangler.jsonc lists the Worker's
 // secrets under `secrets.required`, and for those the harness also reads `.dev.vars`, `.env`
 // files and the environment of the process that started it (`getVarsForDev` in
-// wrangler-dist/cli.js of Wrangler 4.151.0, which passes `includeProcessEnv: true` whenever the
+// wrangler-dist/cli.js of Wrangler 4.151.3, which passes `includeProcessEnv: true` whenever the
 // config has `secrets`). So a shell that holds a real key, such as TYPESAFE_API_KEY, would give it
 // to the Worker under test, and the Worker would call the real service at the production address
 // in wrangler.jsonc, paying for the request and depending on its answer. Every Worker here is
@@ -41,24 +41,60 @@ export const SERVICE_ADDRESSES = {
 } as const;
 
 /**
- * The names in wrangler.jsonc's `secrets.required`, so a secret added there is emptied here too.
- * The file is JSONC, which nothing installed parses but Wrangler, whose reader isn't part of its
- * typed API, so the names are read from the one place they appear: the `"required"` array inside
- * `"secrets"`, which holds only quoted names. Throws when it can't find them, rather than start a
+ * JSONC without its comments: every `//` comment to the end of its line, and every `/* … *\/`
+ * comment, outside strings. Strings are copied as they are, escapes included, so a `//` in an
+ * address such as `"https://api.typesafe.ai"` stays. A comment's line break stays, so the text
+ * keeps its lines.
+ */
+export function withoutJsoncComments(jsonc: string): string {
+  let out = "";
+  let index = 0;
+  while (index < jsonc.length) {
+    const char = jsonc[index];
+    const next = jsonc[index + 1];
+    if (char === '"') {
+      // Copy the string, with its escapes, up to and including its closing quote.
+      let end = index + 1;
+      while (end < jsonc.length && jsonc[end] !== '"') {
+        end += jsonc[end] === "\\" ? 2 : 1;
+      }
+      out += jsonc.slice(index, end + 1);
+      index = end + 1;
+    } else if (char === "/" && next === "/") {
+      const end = jsonc.indexOf("\n", index);
+      index = end === -1 ? jsonc.length : end;
+    } else if (char === "/" && next === "*") {
+      const end = jsonc.indexOf("*/", index + 2);
+      index = end === -1 ? jsonc.length : end + 2;
+    } else {
+      out += char;
+      index += 1;
+    }
+  }
+  return out;
+}
+
+/**
+ * The names in a Wrangler config's `secrets.required`, from its JSONC text. Nothing installed
+ * parses JSONC but Wrangler, whose reader isn't part of its typed API, so the comments are taken
+ * out and the names are read from the one place they appear: the `"required"` array inside
+ * `"secrets"`, which holds only quoted names. Throws when it finds none, rather than start a
  * Worker that might hold a real secret.
  */
-function requiredSecrets(): string[] {
-  const config = readFileSync(CONFIG_URL, "utf8");
+export function requiredSecretNames(jsonc: string): string[] {
+  const config = withoutJsoncComments(jsonc);
   const list = /"secrets"\s*:\s*\{\s*"required"\s*:\s*\[([^\]]*)\]/.exec(config)?.[1];
-  const names = [...(list ?? "").matchAll(/"([A-Z][A-Z0-9_]*)"/g)].map(([, name]) => name);
+  const names = [...(list ?? "").matchAll(/"([A-Z][A-Z0-9_]*)"/g)]
+    .map(([, name]) => name)
+    .filter((name): name is string => name !== undefined);
   if (names.length === 0) {
-    throw new Error(`No secrets.required found in ${CONFIG_URL.pathname}`);
+    throw new Error("No secrets.required found in the Wrangler config");
   }
-  return names.filter((name): name is string => name !== undefined);
+  return names;
 }
 
 const EMPTY_SECRETS: Record<string, string> = Object.fromEntries(
-  requiredSecrets().map((name) => [name, ""]),
+  requiredSecretNames(readFileSync(CONFIG_URL, "utf8")).map((name) => [name, ""]),
 );
 
 /** The harness createTestWorker returns. */
