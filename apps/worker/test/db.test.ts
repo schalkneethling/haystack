@@ -1,10 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
-import { createTestHarness } from "wrangler";
 import { seedBookmark, seedEnrichment, seedEnrichmentFailure } from "./seed.ts";
+import { createTestWorker } from "./test-worker.ts";
 
-const server = createTestHarness({
-  workers: [{ configPath: new URL("../wrangler.jsonc", import.meta.url) }],
-});
+const server = createTestWorker();
 
 beforeAll(async () => {
   await server.listen();

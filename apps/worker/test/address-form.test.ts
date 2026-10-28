@@ -2,19 +2,12 @@
 // with an error when GET /save rejects an address. See "Save flow" in
 // plans/haystack-v1-implementation-plan.md.
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
-import { createTestHarness } from "wrangler";
 import { mainContent, signedOutMainContent } from "./main-content.ts";
 import { seedSignedInUser, type SeededUser } from "./seed.ts";
 import { expectValidHtml } from "./validate-html.ts";
+import { createTestWorker } from "./test-worker.ts";
 
-const server = createTestHarness({
-  workers: [
-    {
-      configPath: new URL("../wrangler.jsonc", import.meta.url),
-      vars: { ALLOWED_EMAILS: "owner@example.com" },
-    },
-  ],
-});
+const server = createTestWorker({ vars: { ALLOWED_EMAILS: "owner@example.com" } });
 
 beforeAll(async () => {
   await server.listen();

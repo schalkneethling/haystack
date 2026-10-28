@@ -15,7 +15,6 @@ import {
   it,
   vi,
 } from "vite-plus/test";
-import { createTestHarness } from "wrangler";
 import { deleteExpiredAuthFlows } from "../src/auth/auth-flows.ts";
 import { deleteExpiredSessions } from "../src/auth/sessions.ts";
 import { createDb } from "../src/db/client.ts";
@@ -41,6 +40,7 @@ import { GITHUB_ORIGIN } from "./github-fixture.ts";
 import { kind, noul } from "./jev-answers.ts";
 import { JEV_ORIGIN, status as jevStatus } from "./jev-fixture.ts";
 import { seedBookmark, seedEnrichmentFailure, seedSignedInUser } from "./seed.ts";
+import { createTestWorker, type TestWorker } from "./test-worker.ts";
 
 // The services' fixture addresses, and keys that aren't real, for the Worker and for this process.
 const SERVICE_VARS = {
@@ -61,7 +61,7 @@ const SERVICE_SECRETS = {
 // The fixtures start first, because the harness sends the Worker's requests through this
 // process's `fetch`, which they patch (page-fixture.ts).
 let fixtures: EnrichmentFixtures;
-let server: ReturnType<typeof createTestHarness>;
+let server: TestWorker;
 // The run's configuration from wrangler.jsonc, with the fixtures' addresses and the test keys.
 let config: EnrichmentConfig & { SWEEP_ATTEMPT_LIMIT: string };
 let userId: string;
@@ -72,15 +72,7 @@ const HOUR = 60 * 60 * 1000;
 
 beforeAll(async () => {
   fixtures = startEnrichmentFixtures();
-  server = createTestHarness({
-    workers: [
-      {
-        configPath: new URL("../wrangler.jsonc", import.meta.url),
-        vars: SERVICE_VARS,
-        secrets: SERVICE_SECRETS,
-      },
-    ],
-  });
+  server = createTestWorker({ vars: SERVICE_VARS, secrets: SERVICE_SECRETS });
   await server.listen();
   await server.getWorker().applyD1Migrations("DB");
   const env = await server.getWorker().getEnv();

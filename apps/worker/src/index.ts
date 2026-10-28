@@ -215,10 +215,10 @@ async function handleAppRoute(
     return showHeld(db, session.user.id, readReviewPolicy(env));
   }
   if (path === "/save" && request.method === "GET") {
-    return showSaveForm(request, db, session.user.id);
+    return showSaveForm(request, db, session.user.id, env);
   }
   if (path === "/save" && request.method === "POST") {
-    return saveBookmark(request, db, session.user.id);
+    return saveBookmark(request, db, session.user.id, env);
   }
   // The address form's Continue: the only route that fetches a page (plan, decision 2).
   if (path === "/save/address" && request.method === "POST") {

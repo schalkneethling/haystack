@@ -8,6 +8,7 @@ import { INVALID_LINK, openRefusalPage } from "./rejected-save-pages.ts";
 import { saveThroughForm } from "./save-through-form.ts";
 import { ADDRESS_FORM_STATES, bringAddressFormTo, holdLookups } from "./held-lookups.ts";
 import { saveFailed, saveHeld } from "./review-items.ts";
+import { openWarnedForm, sendWithoutTheBox } from "./sensitivity-warning.ts";
 
 // One unbroken word, with no hyphen or slash a line could break at, so only `overflow-wrap` can
 // keep it inside the page (#33). The address is under the 2,048-character cap, and the title at
@@ -75,6 +76,17 @@ test.describe("at a 320 px viewport, nothing scrolls horizontally", () => {
     test("the save form after a rejected title", async ({ page }) => {
       await page.goto(saveUrl({ url: LONG_URL }));
       await rejectTitle(page);
+      await expectNoHorizontalScroll(page);
+    });
+
+    // The warning that the link might be private, and its checkbox (#132).
+    test("the save form with the warning, and after a submission without the box", async ({
+      page,
+      jev,
+    }) => {
+      await openWarnedForm(page, jev, LONG_URL);
+      await expectNoHorizontalScroll(page);
+      await sendWithoutTheBox(page, jev, LONG_URL);
       await expectNoHorizontalScroll(page);
     });
 
@@ -220,6 +232,21 @@ for (const [colorScheme, ground] of [
       test("the save form after a rejected title", async ({ page }) => {
         await page.goto(saveUrl({ url: "https://example.com/article", og_title: "An article" }));
         await rejectTitle(page);
+        await expectNoViolations(page);
+      });
+
+      // The warning that the link might be private, its checkbox ticked, and the form after a
+      // submission without it (#132).
+      test("the save form with the warning, and after a submission without the box", async ({
+        page,
+        jev,
+      }) => {
+        const url = "https://example.com/axe-warning";
+        await openWarnedForm(page, jev, url);
+        await expectNoViolations(page);
+        await page.getByRole("checkbox").check();
+        await expectNoViolations(page);
+        await sendWithoutTheBox(page, jev, url);
         await expectNoViolations(page);
       });
 
@@ -456,6 +483,23 @@ test.describe("in forced colors", () => {
     expect(await tick()).toEqual({ visibility: "hidden", border: "solid" });
     await checkbox.check();
     expect(await tick()).toEqual({ visibility: "visible", border: "solid" });
+  });
+
+  // The warning's edge and the rejected box's edge are borders, which forced colors keep, while
+  // the warning's raised background is dropped (#132).
+  test("the save form's warning keeps its edge, and the rejected box its edge and tick", async ({
+    page,
+    jev,
+  }) => {
+    await sendWithoutTheBox(page, jev, "https://example.com/forced-colors-warning");
+    await expect(page.locator("#sensitivity-warning")).toHaveCSS("border-left-style", "solid");
+    await expect(page.locator("#sensitivity-warning")).toHaveCSS("border-left-width", "4px");
+    const checkbox = page.getByRole("checkbox");
+    await expect(checkbox).toHaveCSS("border-top-style", "solid");
+    await checkbox.check();
+    expect(
+      await checkbox.evaluate((element) => getComputedStyle(element, "::before").visibility),
+    ).toBe("visible");
   });
 
   test("only the current page's link is outlined and underlined", async ({ page }) => {

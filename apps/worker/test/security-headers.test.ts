@@ -5,9 +5,9 @@
 // redirects are built with no security header of their own, so if any answer left the Worker
 // without the entry point's step, its case here would fail.
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
-import { createTestHarness } from "wrangler";
 import { withSecurityHeaders } from "../src/security-headers.ts";
 import { seedSignedInUser, type SeededUser } from "./seed.ts";
+import { createTestWorker } from "./test-worker.ts";
 
 const PAGE_POLICY =
   "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
@@ -43,14 +43,7 @@ function expectHeadersFor(response: Response, kind: Kind): void {
   }
 }
 
-const server = createTestHarness({
-  workers: [
-    {
-      configPath: new URL("../wrangler.jsonc", import.meta.url),
-      vars: { ALLOWED_EMAILS: "owner@example.com" },
-    },
-  ],
-});
+const server = createTestWorker({ vars: { ALLOWED_EMAILS: "owner@example.com" } });
 let origin: string;
 
 beforeAll(async () => {

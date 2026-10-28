@@ -33,6 +33,11 @@ import {
   type SensitiveWarnThresholdConfig,
 } from "./enrichment/state.ts";
 import { html, type SafeHtml } from "./html.ts";
+import {
+  isNotPrivateConfirmed,
+  NOT_PRIVATE_LABEL,
+  notPrivateCheckbox,
+} from "./not-private-checkbox.ts";
 import type { Outcome } from "./notices.ts";
 import { htmlResponse } from "./page.ts";
 import { notSavedPage } from "./pages.ts";
@@ -137,24 +142,15 @@ function itemStart(item: ReviewItem): SafeHtml {
         <p class="address">${bookmarkHost(item.url)}</p>`;
 }
 
-/** The checkbox's label, which a release without it quotes. */
-const NOT_PRIVATE_LABEL = "This link does not give access to anything private";
-const NOT_PRIVATE_FIELD = "not_private";
-
-// The checkbox is required, so the browser asks for it before the form is sent, with or without
-// JavaScript, and the server checks it again. It is described by the title, because every Held
-// card's checkbox has the same label. The release form's box is left out of the layout
-// (site.css), so the checkbox gets a row of its own above Release and Delete.
+// The checkbox is the save form's too (not-private-checkbox.ts). It is described by the title,
+// because every Held card's checkbox has the same label. The release form's box is left out of
+// the layout (site.css), so the checkbox gets a row of its own above Release and Delete.
 function heldItem(item: ReviewItem): SafeHtml {
-  const checkboxId = `not-private-${item.id}`;
   return html`<li id="bookmark-${item.id}">
         ${itemStart(item)}
         <div class="card-actions">
           <form class="release-form" method="post" action="${bookmarkAction(item.id, "release")}">
-            <div class="checkbox">
-              <input type="checkbox" id="${checkboxId}" name="${NOT_PRIVATE_FIELD}" value="yes" required aria-describedby="title-${item.id}">
-              <label for="${checkboxId}">${NOT_PRIVATE_LABEL}</label>
-            </div>
+            ${notPrivateCheckbox({ id: `not-private-${item.id}`, describedBy: `title-${item.id}` })}
             <button class="button button-small button-primary" type="submit" id="release-${item.id}" aria-labelledby="release-${item.id} title-${item.id}">Release</button>
           </form>
           ${deleteForm(item.id, HELD_PATH)}
@@ -339,9 +335,9 @@ function notInStatePage(
   return showHeld(db, userId, policy, outcome, 409);
 }
 
-async function isNotPrivateConfirmed(request: Request): Promise<boolean> {
+async function isReleaseConfirmed(request: Request): Promise<boolean> {
   try {
-    return (await request.formData()).get(NOT_PRIVATE_FIELD) === "yes";
+    return isNotPrivateConfirmed(await request.formData());
   } catch {
     // Not a form submission. Nothing is released without the confirmation field.
     return false;
@@ -379,7 +375,7 @@ export async function releaseBookmark(
   config: ReviewConfig,
 ): Promise<Response> {
   const policy = readReviewPolicy(config);
-  const confirmed = await isNotPrivateConfirmed(request);
+  const confirmed = await isReleaseConfirmed(request);
   const bookmark = await readOwnBookmark(db, userId, bookmarkId, policy);
   if (bookmark === undefined) {
     return notSavedPage();

@@ -5,6 +5,13 @@ Feature: Confirming and saving a link
   description first. Nothing is saved until they press Save, so no other site
   can add a link to their collection by sending them to a save link.
 
+  Before it shows the form, and again when they press Save, Haystack asks
+  Jev, a model, how likely it is that the link gives access to something
+  private (#132). Jev never sees the address itself, only a description of it
+  with its values left out. When the answer is at or above the threshold, the
+  form warns, and asks them to confirm that the link isn't private before it
+  saves it. It is a warning and never a refusal, because Jev can be wrong.
+
   The form is plain HTML and works the same with and without JavaScript.
 
   Background:
@@ -128,22 +135,128 @@ Feature: Confirming and saving a link
   @unit:apps/extension/test/open-save-form.test.ts
   @unit:packages/schemas/test/screen-canonical-url.test.ts
   @playwright:apps/extension/e2e/toolbar-button.e2e.ts
+  @integration:apps/worker/test/save-sensitivity.test.ts
   Scenario: A page that declares a private address for itself is still saved
     A page can name a canonical address for itself. If that address carries a
     secret, Haystack leaves it out and saves the page without it. The person
     never saw that address, so the form says nothing about it. Haystack keeps
     only the fact that the page declared such an address, as a yes or no and
-    never the address, so that the privacy check can use it later. The fact
-    reaches the save form whether the page was read by the extension, by the
-    address form or by a link someone built by hand. The browser test checks
-    the extension's link and the form it opens, and the integration tests
-    check what is stored.
+    never the address, and its check of whether the link looks private uses
+    that fact as a strong sign that it does. So the form may still warn that
+    the link looks private, as the scenario "The check knows that the page
+    declared a private address for itself" describes. The fact reaches the
+    save form whether the page was read by the extension, by the address form
+    or by a link someone built by hand. The browser test checks the
+    extension's link and the form it opens, and the integration tests check
+    the form, what Jev is sent and what is stored. No test makes Jev warn for
+    such a page, because how Jev answers is Jev's.
 
     Given I opened the save form for a page that declares a canonical address containing an access token
-    Then the save form looks as it does for any other page
+    Then the save form says nothing about that address, and never shows it
+    And the form may warn that the link looks private, because the page declared such an address
     When I press Save
     Then the link is saved without the canonical address, and the secret is stored nowhere
     And Haystack has recorded that the page declared an address with a secret
+
+  @integration:apps/worker/test/save-sensitivity.test.ts
+  Scenario: The check knows that the page declared a private address for itself
+    A page that names a canonical address with a secret in it is a strong
+    sign that its own address is a private share too, so Haystack tells Jev,
+    as a yes or no, that the page declared such an address. It never sends
+    the address itself, in any form. A page that declared no such address is
+    checked without that statement. The integration test checks what Jev is
+    sent and what is stored, not how Jev answers.
+
+    Given I opened the save form for a page that declares a canonical address containing an access token
+    Then Haystack's check tells Jev that the page declared an address with a secret
+    And nothing Haystack sends to Jev contains that address, or any part of it
+    When I press Save
+    Then the check on Save tells Jev the same
+    And the link is saved with the fact recorded, and without the address
+
+  @integration:apps/worker/test/save-sensitivity.test.ts
+  @playwright:apps/worker/e2e/save-sensitivity.e2e.ts
+  Scenario: Saving a link that Haystack warns might be private, after ticking the box
+    A private share can look like any other address, with no part that
+    Haystack's own check recognizes, so only Jev's answer can warn about it.
+
+    Given the save form is open for a link that Haystack thinks might be private
+    Then right after the notice about private links, the form says "This link looks as if it might be private. Haystack checked its address, and it looks like a link that lets in anyone who has it, such as a private share, an invitation, or a sign-in or download link. Save it only if it doesn't give access to anything private."
+    And it has the checkbox "This link does not give access to anything private", not ticked, with the warning as its description
+    When I tick "This link does not give access to anything private"
+    And I press Save
+    Then I see the heading "Saved"
+    And Haystack records that I confirmed the link isn't private
+
+  @playwright:apps/worker/e2e/save-sensitivity.e2e.ts
+  Scenario: Pressing Save without ticking the box
+    The checkbox is required, so the browser asks for it before it sends the
+    form, with or without JavaScript.
+
+    Given the save form is open for a link that Haystack thinks might be private
+    When I press Save without ticking "This link does not give access to anything private"
+    Then the browser asks me to tick the box, and sends nothing
+    And nothing is saved
+
+  @integration:apps/worker/test/save-sensitivity.test.ts
+  @playwright:apps/worker/e2e/save-sensitivity.e2e.ts
+  Scenario: The form comes back when it was sent without the box
+    Haystack checks the link again when I press Save, rather than trusting the
+    form. So a form that showed no box, because the first check found nothing
+    or got no answer, can come back with one, and so can a form sent without
+    its required box, for example by hand.
+
+    Given the save form is open for a link, and shows no warning
+    And Haystack's check when I press Save thinks the link might be private
+    When I change the title to "My planning doc" and press Save
+    Then I see the page titled "Check the form - Haystack"
+    And the alert "Tick “This link does not give access to anything private” to save this link." comes right after the heading "Save a link"
+    And the form shows the warning, and the checkbox, marked invalid, with the error and then the warning as its description
+    And the title I entered is still in its field
+    And nothing was saved
+    And focus is not moved, so the page starts from the top
+    When I tick "This link does not give access to anything private" and press Save
+    Then I see the heading "Saved"
+
+  @integration:apps/worker/test/save-sensitivity.test.ts
+  Scenario: A rejected title on a form with the warning
+    Given the save form is open for a link that Haystack thinks might be private
+    When I tick "This link does not give access to anything private"
+    And I replace the title with spaces and press Save
+    Then the alert "Enter a title of up to 200 characters." comes right after the heading "Save a link"
+    And the form still shows the warning, with the box ticked
+    And nothing was saved
+
+  @voiceover:apps/worker/e2e/save-sensitivity.voiceover.ts
+  Scenario: A screen reader user hears the warning before the box
+    Given I use VoiceOver
+    And the save form is open for a link that Haystack thinks might be private
+    When I read the form from the heading "Save a link"
+    Then VoiceOver reads the notice about private links, then the warning, then the checkbox
+    And when I move straight to the checkbox, VoiceOver reads "This link does not give access to anything private", checkbox, with the warning as its description
+
+  @integration:apps/worker/test/save-sensitivity.test.ts
+  @playwright:apps/worker/e2e/save-sensitivity.e2e.ts
+  Scenario: A link that Haystack doesn't think is private has no warning
+    Given the save form is open for a link that Haystack doesn't think is private
+    Then the form has neither the warning nor the checkbox
+    When I press Save
+    Then the link is saved
+
+  @integration:apps/worker/test/save-sensitivity.test.ts
+  @playwright:apps/worker/e2e/save-sensitivity.e2e.ts
+  Scenario: Saving when Haystack can't check the link
+    Jev can be down, slow or unreachable. The check waits 2 seconds at most,
+    and saving never depends on it. Haystack checks the link again later,
+    before it sends anything about it to the services that describe links.
+    The tests check the form and the save, and the enrichment tests check
+    that later check.
+
+    Given Jev gives Haystack no answer about the link in time
+    When I open the save form for it
+    Then the form has neither the warning nor the checkbox
+    When I press Save
+    Then the link is saved
 
   @integration:apps/worker/test/save-form.test.ts
   @integration:apps/worker/test/recent-saves.test.ts

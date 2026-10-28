@@ -5,16 +5,14 @@
 // real local D1 from Wrangler's test harness, so no request leaves this machine.
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { createTestHarness } from "wrangler";
 import { createDb, type Db } from "../src/db/client.ts";
 import type { EnrichmentConfig } from "../src/enrichment/enrich-bookmark.ts";
 import { enrichPending } from "../src/enrichment/enrich-pending.ts";
 import { createFixtureServer } from "./fixture-server.ts";
 import { seedBookmark, seedSignedInUser } from "./seed.ts";
+import { createTestWorker } from "./test-worker.ts";
 
-const server = createTestHarness({
-  workers: [{ configPath: new URL("../wrangler.jsonc", import.meta.url) }],
-});
+const server = createTestWorker();
 const requests: string[] = [];
 const fixtureServer = createFixtureServer((line) => requests.push(line));
 

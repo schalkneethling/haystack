@@ -8,6 +8,7 @@
 // target. The fixture records its address in `unplanned`, which the tests check, and MSW fails it
 // (`onUnhandledFrame: "error"`), so it never reaches the network.
 import { http, HttpResponse, type JsonBodyType } from "msw";
+import { escapeRegExp } from "./escape-regexp.ts";
 import { type FixtureParts, serveFixtures } from "./mock-server.ts";
 
 /** The address the tests configure as GITHUB_API_BASE_URL. */
@@ -117,13 +118,9 @@ export const networkError: GitHubResolver = () => HttpResponse.error();
  */
 export const GITHUB_LOOPBACK_ORIGIN = "http://127.0.0.1:8788";
 
-function escaped(origin: string): string {
-  return origin.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
-}
-
 // Any address on GITHUB_ORIGIN or GITHUB_LOOPBACK_ORIGIN.
 const GITHUB_ADDRESS = new RegExp(
-  `^(?:${escaped(GITHUB_ORIGIN)}|${escaped(GITHUB_LOOPBACK_ORIGIN)})/`,
+  `^(?:${escapeRegExp(GITHUB_ORIGIN)}|${escapeRegExp(GITHUB_LOOPBACK_ORIGIN)})/`,
 );
 
 /**

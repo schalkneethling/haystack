@@ -1,6 +1,6 @@
 # User journeys
 
-The files in this folder describe, in plain language, what a person can do with Haystack and what happens when something goes wrong. Each journey is a scenario written in Gherkin, the language that Cucumber reads, in which every step starts with Given, When or Then. The scenarios cover Milestone 1 and the review page at /held, which Milestone 2 adds (#129). They are kept in step with `main`, as the section "Keeping them in step with the code" below describes.
+The files in this folder describe, in plain language, what a person can do with Haystack and what happens when something goes wrong. Each journey is a scenario written in Gherkin, the language that Cucumber reads, in which every step starts with Given, When or Then. The scenarios cover Milestone 1, and what Milestone 2 adds: the review page at /held (#129), and the save form's warning about a link that might be private (#132). They are kept in step with `main`, as the section "Keeping them in step with the code" below describes.
 
 They are documentation, and the input for new Playwright tests. They do not run: there is no Cucumber, no other Gherkin runner and no step definitions, so nothing checks a scenario against the code except the tests named in its tags and the people who read it.
 
@@ -13,7 +13,7 @@ There is one file per area, and each starts with a `Feature` that says who the j
 | `sign-in.feature`        | Signing in with Google, the ways sign-in can fail, coming back to the page you started on, and signing out                                  |
 | `extension-save.feature` | Saving the current page from the extension's popup in Chrome and Firefox, and the pages it refuses                                          |
 | `address-form.feature`   | Saving a link by typing or pasting its address in the "Save a link" form (#97, #105)                                                        |
-| `save-form.feature`      | Confirming a link on the save form, its errors, and the "already saved" page                                                                |
+| `save-form.feature`      | Confirming a link on the save form, its errors, its warning about a link that might be private (#132), and the "already saved" page         |
 | `saved-links.feature`    | The saved links list, and moving through it with a screen reader                                                                            |
 | `delete.feature`         | Deleting a link, with and without JavaScript                                                                                                |
 | `held.feature`           | Reviewing links that Haystack held back or couldn't describe at /held: releasing, retrying and deleting (#129)                              |

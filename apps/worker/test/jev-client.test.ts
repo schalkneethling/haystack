@@ -413,6 +413,54 @@ describe("askJev", () => {
       expect(fixture.requests).toHaveLength(3);
     });
 
+    // The save form's check makes one attempt (#132). A larger limit is capped, because Q3
+    // counts JEV_ATTEMPT_LIMIT requests per question.
+    it.each([
+      [1, 1],
+      [2, 2],
+      [JEV_ATTEMPT_LIMIT + 2, JEV_ATTEMPT_LIMIT],
+    ])("with an attempt limit of %i, makes %i requests", async (attemptLimit, expected) => {
+      fixture.respond(...Array.from({ length: expected }, () => networkError));
+      const result = await askJev(
+        config,
+        {
+          state: "I was charged twice for my subscription this month.",
+          id: "billing",
+          question: { type: "noul", instructions: "Is this message about billing?" },
+          answer: NoulAnswer,
+        },
+        { ...timing, attemptLimit },
+      );
+      expect(result).toEqual({
+        ok: false,
+        failure: "transient",
+        reason: "network",
+        attempts: expected,
+      });
+      expect(fixture.requests).toHaveLength(expected);
+    });
+
+    // A limit that isn't a whole number from 1 would otherwise make one attempt, or, for NaN,
+    // retry for good, so it is the caller's bug, and nothing is sent.
+    it.each([0, -1, 0.5, Number.NaN])(
+      "throws for an attempt limit of %s, before anything is sent",
+      async (attemptLimit) => {
+        await expect(
+          askJev(
+            config,
+            {
+              state: "I was charged twice for my subscription this month.",
+              id: "billing",
+              question: { type: "noul", instructions: "Is this message about billing?" },
+              answer: NoulAnswer,
+            },
+            { ...timing, attemptLimit },
+          ),
+        ).rejects.toThrow(RangeError);
+        expect(fixture.requests).toEqual([]);
+      },
+    );
+
     it("makes a timeout transient, and counts it as one of the 3 attempts", async () => {
       const slow = async () => {
         await delay(timing.attemptTimeoutMs * 5);

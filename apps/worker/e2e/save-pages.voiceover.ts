@@ -17,33 +17,12 @@
 // Since #97, GET /save shows the address form for a rejected address, so the validation page is
 // reached with a title over its cap, and the refusal page with a tampered POST.
 import type { VoiceOverPlaywright } from "@guidepup/playwright";
+import { expectInOrder } from "./expect-in-order.ts";
 import { INVALID_LINK, openRefusalPage } from "./rejected-save-pages.ts";
 import { expect, test } from "./voiceover-fixtures.ts";
 
 function saveUrl(values: Record<string, string>): string {
   return `/save?${new URLSearchParams(values).toString()}`;
-}
-
-/**
- * Checks that each part appears in the spoken phrases, in this order, each in a later phrase than
- * the one before. With the default capture, each move of the VoiceOver cursor adds one phrase to
- * the log, so the ordered checks run after moves made with the default capture. With
- * `capture: true`, Guidepup joins everything spoken until silence into one entry, and the parts
- * would no longer be in separate phrases.
- */
-function expectInOrder(spoken: readonly string[], parts: readonly (string | RegExp)[]): void {
-  let from = 0;
-  for (const part of parts) {
-    const found = spoken.findIndex(
-      (phrase, index) =>
-        index >= from && (typeof part === "string" ? phrase.includes(part) : part.test(phrase)),
-    );
-    expect(
-      found,
-      `"${String(part)}" from phrase ${from} in ${JSON.stringify(spoken)}`,
-    ).toBeGreaterThanOrEqual(0);
-    from = found + 1;
-  }
 }
 
 const TITLE = /this link can't be saved - haystack/i;

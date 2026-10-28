@@ -8,7 +8,6 @@ import { and, eq } from "drizzle-orm";
 import { delay, HttpResponse } from "msw";
 import * as v from "valibot";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
-import { createTestHarness } from "wrangler";
 import { createDb, type Db } from "../src/db/client.ts";
 import { bookmarks, enrichmentFailures, enrichments } from "../src/db/schema.ts";
 import {
@@ -49,10 +48,9 @@ import { kind, noul, PROBABILITIES } from "./jev-answers.ts";
 import { JEV_ORIGIN, networkError as jevNetworkError, status as jevStatus } from "./jev-fixture.ts";
 import { seedBookmark, seedEnrichment, seedEnrichmentFailure, seedSignedInUser } from "./seed.ts";
 import type { SeededBookmarkFields } from "./seed.ts";
+import { createTestWorker } from "./test-worker.ts";
 
-const server = createTestHarness({
-  workers: [{ configPath: new URL("../wrangler.jsonc", import.meta.url) }],
-});
+const server = createTestWorker();
 
 let fixtures: EnrichmentFixtures;
 let db: Db;
