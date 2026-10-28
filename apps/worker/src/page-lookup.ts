@@ -31,10 +31,12 @@ export const LOOKUP_READ_LIMIT_BYTES = 256 * 1024;
 
 /**
  * How many handler calls the reader takes at most. Every call counts: an element of any of the
- * selectors, `<head>`, `<title>`, and each chunk of a title's text. The Workers Free plan allows 10 ms of
- * CPU time per request, and each element that reaches a handler in JavaScript costs about 14 µs
- * in the local runtime (the review of #105 measured it: 256 KiB of repeated `<meta>` took about
- * 667 ms when every one reached JavaScript, and the same size of comments 11 ms). The selectors
+ * selectors, `<head>`, `<title>`, and each chunk of a title's text. Workers Free allowed 10 ms of
+ * CPU time per request when this was written. The account is on Workers Paid now, so the cap
+ * bounds the work and is not a plan limit. Each element that reaches a handler in JavaScript
+ * costs about 14 µs in the local runtime (the review of #105 measured it: 256 KiB of repeated
+ * `<meta>` took about 667 ms when every one reached JavaScript, and the same size of comments
+ * 11 ms). The selectors
  * below already keep every other element in the rewriter, which is fast, so only the tags the
  * reader wants reach JavaScript, and an ordinary page has a handful of them. 100 handled elements
  * is about 1.4 ms, which leaves room for the parsing and the rest of the request, and for a page

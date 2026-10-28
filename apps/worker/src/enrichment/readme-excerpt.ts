@@ -12,7 +12,7 @@
 // item's continued lines without parsing.
 //
 // The CPU time grows with the README's length and no faster, so a hostile README can't make the
-// Worker spend its 10 ms on backtracking. No pattern can share one run of characters between two
+// Worker spend its CPU time on backtracking. No pattern can share one run of characters between two
 // of its parts in more than one way, and none follows a run of any length with a backreference
 // to it. A pattern that isn't anchored stops at the next character that could end what it
 // matches, so it never scans the same text again from each start. readme-excerpt.test.ts times
