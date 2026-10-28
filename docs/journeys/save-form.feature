@@ -245,18 +245,52 @@ Feature: Confirming and saving a link
 
   @integration:apps/worker/test/save-sensitivity.test.ts
   @playwright:apps/worker/e2e/save-sensitivity.e2e.ts
+  @integration:apps/worker/test/save-enrichment.test.ts
   Scenario: Saving when Haystack can't check the link
     Jev can be down, slow or unreachable. The check waits 2 seconds at most,
-    and saving never depends on it. Haystack checks the link again later,
-    before it sends anything about it to the services that describe links.
-    The tests check the form and the save, and the enrichment tests check
-    that later check.
+    and saving never depends on it. Haystack checks the link again right
+    after saving it, and in a later run if that gets no answer either, before
+    it sends anything about it to the services that describe links. The
+    save tests check the form and the save, save-enrichment.test.ts checks
+    the check right after saving, and the enrichment module's tests check
+    the later one.
 
     Given Jev gives Haystack no answer about the link in time
     When I open the save form for it
     Then the form has neither the warning nor the checkbox
     When I press Save
     Then the link is saved
+    And Haystack checks it again right after saving it, before it describes it
+
+  @integration:apps/worker/test/save-enrichment.test.ts
+  Scenario: Haystack describes a new link right after it is saved
+    Once a link is saved, Haystack asks the services that describe links
+    about it straight away (#133), and the "Saved" page doesn't wait for
+    them. So a new link is usually described within seconds, rather than at
+    Haystack's next hourly run. The integration test holds the description
+    service's answer, and checks that the "Saved" page arrives while it is
+    held and that the description is stored once it is released. No page
+    shows descriptions yet, so the test checks what is stored.
+
+    Given the save form is open for a page I have not saved yet
+    When I press Save
+    Then I see the heading "Saved" without waiting for Haystack to describe the link
+    And Haystack describes the link straight after
+
+  @integration:apps/worker/test/save-enrichment.test.ts
+  Scenario: Haystack can't describe a new link right after it is saved
+    A service that describes links can be down, slow, or refuse Haystack's
+    request. The link is saved either way, and Haystack's hourly run tries
+    to describe it again. One failure never moves a link under "Not
+    described" on /held. The integration test checks the link's state, which
+    /held reads, and that the hourly run picks the link, not the /held page
+    itself.
+
+    Given the service that describes links fails when I save a link
+    When I press Save
+    Then I see the heading "Saved"
+    And Haystack tries to describe the link again in a later run
+    And the link isn't under "Not described" on /held
 
   @integration:apps/worker/test/save-form.test.ts
   @integration:apps/worker/test/recent-saves.test.ts

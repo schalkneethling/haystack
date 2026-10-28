@@ -48,8 +48,8 @@ import {
 import { alias } from "drizzle-orm/sqlite-core";
 import type { Db } from "../db/client.ts";
 import { bookmarks, enrichmentFailures, enrichments } from "../db/schema.ts";
-import { errorCode } from "../error-code.ts";
 import {
+  BOOKMARK_TO_ENRICH_COLUMNS,
   type BookmarkToEnrich,
   ENRICHMENT_TIMING,
   EnrichmentAccountError,
@@ -57,6 +57,7 @@ import {
   type EnrichmentOutcome,
   type EnrichmentTiming,
   enrichBookmark,
+  loggableError,
 } from "./enrich-bookmark.ts";
 import { ENRICHMENT_SCHEMA_VERSION } from "./enrichment-schema.ts";
 import { GitHubPause } from "./github-pause.ts";
@@ -274,22 +275,11 @@ export async function selectBookmarksToEnrich(
   const rows = await db
     .select({
       bookmarkId: bookmarks.id,
-      sensitivityNoul: bookmarks.sensitivityNoul,
-      sensitivityAcknowledgedAt: bookmarks.sensitivityAcknowledgedAt,
       enrichmentVersion: enrichments.schemaVersion,
       failedAttempts: enrichmentFailures.attempts,
-      // The rest of BookmarkToEnrich, which enrichBookmark reads, so it reads no row itself.
-      id: bookmarks.id,
-      url: bookmarks.url,
-      title: bookmarks.title,
-      description: bookmarks.description,
-      canonicalUrl: bookmarks.canonicalUrl,
-      capturedTitle: bookmarks.capturedTitle,
-      capturedDescription: bookmarks.capturedDescription,
-      ogTitle: bookmarks.ogTitle,
-      ogDescription: bookmarks.ogDescription,
-      ogSiteName: bookmarks.ogSiteName,
-      sensitiveCanonicalDropped: bookmarks.sensitiveCanonicalDropped,
+      // BookmarkToEnrich, which enrichBookmark reads, so it reads no row itself. Its
+      // `sensitivityNoul` and `sensitivityAcknowledgedAt` are the state's inputs too.
+      ...BOOKMARK_TO_ENRICH_COLUMNS,
     })
     .from(bookmarks)
     .leftJoin(enrichments, eq(enrichments.bookmarkId, bookmarks.id))
@@ -323,15 +313,9 @@ function checkedCount(name: string, value: number, min: number, max = Infinity):
   return value;
 }
 
-// Logs a thrown error by what is safe to log: an account error's fixed fields, and any other
-// error's code or name (error-code.ts), never a message.
+// Logs a thrown error by what is safe to log (loggableError), never a message.
 function logError(error: unknown): void {
-  if (error instanceof EnrichmentAccountError) {
-    const { code, step, reason, status } = error;
-    console.error("Enrichment sweep error:", { code, step, reason, status });
-  } else {
-    console.error("Enrichment sweep error:", { code: errorCode(error) });
-  }
+  console.error("Enrichment sweep error:", loggableError(error));
 }
 
 /**

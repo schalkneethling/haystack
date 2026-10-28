@@ -20,6 +20,7 @@ import { upsertUser } from "./auth/users.ts";
 import { createDb, type Db } from "./db/client.ts";
 import { bookmarkActionPath, type BookmarkRoute, HELD_PATH } from "./bookmark-paths.ts";
 import { deleteBookmark, deleteReturnPage, readForm } from "./delete-bookmark.ts";
+import { enrichOnSave } from "./enrichment/enrich-on-save.ts";
 import { errorCode } from "./error-code.ts";
 import { readReviewPolicy, releaseBookmark, retryBookmark, showHeld } from "./held.ts";
 import { showRecentSaves } from "./recent-saves.ts";
@@ -204,6 +205,7 @@ function handleBookmarkRoute(
 async function handleAppRoute(
   request: Request,
   env: Env,
+  ctx: ExecutionContext,
   db: Db,
   session: AuthenticatedSession,
 ): Promise<Response> {
@@ -218,7 +220,12 @@ async function handleAppRoute(
     return showSaveForm(request, db, session.user.id, env);
   }
   if (path === "/save" && request.method === "POST") {
-    return saveBookmark(request, db, session.user.id, env);
+    // A new bookmark is enriched straight away, without delaying the "Saved" page (#133). The
+    // runtime keeps the Worker running for up to 30 seconds after the response for it, and the
+    // on-save path never rejects (enrich-on-save.ts). Whatever it misses, the sweep enriches.
+    return saveBookmark(request, db, session.user.id, env, (bookmark) => {
+      ctx.waitUntil(enrichOnSave(db, env, bookmark));
+    });
   }
   // The address form's Continue: the only route that fetches a page (plan, decision 2).
   if (path === "/save/address" && request.method === "POST") {
@@ -291,7 +298,7 @@ async function unauthenticated(request: Request, hadCookie: boolean): Promise<Re
 }
 
 // Every answer the Worker builds. The Origin check comes before anything else reads the request.
-async function answer(request: Request, env: Env): Promise<Response> {
+async function answer(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   if (!SAFE_METHODS.has(request.method) && !isSameOriginRequest(request)) {
     return text("Forbidden", 403);
   }
@@ -311,7 +318,7 @@ async function answer(request: Request, env: Env): Promise<Response> {
     return unauthenticated(request, sessionId !== undefined);
   }
 
-  const response = await handleAppRoute(request, env, db, session);
+  const response = await handleAppRoute(request, env, ctx, db, session);
   if (!session.extended) {
     return response;
   }
@@ -327,10 +334,10 @@ export default {
   // route can build one without them (#113). A route that throws, for example when D1 fails, gets
   // a 500 built here, because the runtime's own error page would leave without them. Only the
   // error's code is logged, never its message, which can hold a query's values.
-  async fetch(request, env): Promise<Response> {
+  async fetch(request, env, ctx): Promise<Response> {
     let response: Response;
     try {
-      response = await answer(request, env);
+      response = await answer(request, env, ctx);
     } catch (error) {
       console.error("Request failed:", errorCode(error));
       response = text("Internal Server Error", 500);
