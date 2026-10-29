@@ -814,10 +814,26 @@ test.describe("the header", () => {
       const box = await item.boundingBox();
       expect(box?.height).toBeGreaterThanOrEqual(40);
     }
-    // Search is the current page, so Saved links and Sign out are the plain, underlined items.
+    // Search is the current page, so Saved links and Sign out are the plain, underlined items, and
+    // Sign out, a button, looks exactly like the link.
+    for (const property of [
+      "text-decoration-line",
+      "text-underline-offset",
+      "font-weight",
+      "color",
+    ]) {
+      const link = await savedLinks.evaluate(
+        (element, name) => getComputedStyle(element).getPropertyValue(name),
+        property,
+      );
+      await expect(signOut).toHaveCSS(property, link);
+    }
     await expect(savedLinks).toHaveCSS("text-decoration-line", "underline");
-    await expect(signOut).toHaveCSS("text-decoration-line", "underline");
+    await expect(savedLinks).toHaveCSS("font-weight", "400");
+    // The current page is bold, with the bar and without the underline.
     await expect(search).toHaveCSS("font-weight", "700");
+    await expect(search).toHaveCSS("border-bottom-style", "solid");
+    await expect(search).toHaveCSS("text-decoration-line", "none");
   });
 
   test.describe("without JavaScript", () => {

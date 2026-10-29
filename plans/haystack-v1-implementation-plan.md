@@ -1041,7 +1041,7 @@ The interface follows the "Night field" direction, which Schalk chose from three
 | `--color-ink-muted`                | `#A9A49A`                       | `#5C5850`                       | dates, labels above the address, and the notice on the list |
 | `--color-accent`                   | `#E9C46A` (straw)               | `#7A5A00` (ochre)               | links, addresses and the focus ring                         |
 | `--color-accent-hover`             | `#F4DC9C`                       | `#5C4400`                       | a link under the pointer                                    |
-| `--color-primary`                  | `#E9C46A`                       | `#E9C46A`                       | the primary button                                          |
+| `--color-primary`                  | `#E9C46A`                       | `#E9C46A`                       | the primary button and the wordmark's dot                   |
 | `--color-primary-hover`            | `#F4DC9C`                       | `#F4DC9C`                       | the primary button under the pointer                        |
 | `--color-primary-border`           | straw                           | `#7A5A00`                       | the primary button's edge and the current page's bar        |
 | `--color-on-primary`               | `#121417`                       | `#1A1C1F`                       | text on the primary button                                  |
@@ -1051,7 +1051,7 @@ The interface follows the "Night field" direction, which Schalk chose from three
 | `--color-alert`, `-border`, `-ink` | `#3A2321`, `#6B3B35`, `#FFD2CB` | `#FDF0EE`, `#F0C2BB`, `#8A1A12` | the save form's error                                       |
 | `--color-backdrop`                 | `rgb(8 9 11 / 72%)`             | `rgb(26 28 31 / 45%)`           | behind the open dialog                                      |
 
-The other tokens are the type (body text at 17 px with a line height of 1.55, the `h1` at 40 px, weight 700 and letter spacing -0.03em, card titles at 19 px and weight 600, and the address form's title at 20 px and weight 700), a spacing scale from 4 to 64 px, the radii (10 px for fields, 14 px for cards, 16 px for forms and the dialog, and pills for buttons), the target sizes, the focus ring, and the two content widths. Sizes are in `rem`, so they follow the reader's font size.
+The other tokens are the type (body text at 17 px with a line height of 1.55, the `h1` at 40 px, weight 700 and letter spacing -0.03em, card titles at 19 px and weight 600, and the address form's title at 20 px and weight 700), a spacing scale from 4 to 64 px, the radii (10 px for fields, 14 px for cards, 16 px for forms and the dialog, and pills for `.button`s, which the header's Sign out is not), the target sizes, the focus ring, and the two content widths. Sizes are in `rem`, so they follow the reader's font size.
 
 The tokens are not registered with `@property`, which the "Search page" section asked for. A registered property needs an `initial-value` that does not depend on anything else, and a length in `rem` depends on the root font size, so only the colors could be registered. Registering only the colors would give the tokens file two styles for one job, so that is left for the search page to decide.
 

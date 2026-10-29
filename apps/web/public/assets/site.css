@@ -129,7 +129,8 @@ main > :where(p, ul, div) {
 }
 
 /* The navigation links and Sign out are plain underlined text, so the three weigh the same next
-   to the wordmark. Sign out is a button, so the browser's own button fill and border are reset. */
+   to the wordmark. Sign out is a button, so the browser's own button fill and border are reset,
+   and it takes the links' underline offset and color transition, which are set for `a`. */
 .nav-link {
   align-items: center;
   background-color: transparent;
@@ -142,6 +143,7 @@ main > :where(p, ul, div) {
   min-block-size: var(--target-small);
   padding-inline: var(--space-xs);
   text-decoration: underline;
+  text-underline-offset: 0.15em;
 }
 
 .nav-link:hover {
@@ -159,7 +161,7 @@ main > :where(p, ul, div) {
   text-decoration: none;
 }
 
-/* Buttons. Every button is a pill. The plain one is secondary. */
+/* Buttons. Every `.button` is a pill. The plain one is secondary. */
 
 .button {
   align-items: center;
@@ -232,7 +234,8 @@ main > :where(p, ul, div) {
 
 @media (prefers-reduced-motion: no-preference) {
   a,
-  .button {
+  .button,
+  .nav-link {
     transition:
       background-color 120ms ease,
       color 120ms ease;
