@@ -1,0 +1,19 @@
+{
+  "name": "@haystack/evals",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vp test",
+    "contract": "vp test run && varlock run --path ../apps/worker/ --filter TYPESAFE_API_KEY,ANTHROPIC_API_KEY,AI_GATEWAY_TOKEN,GITHUB_TOKEN --inject vars -- node contract-check.ts"
+  },
+  "dependencies": {
+    "@haystack/schemas": "workspace:*",
+    "valibot": "^1.5.0",
+    "wrangler": "4.151.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.9",
+    "varlock": "^1.23.0"
+  }
+}

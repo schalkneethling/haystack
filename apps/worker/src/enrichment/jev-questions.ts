@@ -142,7 +142,11 @@ export interface KindAnswer {
   readonly probabilities: Readonly<Record<Kind, number>>;
 }
 
-const KindAnswerSchema = choiceAnswer(KINDS);
+/**
+ * The schema of the `kind` answer. The contract check (evals/contract-checks.ts, #203) validates
+ * TypeSafe's live answer with it too.
+ */
+export const KindAnswerSchema = choiceAnswer(KINDS);
 
 /**
  * Asks what kind of resource the bookmark is. `signal` stops the question's retries when a sweep

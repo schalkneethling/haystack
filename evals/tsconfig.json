@@ -1,0 +1,9 @@
+// The evaluation scripts and the contract check, which run in Node. They import the Worker's
+// enrichment clients, so those are checked here with Node's types too, as apps/worker/test does.
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["."]
+}

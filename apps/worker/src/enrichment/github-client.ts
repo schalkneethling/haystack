@@ -146,12 +146,15 @@ export interface GitHubSuccess {
 
 export type GitHubResult = GitHubSuccess | GitHubFailure;
 
-// The fields of "Get a repository" that Haystack reads. Fields it doesn't read aren't checked, so
-// a change to them can't fail the read. `private` is required, and `description` and `language`
-// are required but may be null. `topics` is optional, and so is `visibility`, which the OpenAPI
-// description (github/rest-api-description, `full-repository`) gives as "public, private, or
-// internal".
-const RepositoryResponse = v.object({
+/**
+ * The fields of "Get a repository" that Haystack reads. Fields it doesn't read aren't checked, so
+ * a change to them can't fail the read. `private` is required, and `description` and `language`
+ * are required but may be null. `topics` is optional, and so is `visibility`, which the OpenAPI
+ * description (github/rest-api-description, `full-repository`) gives as "public, private, or
+ * internal". The contract check (evals/contract-checks.ts, #203) validates GitHub's live answer
+ * with it too.
+ */
+export const RepositoryResponse = v.object({
   private: v.boolean(),
   visibility: v.optional(v.string()),
   description: v.nullable(v.string()),
@@ -264,6 +267,30 @@ export function assertGitHubConfig(config: GitHubConfig): void {
 }
 
 /**
+ * The "Get a repository" request for the repository `match` names: its URL, which holds only the
+ * repository's path, and its headers, the token in `authorization` among them. It throws the
+ * configuration errors `readGitHubRepository` throws, before anything is sent.
+ * readGitHubRepository sends it first. The contract check (evals/contract-checks.ts, #203) sends
+ * it once for a fixed public repository, so the live request that check makes is this one.
+ */
+export function gitHubRepositoryRequest(
+  config: GitHubConfig,
+  match: GitHubRepositoryMatch,
+): { readonly url: URL; readonly headers: Readonly<Record<string, string>> } {
+  const base = checkedConfig(config);
+  const path = `/repos/${encodeURIComponent(match.owner)}/${encodeURIComponent(match.repo)}`;
+  return {
+    url: new URL(path, base),
+    headers: {
+      authorization: `Bearer ${config.GITHUB_TOKEN}`,
+      "user-agent": GITHUB_USER_AGENT,
+      "x-github-api-version": GITHUB_API_VERSION,
+      accept: "application/vnd.github+json",
+    },
+  };
+}
+
+/**
  * Reads the repository that `match` names: its description, topics and primary language, and
  * an excerpt of its README. A missing or unreadable README still returns the repository's data.
  * Any other failure returns no data, and nothing is retried. Throws for an empty token, or for a
@@ -276,18 +303,10 @@ export async function readGitHubRepository(
   match: GitHubRepositoryMatch,
   timing: GitHubTiming = GITHUB_TIMING,
 ): Promise<GitHubResult> {
-  const base = checkedConfig(config);
-  const path = `/repos/${encodeURIComponent(match.owner)}/${encodeURIComponent(match.repo)}`;
-  const repositoryUrl = new URL(path, base);
-  const headers = {
-    authorization: `Bearer ${config.GITHUB_TOKEN}`,
-    "user-agent": GITHUB_USER_AGENT,
-    "x-github-api-version": GITHUB_API_VERSION,
-  };
-
+  const repositoryRequest = gitHubRepositoryRequest(config, match);
   const repositoryOutcome = await request(
-    repositoryUrl,
-    { ...headers, accept: "application/vnd.github+json" },
+    repositoryRequest.url,
+    repositoryRequest.headers,
     REPOSITORY_READ_LIMIT_BYTES,
     timing.requestTimeoutMs,
   );
@@ -314,9 +333,10 @@ export async function readGitHubRepository(
 
   // The raw media type returns the README's own text, Markdown and all, rather than JSON with
   // the content in base64, so it can be read a few kilobytes at a time.
+  // The README is under the repository's own path, with the same headers but its media type.
   const readmeOutcome = await request(
-    new URL(`${path}/readme`, base),
-    { ...headers, accept: "application/vnd.github.raw+json" },
+    new URL(`${repositoryRequest.url.pathname}/readme`, repositoryRequest.url),
+    { ...repositoryRequest.headers, accept: "application/vnd.github.raw+json" },
     GITHUB_README_READ_LIMIT_BYTES,
     timing.requestTimeoutMs,
   );
