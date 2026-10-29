@@ -2,6 +2,7 @@
 // user data; later pages use the same `html` helper for anything that does. The sign-in outcomes
 // are shown to someone who is not signed in, so their header has the wordmark only.
 import { AUTH_FLOW_LIFETIME_MS } from "./auth/auth-flows.ts";
+import { SAVED_LINKS_PATH } from "./bookmark-paths.ts";
 import { html } from "./html.ts";
 import { htmlResponse } from "./page.ts";
 
@@ -79,7 +80,7 @@ export function notSavedPage(): Response {
     "Link not found",
     html`<h1>This link isn't in your saved links</h1>
       <p>It may have been deleted already.</p>
-      <p><a href="/">Go to your saved links</a></p>`,
+      <p><a href="${SAVED_LINKS_PATH}">Go to your saved links</a></p>`,
     404,
     { signedIn: true },
   );

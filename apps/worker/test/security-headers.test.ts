@@ -243,7 +243,7 @@ const cases: Case[] = [
   },
   {
     name: "the saved links",
-    path: "/",
+    path: "/saved-links",
     headers: HTML,
     signedIn: true,
     status: 200,
@@ -397,7 +397,7 @@ describe("every answer has the security headers for its kind", () => {
       .run();
     const response = await send({
       name: "",
-      path: "/",
+      path: "/saved-links",
       headers: HTML,
       signedIn: true,
       status: 200,

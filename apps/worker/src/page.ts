@@ -1,5 +1,6 @@
 // The shared page layout. The security headers every answer carries are added by the Worker's
 // entry point (security-headers.ts), so the answers built here set only their content type.
+import { SAVED_LINKS_PATH } from "./bookmark-paths.ts";
 import { html, type SafeHtml } from "./html.ts";
 
 // Static assets in apps/web/public. The tokens come first, because the page's stylesheet uses
@@ -32,7 +33,7 @@ function siteActions(current: PageOptions["current"]): SafeHtml {
   return html`
         <div class="site-actions">
           <nav class="site-nav" aria-label="Main">
-            <a class="nav-link" href="/"${currentPage}>Saved links</a>
+            <a class="nav-link" href="${SAVED_LINKS_PATH}"${currentPage}>Saved links</a>
           </nav>
           <form method="post" action="/auth/sign-out">
             <button class="button button-small" type="submit">Sign out</button>

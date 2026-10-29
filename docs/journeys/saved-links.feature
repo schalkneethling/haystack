@@ -1,12 +1,21 @@
 Feature: The saved links list
-  The saved links page is Haystack's home page in Milestone 1. It shows the
-  owner's most recent links, newest first, as cards, with the "Save a link"
-  form above them. Each card links to the page it saved, and has a Delete
-  button. The list is plain HTML, so it works without JavaScript, and a screen
-  reader user can move through it by heading.
+  The saved links page, at /saved-links, shows the owner's most recent links,
+  newest first, as cards, with the "Save a link" form above them. Each card
+  links to the page it saved, and has a Delete button. The list is plain HTML,
+  so it works without JavaScript, and a screen reader user can move through it
+  by heading. It was Haystack's home page in Milestone 1, and moved to a page
+  of its own so that the search page can take the home page (#205).
 
   Background:
     Given I am signed in to Haystack
+
+  @integration:apps/worker/test/recent-saves.test.ts
+  Scenario: Haystack's home page sends me on to my saved links
+    Until the search page takes the home page, the home page sends me on to
+    the saved links page. The integration test checks the redirect.
+
+    When I open Haystack's home page
+    Then I land on my saved links, at /saved-links
 
   @playwright:apps/worker/e2e/recent-saves.e2e.ts
   @playwright:apps/worker/e2e/design.e2e.ts
@@ -62,7 +71,7 @@ Feature: The saved links list
 
   @integration:apps/worker/test/recent-saves.test.ts
   Scenario: More links than the list shows
-    Until search arrives, the list shows the 50 most recent links.
+    The list shows the 50 most recent links.
 
     Given I have saved 51 links
     When I open my saved links

@@ -20,7 +20,7 @@ Feature: Pages a person can reach by mistake
     Given I am signed in to Haystack
     When I open an address on Haystack that has no page, such as /nowhere
     Then I see the page titled "Page not found - Haystack", under the heading "Page not found"
-    And the link "Go to Haystack" takes me to my saved links
+    And the link "Go to Haystack" takes me to Haystack's home page
     And the header has "Saved links" and "Sign out"
 
   @playwright:apps/worker/e2e/design.e2e.ts

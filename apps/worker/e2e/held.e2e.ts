@@ -120,13 +120,13 @@ for (const javaScriptEnabled of [true, false]) {
       page,
       run,
     }) => {
-      await page.goto("/");
+      await page.goto("/saved-links");
       await expect(page.getByRole("heading", { level: 1 })).toHaveText("Saved links");
       await expect(page.getByRole("link", { name: /^Review \d+ links?$/ })).toHaveCount(0);
 
       await saveHeld(page, run, `https://example.com/link-held-${mode}`, "Held guide");
       await saveFailed(page, run, `https://example.com/link-failed-${mode}`, "Failed guide");
-      await page.goto("/");
+      await page.goto("/saved-links");
       await page.getByRole("link", { name: "Review 2 links" }).click();
       await expect(page.getByRole("heading", { level: 1 })).toHaveText("Links to review");
       await expect(card(page, "Held guide")).toBeVisible();

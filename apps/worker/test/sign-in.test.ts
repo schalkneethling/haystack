@@ -273,7 +273,7 @@ describe("a successful sign-in", () => {
     expect(await counts()).toEqual({ users: 1, sessions: 1 });
 
     const cookie = (response.headers.get("set-cookie") ?? "").split(";")[0];
-    const app = await server.fetch("/", { headers: { cookie }, redirect: "manual" });
+    const app = await server.fetch("/saved-links", { headers: { cookie }, redirect: "manual" });
     expect(app.status).toBe(200);
   });
 
@@ -302,6 +302,11 @@ describe("a successful sign-in", () => {
     "save",
   ])("falls back to / for the return target %j", async (returnTo) => {
     const response = await callBack(await startSignIn(returnTo));
+    expect(response.headers.get("location")).toBe("/");
+  });
+
+  it("lands on the home page without a return target", async () => {
+    const response = await callBack(await startSignIn());
     expect(response.headers.get("location")).toBe("/");
   });
 
@@ -481,11 +486,11 @@ describe("a save link given to sign-in directly", () => {
       { url: `${article}?access_token=secret-value`, title: "a".repeat(201) },
     ],
     ["an http address", { url: "http://example.com/?access_token=secret-value" }],
-  ])("stores / for a link with %s, and returns there", async (_, fields) => {
+  ])("stores the saved links for a link with %s, and returns there", async (_, fields) => {
     const start = await startSignIn(`/save?${new URLSearchParams(fields).toString()}`);
-    expect(await storedReturnTargets()).toEqual([{ return_to: "/" }]);
+    expect(await storedReturnTargets()).toEqual([{ return_to: "/saved-links" }]);
     const signedIn = await callBack(start);
-    expect(signedIn.headers.get("location")).toBe("/");
+    expect(signedIn.headers.get("location")).toBe("/saved-links");
   });
 
   // safeReturnTarget resolves dot segments and drops tabs before sign-in reads the path, so the
@@ -496,7 +501,7 @@ describe("a save link given to sign-in directly", () => {
       await startSignIn(
         `${path}?url=${encodeURIComponent(`${article}?access_token=secret-value`)}`,
       );
-      expect(await storedReturnTargets()).toEqual([{ return_to: "/" }]);
+      expect(await storedReturnTargets()).toEqual([{ return_to: "/saved-links" }]);
     },
   );
 

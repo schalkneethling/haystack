@@ -122,7 +122,7 @@ function expectNoError(markup: string): void {
 
 describe("the address form", () => {
   it("is at the top of the saved links page, labelled as the design shows it", async () => {
-    const response = await get("/");
+    const response = await get("/saved-links");
     expect(response.status).toBe(200);
     const markup = await response.text();
     expectAddressForm(markup);

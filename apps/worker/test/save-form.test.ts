@@ -506,7 +506,9 @@ describe("GET /save", () => {
     const response = await getSave({ url: submitted });
     const markup = await response.text();
     expect(markup).toContain("<h1>You already saved this link</h1>");
-    expect(markup).toContain(`href="/#bookmark-${id}"`);
+    expect(markup).toContain(
+      `<a href="/saved-links#bookmark-${id}">See it in your saved links</a>`,
+    );
     await expectValidHtml(markup);
   });
 

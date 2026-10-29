@@ -5,7 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { bookmarkHost } from "./bookmark-card.ts";
 import type { Db } from "./db/client.ts";
 import { bookmarks } from "./db/schema.ts";
-import { bookmarkAction, HELD_PATH, RETURN_FIELD } from "./bookmark-paths.ts";
+import { bookmarkAction, HELD_PATH, RETURN_FIELD, SAVED_LINKS_PATH } from "./bookmark-paths.ts";
 import { readReviewPolicy, type ReviewConfig, showHeld } from "./held.ts";
 import { html, type SafeHtml } from "./html.ts";
 import type { Outcome } from "./notices.ts";
@@ -14,14 +14,14 @@ import { notSavedPage } from "./pages.ts";
 import { showRecentSaves } from "./recent-saves.ts";
 
 /** The pages a delete returns to: the saved links, or /held from its own Delete buttons. */
-export type DeleteReturnPage = "/" | typeof HELD_PATH;
+export type DeleteReturnPage = typeof SAVED_LINKS_PATH | typeof HELD_PATH;
 
 /**
  * The page the delete form names in RETURN_FIELD. Any value other than HELD_PATH, and no value,
  * returns to the saved links, so the field can't send anyone elsewhere.
  */
 export function deleteReturnPage(form: FormData | undefined): DeleteReturnPage {
-  return form?.get(RETURN_FIELD) === HELD_PATH ? HELD_PATH : "/";
+  return form?.get(RETURN_FIELD) === HELD_PATH ? HELD_PATH : SAVED_LINKS_PATH;
 }
 
 // What the confirmation shows of the address. From /held it shows the host only, as the card
@@ -34,7 +34,7 @@ function addressLine(url: string, returnPage: DeleteReturnPage): SafeHtml {
 
 // Where "Keep it" goes back to, at the bookmark's card.
 const KEEP_LINKS: Record<DeleteReturnPage, string> = {
-  "/": "Keep it and go back to your saved links",
+  [SAVED_LINKS_PATH]: "Keep it and go back to your saved links",
   [HELD_PATH]: "Keep it and go back to the links to review",
 };
 

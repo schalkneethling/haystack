@@ -92,7 +92,9 @@ describe("POST /save", () => {
       sensitive_canonical_dropped: 0,
     });
     expect(bookmark?.id).toMatch(/^[0-9a-f-]{36}$/);
-    expect(markup).toContain(`href="/#bookmark-${String(bookmark?.id)}"`);
+    expect(markup).toContain(
+      `<a href="/saved-links#bookmark-${String(bookmark?.id)}">See it in your saved links</a>`,
+    );
   });
 
   it("stores no description when the confirmed description is empty", async () => {

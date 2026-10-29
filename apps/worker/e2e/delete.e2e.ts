@@ -11,7 +11,7 @@ test.beforeEach(async ({ signIn }) => {
 
 test("the confirmation page has no axe violations", async ({ page }) => {
   await saveThroughForm(page, "https://example.com/guide", "A guide");
-  await page.goto("/");
+  await page.goto("/saved-links");
   // The dialog script handles the button's submit event; form.submit() skips it, which is
   // what a browser without JavaScript does.
   await page
@@ -33,12 +33,18 @@ test.describe("without JavaScript", () => {
   }) => {
     await saveThroughForm(page, "https://example.com/delete-first", "First guide");
     await saveThroughForm(page, "https://example.com/delete-second", "Second guide");
-    await page.goto("/");
+    await page.goto("/saved-links");
 
     await page.getByRole("button", { name: "Delete First guide" }).click();
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("Delete this link?");
     await page.getByRole("button", { name: "Delete" }).click();
 
+    // Confirming shows the saved links again, which the delete started from.
+    await expect(page).toHaveTitle("Deleted “First guide” - Saved links - Haystack");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Saved links");
+    await expect(
+      page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Saved links" }),
+    ).toHaveAttribute("aria-current", "page");
     await expect(listStatus(page)).toHaveText("Deleted “First guide”.");
     await expect(page.getByRole("button", { name: /^Delete / })).toHaveText(["Delete"]);
     await expect(page.getByRole("button", { name: "Delete Second guide" })).toBeVisible();
@@ -54,9 +60,10 @@ test.describe("without JavaScript", () => {
   test("keeping the bookmark goes back to it on the list", async ({ page, query }) => {
     await saveThroughForm(page, "https://example.com/kept", "Kept guide");
     const [row] = await query("SELECT id FROM bookmarks WHERE url = ?", "https://example.com/kept");
-    await page.goto("/");
+    await page.goto("/saved-links");
     await page.getByRole("button", { name: "Delete Kept guide" }).click();
     await page.getByRole("link", { name: "Keep it and go back to your saved links" }).click();
+    expect(new URL(page.url()).pathname).toBe("/saved-links");
     expect(new URL(page.url()).hash).toBe(`#bookmark-${String(row?.id)}`);
     await expect(page.getByRole("button", { name: "Delete Kept guide" })).toBeVisible();
   });

@@ -32,7 +32,7 @@ async function focusDeleteButton(
   url: string,
 ): Promise<void> {
   await saveThroughForm(page, url, TITLE);
-  await page.goto("/");
+  await page.goto("/saved-links");
   await page.getByRole("heading", { level: 1 }).waitFor();
   await voiceOver.navigateToWebContent();
   await page.getByRole("button", { name: `Delete ${TITLE}` }).focus();

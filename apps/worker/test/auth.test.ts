@@ -93,6 +93,19 @@ describe("without a session", () => {
     expect(response.status).toBe(401);
   });
 
+  // A POST cannot be repeated by returning to its path, so a form that isn't the save form, the
+  // address form or a bookmark's button returns to the saved links after sign-in (#34, #205).
+  it("sends any other form through sign-in to the saved links", async () => {
+    const response = await server.fetch("/no-such-form", {
+      method: "POST",
+      headers: { origin, ...page },
+      body: new URLSearchParams({ field: "value" }),
+      redirect: "manual",
+    });
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe("/auth/sign-in?return_to=%2Fsaved-links");
+  });
+
   it("reaches /auth/* routes", async () => {
     const response = await get("/auth/signed-out", page);
     expect(response.status).toBe(200);
@@ -121,13 +134,13 @@ describe("with a session", () => {
 
   it("matches the allowlist case-insensitively", async () => {
     const { sessionId } = await seedSession("OWNER@example.COM", SESSION_LIFETIME_MS - DAY);
-    expect((await get("/", cookieFor(sessionId))).status).toBe(200);
+    expect((await get("/saved-links", cookieFor(sessionId))).status).toBe(200);
   });
 
   it("does not write in the first half of the session's life", async () => {
     const { sessionId, idHash } = await seedSession("owner@example.com", SESSION_LIFETIME_MS - DAY);
     const before = await sessionExpiry(idHash);
-    const response = await get("/", cookieFor(sessionId));
+    const response = await get("/saved-links", cookieFor(sessionId));
     expect(response.headers.get("set-cookie")).toBeNull();
     expect(await sessionExpiry(idHash)).toBe(before);
   });
@@ -135,7 +148,7 @@ describe("with a session", () => {
   it("extends a session in the second half of its life", async () => {
     const { sessionId, idHash } = await seedSession("owner@example.com", 2 * DAY);
     const start = Date.now();
-    const response = await get("/", cookieFor(sessionId));
+    const response = await get("/saved-links", cookieFor(sessionId));
     const expiresAt = await sessionExpiry(idHash);
     expect(expiresAt).toBeGreaterThanOrEqual(start + SESSION_LIFETIME_MS);
     const cookie = response.headers.get("set-cookie") ?? "";
@@ -151,7 +164,7 @@ describe("with a session", () => {
 
   it("rejects and deletes an expired session", async () => {
     const { sessionId, idHash } = await seedSession("owner@example.com", -1);
-    const response = await get("/", { ...page, ...cookieFor(sessionId) });
+    const response = await get("/saved-links", { ...page, ...cookieFor(sessionId) });
     expect(response.status).toBe(302);
     expect(response.headers.get("set-cookie")).toContain("__Host-session=; Max-Age=0");
     expect(await sessionExpiry(idHash)).toBeUndefined();

@@ -48,7 +48,7 @@ async function rejectTitle(page: Page): Promise<void> {
 
 async function openDeleteDialog(page: Page, url: string, title: string): Promise<void> {
   await saveThroughForm(page, url, title);
-  await page.goto("/");
+  await page.goto("/saved-links");
   await page.getByRole("button", { name: `Delete ${title}` }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
 }
@@ -100,7 +100,7 @@ test.describe("at a 320 px viewport, nothing scrolls horizontally", () => {
     }
 
     test("the saved links page with the address form", async ({ page }) => {
-      await page.goto("/");
+      await page.goto("/saved-links");
       await expect(page.getByRole("textbox", { name: "Save a link" })).toBeVisible();
       await expectNoHorizontalScroll(page);
     });
@@ -114,7 +114,7 @@ test.describe("at a 320 px viewport, nothing scrolls horizontally", () => {
           await page.clock.install();
         }
         const lookups = await holdLookups(page);
-        for (const [index, path] of ["/", "/save"].entries()) {
+        for (const [index, path] of ["/saved-links", "/save"].entries()) {
           await page.goto(path);
           const address = pages.url(`/${"longpathwithoutabreak".repeat(20)}`);
           await bringAddressFormTo(page, lookups, index, state, address);
@@ -194,7 +194,7 @@ for (const [colorScheme, ground] of [
       });
 
       test("the empty saved links list", async ({ page }) => {
-        await page.goto("/");
+        await page.goto("/saved-links");
         await expect(page.getByText("You haven't saved any links yet.")).toBeVisible();
         await expectNoViolations(page);
       });
@@ -216,7 +216,7 @@ for (const [colorScheme, ground] of [
       // listener, which is what a browser without JavaScript does.
       test("the delete confirmation page", async ({ page }) => {
         await saveThroughForm(page, `https://example.com/confirm-${colorScheme}`, "A guide");
-        await page.goto("/");
+        await page.goto("/saved-links");
         await page
           .getByRole("button", { name: "Delete A guide" })
           .evaluate((button) => button.closest("form")?.submit());
@@ -276,7 +276,7 @@ for (const [colorScheme, ground] of [
           `https://example.com/axe-failed-${colorScheme}`,
           "Failed guide",
         );
-        await page.goto("/");
+        await page.goto("/saved-links");
         await expect(page.getByRole("link", { name: "Review 3 links" })).toBeVisible();
         await expectNoViolations(page);
 
@@ -332,7 +332,7 @@ for (const [colorScheme, ground] of [
             await page.clock.install();
           }
           const lookups = await holdLookups(page);
-          for (const [index, path] of ["/", "/save"].entries()) {
+          for (const [index, path] of ["/saved-links", "/save"].entries()) {
             await page.goto(path);
             await bringAddressFormTo(page, lookups, index, state, pages.url("/axe-state"));
             await expectNoViolations(page);
@@ -435,7 +435,7 @@ for (const [width, beside] of [
       signIn,
     }) => {
       await signIn();
-      await page.goto("/");
+      await page.goto("/saved-links");
       const field = await page.getByRole("textbox", { name: "Save a link" }).boundingBox();
       const button = await page.getByRole("button", { name: "Continue" }).boundingBox();
       if (field === null || button === null) {
@@ -506,7 +506,7 @@ test.describe("in forced colors", () => {
     const savedLinks = page
       .getByRole("navigation", { name: "Main" })
       .getByRole("link", { name: "Saved links" });
-    await page.goto("/");
+    await page.goto("/saved-links");
     await expect(savedLinks).toHaveCSS("border-top-style", "solid");
     await expect(savedLinks).toHaveCSS("text-decoration-line", "underline");
     await page.goto(saveUrl({ url: "https://example.com/forced-colors" }));
@@ -548,7 +548,7 @@ test.describe("the header", () => {
     const savedLinks = page
       .getByRole("navigation", { name: "Main" })
       .getByRole("link", { name: "Saved links" });
-    await page.goto("/");
+    await page.goto("/saved-links");
     await expect(savedLinks).toHaveAttribute("aria-current", "page");
     await page.goto(saveUrl({ url: "https://example.com/current" }));
     await expect(savedLinks).not.toHaveAttribute("aria-current");
@@ -558,19 +558,19 @@ test.describe("the header", () => {
     test.use({ javaScriptEnabled: false });
 
     test("Sign out ends the session and shows the signed-out page", async ({ page }) => {
-      await page.goto("/");
+      await page.goto("/saved-links");
       await page.getByRole("button", { name: "Sign out" }).click();
       await expect(page.getByRole("heading", { level: 1 })).toHaveText(
         "You are signed out of Haystack",
       );
       // The fixture keeps sending the old session cookie, which the Worker no longer accepts.
       // No redirect is followed, so nothing goes to Google.
-      const response = await page.request.get("/", {
+      const response = await page.request.get("/saved-links", {
         headers: { accept: "text/html" },
         maxRedirects: 0,
       });
       expect(response.status()).toBe(302);
-      expect(response.headers().location).toBe("/auth/sign-in?return_to=%2F");
+      expect(response.headers().location).toBe("/auth/sign-in?return_to=%2Fsaved-links");
     });
   });
 });

@@ -59,7 +59,7 @@ async function saveMany(entries: { url: string; createdAt?: number }[], user = o
 }
 
 async function getList(cookie: string | null = owner.cookie) {
-  return server.fetch("/", {
+  return server.fetch("/saved-links", {
     headers: { accept: "text/html", ...(cookie === null ? {} : { cookie }) },
     redirect: "manual",
   });
@@ -75,11 +75,11 @@ function itemIds(markup: string): string[] {
   return [...markup.matchAll(/<li id="bookmark-([^"]+)"/g)].map((match) => match[1] ?? "");
 }
 
-describe("GET /", () => {
-  it("redirects to sign-in without a session", async () => {
+describe("GET /saved-links", () => {
+  it("redirects to sign-in without a session, and returns to the saved links", async () => {
     const response = await getList(null);
     expect(response.status).toBe(302);
-    expect(response.headers.get("location")).toBe("/auth/sign-in?return_to=%2F");
+    expect(response.headers.get("location")).toBe("/auth/sign-in?return_to=%2Fsaved-links");
   });
 
   it("shows the empty state when nothing is saved", async () => {
@@ -194,12 +194,28 @@ describe("GET /", () => {
   });
 
   it("answers HEAD like GET", async () => {
-    const response = await server.fetch("/", {
+    const response = await server.fetch("/saved-links", {
       method: "HEAD",
       headers: { accept: "text/html", cookie: owner.cookie },
     });
     expect(response.status).toBe(200);
   });
+});
+
+// Until the search page takes the home page (#206), `/` sends a signed-in user on to the list.
+describe("GET /", () => {
+  it.each(["GET", "HEAD"])(
+    "answers %s with a temporary redirect to the saved links",
+    async (method) => {
+      const response = await server.fetch("/", {
+        method,
+        headers: { accept: "text/html", cookie: owner.cookie },
+        redirect: "manual",
+      });
+      expect(response.status).toBe(302);
+      expect(response.headers.get("location")).toBe("/saved-links");
+    },
+  );
 });
 
 describe("the already-saved page", () => {
@@ -220,7 +236,9 @@ describe("the already-saved page", () => {
         createdAt: 2 + offset,
       })),
     ]);
-    expect(await alreadySaved("https://example.com/listed")).toContain(`href="/#bookmark-${id}"`);
+    expect(await alreadySaved("https://example.com/listed")).toContain(
+      `<a href="/saved-links#bookmark-${id}">See it in your saved links</a>`,
+    );
   });
 
   it(`explains when the bookmark is older than the newest ${RECENT_SAVES_LIMIT}`, async () => {
@@ -234,6 +252,7 @@ describe("the already-saved page", () => {
     const markup = await alreadySaved("https://example.com/older");
     expect(markup).not.toContain(`bookmark-${id}`);
     expect(markup).toContain(`older than the ${RECENT_SAVES_LIMIT} most recent links`);
+    expect(markup).toContain('<a href="/saved-links">your saved links</a>');
     await expectValidHtml(markup);
   });
 
