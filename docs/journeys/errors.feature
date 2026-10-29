@@ -16,12 +16,13 @@ Feature: Pages a person can reach by mistake
 
   @playwright:apps/worker/e2e/design.e2e.ts
   @integration:apps/worker/test/pages.test.ts
+  @integration:apps/worker/test/search-switch.test.ts
   Scenario: An address that doesn't exist, while signed in
     Given I am signed in to Haystack
     When I open an address on Haystack that has no page, such as /nowhere
     Then I see the page titled "Page not found - Haystack", under the heading "Page not found"
     And the link "Go to Haystack" takes me to Haystack's home page
-    And the header has "Saved links" and "Sign out"
+    And the header has "Search", "Saved links" and "Sign out", or, while search is switched off, only "Saved links" and "Sign out"
 
   @playwright:apps/worker/e2e/design.e2e.ts
   @integration:apps/worker/test/pages.test.ts

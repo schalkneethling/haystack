@@ -4,18 +4,13 @@ Feature: The saved links list
   links to the page it saved, and has a Delete button. The list is plain HTML,
   so it works without JavaScript, and a screen reader user can move through it
   by heading. It was Haystack's home page in Milestone 1, and moved to a page
-  of its own so that the search page can take the home page (#205).
+  of its own (#205), so that the search page could take the home page (#206).
+  It still lists every link, including the ones search can't find yet: a link
+  that is still being described, one held back, and one Haystack couldn't
+  describe.
 
   Background:
     Given I am signed in to Haystack
-
-  @integration:apps/worker/test/recent-saves.test.ts
-  Scenario: Haystack's home page sends me on to my saved links
-    Until the search page takes the home page, the home page sends me on to
-    the saved links page. The integration test checks the redirect.
-
-    When I open Haystack's home page
-    Then I land on my saved links, at /saved-links
 
   @playwright:apps/worker/e2e/recent-saves.e2e.ts
   @playwright:apps/worker/e2e/design.e2e.ts
@@ -107,6 +102,6 @@ Feature: The saved links list
   @playwright:apps/worker/e2e/design.e2e.ts
   Scenario: The current page in the header
     When I open my saved links
-    Then the header's link "Saved links" is marked as the current page
+    Then the header's link "Saved links" is marked as the current page, and "Search" is not
     When I open the save form for a link
-    Then the header's link "Saved links" is no longer marked as the current page
+    Then neither "Search" nor "Saved links" is marked as the current page

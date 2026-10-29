@@ -27,7 +27,9 @@
 // inserts (#133, enrich-on-save.ts). That stays a log line, with no request to any service, only
 // because enrichBookmark checks the configuration of every service a bookmark could need before
 // its first request.
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createTestHarness } from "wrangler";
 import { ANTHROPIC_ORIGIN, GATEWAY_ORIGIN } from "./anthropic-fixture.ts";
 import { GITHUB_ORIGIN } from "./github-fixture.ts";
@@ -111,20 +113,136 @@ export interface TestWorkerOptions {
   readonly vars?: Record<string, string>;
   /** Test values for secrets, over the empty ones. */
   readonly secrets?: Record<string, string>;
+  /**
+   * Flagship flags by key. Given, FLAGS is bound to the fake Flagship Worker below, which holds
+   * exactly these, instead of Miniflare's simulator, which holds none (plan, Q13). Left out, the
+   * Worker keeps the simulator, so every flag gives its default.
+   */
+  readonly flags?: Readonly<Record<string, boolean | number>>;
+}
+
+const FAKE_FLAGSHIP = "fake-flagship";
+
+/**
+ * A stand-in for the Flagship binding, FLAGS, for the tests that need a flag set. Only an
+ * internal method can set a flag in Miniflare's simulator (plan, Q13), so a test Worker that
+ * needs one binds FLAGS to this Worker instead, through the harness's `bindingOverrides`.
+ * Production code reads FLAGS the same way either way, through the configuration module
+ * (src/flags.ts).
+ *
+ * It answers the two details getters that the module calls (`FlagReader`), over a service
+ * binding's RPC, as the simulator does (Q13): a flag it holds gives its value, a value of the
+ * wrong type gives the caller's default with TYPE_MISMATCH, and a flag it doesn't hold gives the
+ * default with FLAG_NOT_FOUND. The flags are its `FLAG_VALUES` var, a JSON object.
+ *
+ * Its source is a string, written to a file when a test first starts it, because it imports
+ * `cloudflare:workers`, which only the Workers runtime provides: the tests' TypeScript program
+ * has Node's types, not the Workers', and knip reports the import as a dependency that no
+ * package.json lists. knip.json is Calavera-managed, and Calavera's knip integration has no
+ * option for ignoring a dependency.
+ */
+// WORKAROUND(knip): knip reads cloudflare:workers as the package "cloudflare", so the fake Flagship Worker's source lives in a string rather than a checked-in file | remove-when: knip treats cloudflare: like node:
+const FAKE_FLAGSHIP_SOURCE = `import { WorkerEntrypoint } from "cloudflare:workers";
+
+export default class FakeFlagship extends WorkerEntrypoint {
+  details(key, defaultValue, type) {
+    const values = this.env.FLAG_VALUES;
+    if (!Object.hasOwn(values, key)) {
+      return { value: defaultValue, errorCode: "FLAG_NOT_FOUND" };
+    }
+    return typeof values[key] === type
+      ? { value: values[key] }
+      : { value: defaultValue, errorCode: "TYPE_MISMATCH" };
+  }
+
+  async getBooleanDetails(key, defaultValue) {
+    return this.details(key, defaultValue, "boolean");
+  }
+
+  async getNumberDetails(key, defaultValue) {
+    return this.details(key, defaultValue, "number");
+  }
+
+  // A Worker needs a fetch handler. Nothing requests this one.
+  async fetch() {
+    return new Response("Not found", { status: 404 });
+  }
+}
+`;
+
+/** The fake's entry module, and how to remove it. */
+interface FakeFlagshipModule {
+  readonly path: string;
+  remove(): void;
+}
+
+// The fake's entry module, in a directory of its own under the system's temporary directory, so
+// harnesses, test files and Playwright workers running in parallel never share one. The harness
+// that uses it removes it when it closes. Vitest ends its test workers without the process's
+// `exit` event, which left two directories behind for every `vp test` when that was the only
+// removal, so `exit` is only the backup, for a process that ends before its harness closes.
+function fakeFlagshipModule(): FakeFlagshipModule {
+  const directory = mkdtempSync(join(tmpdir(), "haystack-fake-flagship-"));
+  const remove = () => {
+    rmSync(directory, { recursive: true, force: true });
+  };
+  process.once("exit", remove);
+  const path = join(directory, "index.js");
+  writeFileSync(path, FAKE_FLAGSHIP_SOURCE);
+  return { path, remove };
+}
+
+// The fake runs on the Worker's own compatibility date, read from wrangler.jsonc as the secrets'
+// names are, so the two can't drift apart.
+function compatibilityDate(jsonc: string): string {
+  const date = /"compatibility_date"\s*:\s*"([^"]+)"/.exec(withoutJsoncComments(jsonc))?.[1];
+  if (date === undefined) {
+    throw new Error("No compatibility_date found in the Wrangler config");
+  }
+  return date;
 }
 
 /**
  * A test harness for the Worker in wrangler.jsonc, with every required secret empty and every
  * outside service at its fixture's address, unless `options` says otherwise.
  */
-export function createTestWorker({ vars = {}, secrets = {} }: TestWorkerOptions = {}): TestWorker {
-  return createTestHarness({
+export function createTestWorker({
+  vars = {},
+  secrets = {},
+  flags,
+}: TestWorkerOptions = {}): TestWorker {
+  const haystack = {
+    configPath: CONFIG_URL,
+    vars: { ...SERVICE_ADDRESSES, ...vars },
+    secrets: { ...EMPTY_SECRETS, ...secrets },
+  };
+  if (flags === undefined) {
+    return createTestHarness({ workers: [haystack] });
+  }
+  // The first Worker is the one the harness serves. The fake answers FLAGS over a service
+  // binding, which `bindingOverrides` puts in place of the Flagship binding.
+  const fake = fakeFlagshipModule();
+  const harness = createTestHarness({
     workers: [
+      { ...haystack, bindingOverrides: { FLAGS: FAKE_FLAGSHIP } },
       {
-        configPath: CONFIG_URL,
-        vars: { ...SERVICE_ADDRESSES, ...vars },
-        secrets: { ...EMPTY_SECRETS, ...secrets },
+        config: {
+          name: FAKE_FLAGSHIP,
+          main: fake.path,
+          compatibility_date: compatibilityDate(readFileSync(CONFIG_URL, "utf8")),
+          vars: { FLAG_VALUES: flags },
+        },
       },
     ],
+  });
+  const close = harness.close.bind(harness);
+  return Object.assign(harness, {
+    async close() {
+      try {
+        await close();
+      } finally {
+        fake.remove();
+      }
+    },
   });
 }

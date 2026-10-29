@@ -13,11 +13,12 @@ test.beforeEach(async ({ signIn }) => {
   await signIn();
 });
 
-// The header's three stops come first: the wordmark, the navigation and Sign out. The field is
-// next, because the page heading on a bare /save is its label, which takes no focus.
+// The header's four stops come first: the wordmark, the navigation's two links and Sign out.
+// The field is next, because the page heading on a bare /save is its label, which takes no focus.
 async function tabToField(page: Page): Promise<void> {
   for (const control of [
     page.getByRole("link", { name: "Haystack", exact: true }),
+    page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Search" }),
     page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Saved links" }),
     page.getByRole("button", { name: "Sign out" }),
     page.getByRole("textbox", { name: "Save a link" }),

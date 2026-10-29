@@ -33,5 +33,6 @@ export {
 } from "./page-metadata.ts";
 export { normalizeUrl, stripTrackingParameters, TRACKING_PARAMETERS } from "./normalize-url.ts";
 export { SAVE_URL_BUDGET, saveUrlWithinBudget } from "./save-url.ts";
+export { SEARCH_QUERY_CAP, SearchAnswer, SearchQuery } from "./search.ts";
 export { withoutSensitiveCanonicalUrl } from "./screen-canonical-url.ts";
 export { truncate } from "./truncate.ts";

@@ -241,10 +241,11 @@ const cases: Case[] = [
     status: 303,
     kind: "redirect",
   },
-  // Until the search page takes `/` (#206), `/` sends a signed-in user on to the saved links.
-  // The redirect's no-store is part of what makes the browser ask for `/` again.
+  // This Worker has no `search-enabled` flag, so search is switched off (#235), and `/` sends a
+  // signed-in user on to the saved links. With the flag on, `/` is a page like any other here
+  // (search-switch.test.ts).
   {
-    name: "the home page's redirect to the saved links",
+    name: "the home page's redirect to the saved links, with search switched off",
     path: "/",
     headers: HTML,
     signedIn: true,
@@ -252,7 +253,7 @@ const cases: Case[] = [
     kind: "redirect",
   },
   {
-    name: "the home page's redirect to the saved links, for HEAD",
+    name: "the home page's redirect to the saved links, with search switched off, for HEAD",
     method: "HEAD",
     path: "/",
     headers: HTML,

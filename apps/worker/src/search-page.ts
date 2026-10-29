@@ -1,0 +1,57 @@
+// The search page at `/` (plan, "Search page", Phase 10). The Worker renders the form, the empty
+// live region and the empty results list. search.js sends each search to /api/search with
+// `fetch` and builds the results from the JSON answer with DOM APIs and `textContent`, so no
+// bookmark data is ever parsed as markup. Searching needs that script, so until it runs the page
+// says so and links to the saved links, which work without it.
+import { SEARCH_QUERY_CAP } from "@haystack/schemas";
+import { SAVED_LINKS_PATH } from "./bookmark-paths.ts";
+import { html } from "./html.ts";
+import { SENSITIVE_NOTICE } from "./notices.ts";
+import { htmlResponse } from "./page.ts";
+
+/**
+ * The page's one module script. It imports the delete dialog's module, so the page has one
+ * `<script>` element (plan, "Search page", "Performance").
+ */
+export const SEARCH_SCRIPT = "/assets/search.js";
+
+const FIELD_ID = "search-query";
+const HINT_ID = "search-hint";
+const LABEL = "Search your saved links";
+// The message that searching needs the script, which the script hides when it runs. It is in the
+// page rather than in a <noscript>, so it is also shown when the script is blocked or fails to
+// load, which a <noscript> is not.
+const NEEDS_SCRIPT_ID = "search-needs-script";
+
+/**
+ * The search page. The page asks one question, so its heading is the field's label, as on the
+ * address form's own page. The field has no `name`: without JavaScript, pressing Search submits
+ * the form with no fields, which only loads this page again, so the query never reaches a URL,
+ * where the browser's history and Cloudflare's logs would keep it.
+ *
+ * The live region is in the page from the start, empty, because a screen reader announces a
+ * change to a live region that already exists. It has the ID the saved links page and /held
+ * give theirs, so that the delete dialog (#208) can write its message to the page's one live
+ * region. The results list is hidden until a search finds something.
+ */
+export function showSearchPage(): Response {
+  return htmlResponse(
+    "Search",
+    html`<h1><label for="${FIELD_ID}">${LABEL}</label></h1>
+      <search>
+        <form class="panel search-form" method="get" action="/" data-search-form>
+          <p id="${HINT_ID}" class="hint">Describe what you're looking for in your own words.</p>
+          <div class="search-row">
+            <input id="${FIELD_ID}" class="search-input" type="search" maxlength="${SEARCH_QUERY_CAP}" aria-describedby="${HINT_ID}">
+            <button class="button button-primary" type="submit">Search</button>
+          </div>
+        </form>
+      </search>
+      <p id="${NEEDS_SCRIPT_ID}" class="callout">Searching needs JavaScript, which isn't running in this browser. <a href="${SAVED_LINKS_PATH}">Go to your saved links</a> to browse them instead.</p>
+      ${SENSITIVE_NOTICE}
+      <div id="list-status" class="status" role="status"></div>
+      <ol id="search-results" class="cards" hidden></ol>`,
+    200,
+    { signedIn: true, width: "wide", current: "search", scripts: [SEARCH_SCRIPT] },
+  );
+}

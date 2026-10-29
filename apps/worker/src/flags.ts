@@ -2,7 +2,8 @@
 // "Secrets and configuration", Q3 and Q13 in plans/haystack-v1-implementation-plan.md.
 //
 // Flags are the settings that change without a deploy (plan, decision 20). Each is read once per
-// sweep run, with a constant key, and passed on, so the run sees one value throughout. Each
+// sweep run, or once per request, with a constant key, and passed on, so the run or the request
+// sees one value throughout. Each
 // flag's default is a constant here, so the defaults are reviewed in code. They are what a
 // Flagship outage runs with, so they are the safe values.
 //
@@ -56,6 +57,14 @@ export const SWEEP_ENABLED_FLAG = "sweep-enabled";
  */
 export const SWEEP_BATCH_SIZE_FLAG = "sweep-batch-size";
 
+/**
+ * Whether the search page is the home page: a boolean flag (#235). Search answers nothing until
+ * /api/search is built (#214), so until the owner turns this on (#218), `/` sends a signed-in
+ * user on to the saved links, and the header has no Search link. A deploy in between therefore
+ * never puts a page whose every search fails on the home page.
+ */
+export const SEARCH_ENABLED_FLAG = "search-enabled";
+
 /** The sweep's switches, as one run uses them. */
 export interface SweepFlags {
   readonly enabled: boolean;
@@ -90,14 +99,26 @@ function checkedBatchSize(value: unknown): number {
   return SWEEP_FLAG_DEFAULTS.batchSize;
 }
 
-// The live switch, or the default for a value that isn't a boolean, which the getter shouldn't
+/** The search page's switch, as one request uses it. */
+export interface SearchFlags {
+  readonly enabled: boolean;
+}
+
+/**
+ * The default: search off, which is also what a Flagship outage gives, because the search page
+ * is only worth showing once /api/search answers (#214). Off, the saved links are the home page,
+ * which every bookmark reaches.
+ */
+export const SEARCH_FLAG_DEFAULTS: SearchFlags = Object.freeze({ enabled: false });
+
+// A live switch, or its default for a value that isn't a boolean, which the getter shouldn't
 // return but which is untrusted input all the same.
-function checkedEnabled(value: unknown): boolean {
+function checkedSwitch(flag: string, value: unknown, fallback: boolean): boolean {
   if (typeof value === "boolean") {
     return value;
   }
-  console.warn("Flag ignored, using its default:", { flag: SWEEP_ENABLED_FLAG });
-  return SWEEP_FLAG_DEFAULTS.enabled;
+  console.warn("Flag ignored, using its default:", { flag });
+  return fallback;
 }
 
 // A code as Flagship's simulator writes them, such as FLAG_NOT_FOUND. Any other answer is logged
@@ -144,7 +165,38 @@ export async function readSweepFlags(flags: FlagReader): Promise<SweepFlags> {
     return SWEEP_FLAG_DEFAULTS;
   }
   return {
-    enabled: checkedEnabled(valueOf(SWEEP_ENABLED_FLAG, enabled)),
+    enabled: checkedSwitch(
+      SWEEP_ENABLED_FLAG,
+      valueOf(SWEEP_ENABLED_FLAG, enabled),
+      SWEEP_FLAG_DEFAULTS.enabled,
+    ),
     batchSize: checkedBatchSize(valueOf(SWEEP_BATCH_SIZE_FLAG, batchSize, true)),
+  };
+}
+
+/**
+ * Reads the search page's switch, once for the request. Never throws: an error from the binding,
+ * or a missing binding, gives the default, off, and is logged by its code or name only, as
+ * readSweepFlags does, so a Flagship problem can't fail a page. A value that isn't a boolean
+ * gives the default too. A missing flag is not logged, because it is the expected state until
+ * #218 creates it, and it gives the default, off, which is the safe state, while logging it would
+ * add a line to every page load.
+ */
+export async function readSearchFlags(flags: FlagReader): Promise<SearchFlags> {
+  let enabled: FlagDetails<unknown>;
+  try {
+    enabled = await flags.getBooleanDetails(SEARCH_ENABLED_FLAG, SEARCH_FLAG_DEFAULTS.enabled);
+  } catch (error) {
+    console.error("Flags unavailable, using the defaults:", { code: errorCode(error) });
+    return SEARCH_FLAG_DEFAULTS;
+  }
+  return {
+    enabled: checkedSwitch(
+      SEARCH_ENABLED_FLAG,
+      // `true`: a missing flag isn't logged, until #218 creates it. #218 then makes this `false`,
+      // so that a flag deleted or renamed in the Flagship app is logged, as `sweep-enabled` is.
+      valueOf(SEARCH_ENABLED_FLAG, enabled, true),
+      SEARCH_FLAG_DEFAULTS.enabled,
+    ),
   };
 }

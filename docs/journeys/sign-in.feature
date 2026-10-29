@@ -12,19 +12,26 @@ Feature: Signing in and out
 
   @integration:apps/worker/test/auth.test.ts
   @integration:apps/worker/test/sign-in.test.ts
-  @integration:apps/worker/test/recent-saves.test.ts
+  @integration:apps/worker/test/search-page.test.ts
+  @integration:apps/worker/test/search-switch.test.ts
   Scenario: Signing in with an allowed Google account
+    The sign-in tests follow the sign-in itself to the home page. Which page
+    the home page is, with search switched on and off, is checked by
+    search-page.test.ts and search-switch.test.ts with a seeded session,
+    without signing in.
+
     Given I am not signed in to Haystack
     When I open Haystack
     Then I am sent to Google to sign in
     When I sign in with a Google account that Haystack allows
-    Then I land on Haystack's home page, which sends me on to my saved links, under the heading "Saved links"
+    Then I land on Haystack's home page: the search page, under the heading "Search your saved links", or my saved links while search is switched off
     And I stay signed in on this browser for 30 days
 
   @integration:apps/worker/test/auth.test.ts
   @integration:apps/worker/test/sign-in.test.ts
   @integration:apps/worker/test/save-form.test.ts
   @integration:apps/worker/test/recent-saves.test.ts
+  @integration:apps/worker/test/search-page.test.ts
   Scenario Outline: Coming back to the page I started on after signing in
     Given I am not signed in to Haystack
     When I open <the page I started on>
@@ -33,6 +40,7 @@ Feature: Signing in and out
 
     Examples:
       | the page I started on           | where I land                                           |
+      | the search page                 | the search page                                        |
       | my saved links                  | my saved links                                         |
       | a save link from the extension  | the save form for that page, filled in as the link was |
       | the "Save a link" page at /save | the "Save a link" address form                         |

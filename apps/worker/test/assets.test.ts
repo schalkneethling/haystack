@@ -12,11 +12,12 @@ afterAll(async () => {
 });
 
 describe("static assets", () => {
-  // The list page and the address form load these scripts, and the CSP allows scripts from this
-  // origin only.
+  // The list page, the address form and the search page load these scripts, and the CSP allows
+  // scripts from this origin only.
   it.each([
     ["/assets/delete-dialog.js", "showModal"],
     ["/assets/address-form.js", "save-url-status"],
+    ["/assets/search.js", "/api/search"],
   ])("serves %s as JavaScript, with nosniff and no session", async (path, content) => {
     const response = await server.fetch(path);
     expect(response.status).toBe(200);

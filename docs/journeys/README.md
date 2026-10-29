@@ -1,6 +1,6 @@
 # User journeys
 
-The files in this folder describe, in plain language, what a person can do with Haystack and what happens when something goes wrong. Each journey is a scenario written in Gherkin, the language that Cucumber reads, in which every step starts with Given, When or Then. The scenarios cover Milestone 1, and what Milestone 2 adds: the review page at /held (#129), the save form's warning about a link that might be private (#132), and describing a link right after it is saved (#133). They are kept in step with `main`, as the section "Keeping them in step with the code" below describes.
+The files in this folder describe, in plain language, what a person can do with Haystack and what happens when something goes wrong. Each journey is a scenario written in Gherkin, the language that Cucumber reads, in which every step starts with Given, When or Then. The scenarios cover Milestone 1, what Milestone 2 adds (the review page at /held (#129), the save form's warning about a link that might be private (#132), and describing a link right after it is saved (#133)), and the search page of Milestone 3, which is tested against stubbed answers until searching is built (#206). They are kept in step with `main`, as the section "Keeping them in step with the code" below describes.
 
 They are documentation, and the input for new Playwright tests. They do not run: there is no Cucumber, no other Gherkin runner and no step definitions, so nothing checks a scenario against the code except the tests named in its tags and the people who read it.
 
@@ -14,7 +14,8 @@ There is one file per area, and each starts with a `Feature` that says who the j
 | `extension-save.feature` | Saving the current page from the extension's popup in Chrome and Firefox, and the pages it refuses                                                                         |
 | `address-form.feature`   | Saving a link by typing or pasting its address in the "Save a link" form (#97, #105)                                                                                       |
 | `save-form.feature`      | Confirming a link on the save form, its errors, its warning about a link that might be private (#132), describing it once it is saved (#133), and the "already saved" page |
-| `saved-links.feature`    | The saved links list at /saved-links, which the home page sends me on to until search arrives, and moving through it with a screen reader                                  |
+| `search.feature`         | Searching my saved links from the home page, the results and the count of matches, with the keyboard and a screen reader (#206)                                            |
+| `saved-links.feature`    | The saved links list at /saved-links, and moving through it with a screen reader                                                                                           |
 | `delete.feature`         | Deleting a link, with and without JavaScript                                                                                                                               |
 | `held.feature`           | Reviewing links that Haystack held back or couldn't describe at /held: releasing, retrying and deleting (#129)                                                             |
 | `errors.feature`         | Pages a person can reach by mistake, such as a page that doesn't exist, a form sent after the session ended, or a request from another site                                |
@@ -49,9 +50,10 @@ When the code and the plan disagree about a journey, the scenario follows the co
 
 These are the candidates for new tests, most important first.
 
+1. **"Hearing how many links match with a screen reader"** (`search.feature`) is how a screen reader user learns what a search found, and VoiceOver doesn't speak it yet. #237 owns the fix, and blocks the search release (#218). `search.voiceover.ts` has a test of it marked as failing.
 1. **"Saving a page in Firefox"** (`extension-save.feature`) is the main way to save a link in one of the two browsers Haystack supports. Playwright cannot load an extension in Firefox, so only the manual check under "Firefox manual check" in the plan's "Testing strategy" covers it.
-2. **"The delete fails because Haystack can't be reached"** (`delete.feature`) is the one failure of the delete dialog that no browser test reaches. A Playwright test could fail the request the way `delete-dialog.e2e.ts` already answers it with an error.
-3. **"Deleting every link the list shows, when I have older ones"** (`delete.feature`) shows a message that only a person with more than 50 links can see. The integration test checks only that the message is in the page's markup, hidden, and no browser test deletes every card on a full page.
-4. **"A screen reader user hears why the popup refused the page"** (`extension-save.feature`) depends on a status message that no screen reader test has heard. The browser test checks the popup's text and runs axe on it.
-5. **"A screen reader user hears that the dialog's buttons are busy"** (`delete.feature`) rests on what VoiceOver said in trial runs, which the plan records but no test checks.
-6. **"Saving a page that Firefox doesn't let the extension read"** (`extension-save.feature`) is covered by the same manual check as the first item. The unit tests cover the same fallback with a fake browser.
+1. **"The delete fails because Haystack can't be reached"** (`delete.feature`) is the one failure of the delete dialog that no browser test reaches. A Playwright test could fail the request the way `delete-dialog.e2e.ts` already answers it with an error.
+1. **"Deleting every link the list shows, when I have older ones"** (`delete.feature`) shows a message that only a person with more than 50 links can see. The integration test checks only that the message is in the page's markup, hidden, and no browser test deletes every card on a full page.
+1. **"A screen reader user hears why the popup refused the page"** (`extension-save.feature`) depends on a status message that no screen reader test has heard. The browser test checks the popup's text and runs axe on it.
+1. **"A screen reader user hears that the dialog's buttons are busy"** (`delete.feature`) rests on what VoiceOver said in trial runs, which the plan records but no test checks.
+1. **"Saving a page that Firefox doesn't let the extension read"** (`extension-save.feature`) is covered by the same manual check as the first item. The unit tests cover the same fallback with a fake browser.

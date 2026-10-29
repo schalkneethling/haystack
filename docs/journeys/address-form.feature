@@ -44,12 +44,14 @@ Feature: Saving a link by typing or pasting its address
 
   @playwright:apps/worker/e2e/address-form.e2e.ts
   Scenario Outline: Reaching the field with the keyboard
-    The header comes first on every page, with three stops before the
-    content: the wordmark, "Saved links" and "Sign out".
+    The header comes first on every page, with four stops before the
+    content: the wordmark, "Search", "Saved links" and "Sign out". That is
+    with search switched on, as the browser tests run. While it is off, the
+    header has no "Search", so there is one stop fewer.
 
     Given I am on <the page>
-    When I press Tab four times
-    Then the focus moves through the Haystack wordmark, the link "Saved links" and the button "Sign out"
+    When I press Tab five times
+    Then the focus moves through the Haystack wordmark, the links "Search" and "Saved links" and the button "Sign out"
     And then the field "Save a link" has focus
 
     Examples:
