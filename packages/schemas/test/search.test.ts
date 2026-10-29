@@ -38,6 +38,18 @@ describe("SearchAnswer", () => {
     expect(v.parse(SearchAnswer, answer)).toEqual(answer);
   });
 
+  it("accepts an ID as crypto.randomUUID() writes it", () => {
+    const answer = { runId: "r-1", results: [{ ...result, id: crypto.randomUUID() }] };
+    expect(v.safeParse(SearchAnswer, answer).success).toBe(true);
+  });
+
+  // The page puts the ID into element IDs that an aria-labelledby list refers to, and such a list
+  // is split on whitespace.
+  it.each(["", "a b", "a\tb", "a\nb", " a", "a<b", 'a"b'])("rejects the result ID %j", (id) => {
+    const answer = { runId: "r-1", results: [{ ...result, id }] };
+    expect(v.safeParse(SearchAnswer, answer).success).toBe(false);
+  });
+
   it("accepts an answer with no results", () => {
     expect(v.safeParse(SearchAnswer, { runId: "r-1", results: [] }).success).toBe(true);
   });

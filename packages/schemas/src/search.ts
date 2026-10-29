@@ -22,13 +22,21 @@ export const SearchQuery = v.pipe(
 );
 
 /**
+ * A bookmark's ID, as the search page puts it into the IDs of a result's elements, which the
+ * Delete control's `aria-labelledby` refers to (#208). An IDREF list is split on whitespace, so
+ * an ID must be non-empty and hold none. Bookmark IDs come from `crypto.randomUUID()`, whose
+ * hexadecimal digits and hyphens this allows. search.js checks the same pattern.
+ */
+const RESULT_ID = /^[\w-]+$/;
+
+/**
  * One result as the search page shows it: the bookmark's confirmed title and description, its
  * address, and its ID, which the page's Delete control (#208) and the result's own element need.
  * The page shows the title and the description only, and links the title to the address only
  * when it is an https address (`isHttpsUrl`).
  */
 export const SearchResult = v.object({
-  id: v.string(),
+  id: v.pipe(v.string(), v.regex(RESULT_ID, "Must be letters, digits, underscores or hyphens")),
   title: v.string(),
   description: v.nullable(v.string()),
   url: v.string(),

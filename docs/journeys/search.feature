@@ -46,6 +46,14 @@ Feature: Searching my saved links
     Then the page shows only what "second" found
 
   @playwright:apps/worker/e2e/search.e2e.ts
+  Scenario: Searching again before the first answer arrives
+    Given I searched for "first", and Haystack has not answered yet
+    When I search for "second"
+    And Haystack answers "second", and then, late, "first"
+    Then the page shows only what "second" found, and says how many that is
+    And the answer to "first" changes nothing
+
+  @playwright:apps/worker/e2e/search.e2e.ts
   Scenario: Searching for nothing
     When I press Enter with nothing but spaces in the field
     Then the page says "Type what you're looking for, then press Search."
@@ -155,4 +163,4 @@ Feature: Searching my saved links
     Then it says "Searching needs JavaScript, which isn't running in this browser."
     And the link "Go to your saved links" takes me to my saved links
     When I type a query and press Enter
-    Then the search page loads again, with nothing in its address
+    Then the search page loads again, with no query in its address

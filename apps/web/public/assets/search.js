@@ -12,8 +12,10 @@
 // - The live region says how many links matched, or that none did. That is announced, because
 //   the region is in the page from the start, and it is not focused, so a screen reader that
 //   reads a focused live region twice reads it once.
-// - How a slow search looks, a search that took too long, and a second press while one is
-//   running come with #207. Until then a search simply waits for its answer.
+// - A newer search replaces one still waiting for its answer, and the late answer is ignored, so
+//   the results and the count are always the newest query's. How a slow search looks, a search
+//   that took too long, aborting the replaced request and a second press with the same query
+//   come with #207.
 //
 // The page's one script, so it imports the delete dialog's module (plan, "Search page",
 // "Performance"). The dialog wires the Delete forms that are in the page when it loads, which
@@ -57,6 +59,10 @@ function isRecord(value) {
   return typeof value === "object" && value !== null;
 }
 
+// A result's ID goes into its elements' IDs, which the Delete control's `aria-labelledby` refers
+// to (#208), so it must be non-empty and hold no whitespace: the pattern of `SearchResult.id`.
+const RESULT_ID = /^[\w-]+$/;
+
 /**
  * The results in a success answer, in its order, or null when the answer doesn't have the shape
  * of `SearchAnswer` in packages/schemas. The assets have no build step, so the page can't import
@@ -75,6 +81,7 @@ function resultsIn(body) {
     if (
       !isRecord(result) ||
       typeof result.id !== "string" ||
+      !RESULT_ID.test(result.id) ||
       typeof result.title !== "string" ||
       typeof result.url !== "string" ||
       !(result.description === null || typeof result.description === "string")
@@ -91,7 +98,7 @@ function resultsIn(body) {
 // address exactly as the URL parser reads it, with an explicit `https://` and no spaces or
 // control characters. Escaping does not make an address safe, so anything else is not a link.
 // oxlint-disable-next-line no-control-regex -- matching control characters is the point.
-const CHARACTERS_THE_PARSER_CHANGES = /[\u0000- \u007f]/;
+const CHARACTERS_THE_PARSER_CHANGES = /[\u0000-\u0020\u007f]/;
 const HTTPS_PREFIX = /^https:\/\//i;
 
 /** @param {string} value */
@@ -195,9 +202,19 @@ async function search(query) {
 function enhance(form, field, list, status) {
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let announcement;
+  // The search whose answer the page is waiting for. A newer search replaces it, so a late answer
+  // to a replaced query is ignored, and never shows its results under the newer query. Aborting
+  // the replaced request, and ignoring a second press with the same query, come with #207.
+  /** @type {{ query: string } | null} */
+  let inFlight = null;
 
-  /** @param {...(string | Node)} content */
+  /**
+   * Writes a message to the live region after the delay. A message still waiting is dropped, so
+   * only the newest is written.
+   * @param {...(string | Node)} content
+   */
   function announce(...content) {
+    clearTimeout(announcement);
     announcement = setTimeout(() => {
       const paragraph = element("p");
       paragraph.append(...content);
@@ -219,10 +236,18 @@ function enhance(form, field, list, status) {
     status.replaceChildren();
     const query = field.value.trim();
     if (query === "") {
+      // The query was replaced with nothing, so an answer to the one before is not wanted either.
+      inFlight = null;
       announce(MESSAGES.empty);
       return;
     }
+    const request = { query };
+    inFlight = request;
     const outcome = await search(query);
+    if (inFlight !== request) {
+      return;
+    }
+    inFlight = null;
     if (outcome.kind === "found") {
       show(outcome.results);
       announce(

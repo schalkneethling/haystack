@@ -2,12 +2,13 @@
 // against answers stubbed in the browser (search-answers.ts). The design's checks, axe and the
 // 320 px width, are in design.e2e.ts with the other pages'.
 import { isHttpsUrl } from "@haystack/schemas";
-import type { Page } from "@playwright/test";
+import type { Page, Route } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
 import {
   answerSearches,
   SEARCH_MESSAGES,
   SEARCH_STATUS,
+  searchAnswer,
   type StubbedResult,
 } from "./search-answers.ts";
 
@@ -246,6 +247,59 @@ test("a new search replaces the results of the one before", async ({ page }) => 
   await expect(results(page)).toHaveText(["Found for second"]);
 });
 
+// A slow answer to a query that a newer search replaced must not show its results under the
+// newer query. The test holds both answers, answers the newer first, then the older.
+test("a late answer to a replaced query is ignored", async ({ page }) => {
+  const held: Route[] = [];
+  await page.route("**/api/search", (route) => {
+    held.push(route);
+  });
+  await page.goto("/");
+  const answer = (route: Route, results: readonly StubbedResult[]) =>
+    route.fulfill({ contentType: "application/json", body: JSON.stringify(searchAnswer(results)) });
+
+  await field(page).fill("first");
+  await field(page).press("Enter");
+  await expect.poll(() => held.length).toBe(1);
+  await field(page).fill("second");
+  await field(page).press("Enter");
+  await expect.poll(() => held.length).toBe(2);
+  const [first, second] = held as [Route, Route];
+
+  await answer(second, [{ title: "Found for second" }]);
+  await expect(results(page)).toHaveText(["Found for second"]);
+  await expect(status(page)).toHaveText(SEARCH_MESSAGES.one);
+
+  await answer(first, [{ title: "Found for first" }, { title: "Also for first" }]);
+  // The page has the late answer once the browser has read it. A task queued after that runs
+  // after the script's handling of it.
+  await (await first.request().response())?.finished();
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  await expect(results(page)).toHaveText(["Found for second"]);
+  await expect(status(page)).toHaveText(SEARCH_MESSAGES.one);
+  await expect(field(page)).toHaveValue("second");
+});
+
+// The page puts a result's ID into element IDs, which an aria-labelledby list refers to (#208),
+// so it checks the ID as the schema does. The stub's answers always pass the schema, so this
+// answer is written by hand.
+test("an answer whose result ID holds whitespace is a failure", async ({ page }) => {
+  await page.route("**/api/search", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        runId: "run-1",
+        results: [{ id: "a b", title: "A guide", description: null, url: "https://example.com/" }],
+      }),
+    }),
+  );
+  await page.goto("/");
+  await field(page).fill("guide");
+  await field(page).press("Enter");
+  await expect(status(page)).toHaveText(SEARCH_MESSAGES.failed);
+  await expect(results(page)).toHaveCount(0);
+});
+
 // Until #214 the real route answers 404, which the page calls a failure, as it does a network
 // error. The results of an earlier search go, because they would read as this search's.
 test("a search that fails says so, and clears the earlier results", async ({ page }) => {
@@ -313,7 +367,7 @@ test.describe("without JavaScript", () => {
   });
 
   // The field has no name, so the form sends nothing, and the query reaches no address.
-  test("pressing Search loads the page again, with nothing in the address", async ({ page }) => {
+  test("pressing Search loads the page again, with no query in the address", async ({ page }) => {
     await page.goto("/");
     await field(page).fill("a private query");
     await field(page).press("Enter");
