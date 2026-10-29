@@ -1,10 +1,12 @@
 Feature: Deleting a saved link
   The owner of the collection can delete a link they saved by mistake, from
-  its card on the saved links page. Deleting is permanent, so Haystack always
-  asks first. With JavaScript, it asks in a dialog and removes the card in
-  place. Without JavaScript, the Delete button leads to a confirmation page.
-  Either way, a screen reader user hears which link they are about to delete,
-  and what happened afterwards.
+  its card on the saved links page, or from a search result (#208). Deleting
+  is permanent, so Haystack always asks first. With JavaScript, it asks in a
+  dialog and removes the card in place. Without JavaScript, the Delete button
+  leads to a confirmation page. Either way, a screen reader user hears which
+  link they are about to delete, and what happened afterwards. The rule "From
+  the search results" says how deleting from a result differs, and
+  search.feature says what the search page shows afterwards.
 
   Background:
     Given I am signed in to Haystack
@@ -190,6 +192,112 @@ Feature: Deleting a saved link
         | what happened                                                                               |
         | I deleted "A guide", and then reloaded the page and let the browser send the form again     |
         | I opened the confirmation page, deleted "A guide" in another tab, and then pressed "Delete" |
+
+  Rule: From the search results, the same dialog and confirmation page are used
+
+    @playwright:apps/worker/e2e/search-delete.e2e.ts
+    Scenario: Each result's Delete button names its link
+      Given search is switched on
+      And my search for "guides" finds "A guide" and "Another guide"
+      When I search for "guides"
+      Then each result has a button "Delete", named "Delete A guide" and "Delete Another guide"
+
+    @playwright:apps/worker/e2e/search-delete.e2e.ts
+    Scenario: Opening and closing the dialog from a result with the keyboard
+      Given search is switched on
+      And I searched for "guides", which found "A guide"
+      When I press Tab until the button "Delete A guide" has focus, and press Enter
+      Then the dialog "Delete this link? A guide" opens, and has focus
+      When I press Tab
+      Then the button "Cancel" has focus
+      When I press Escape
+      Then the dialog closes, nothing is deleted, and focus is back on the button "Delete A guide"
+
+    @playwright:apps/worker/e2e/search-delete.e2e.ts
+    Scenario Outline: Deleting a result, and where focus goes next
+      The message is written half a second after the dialog closes and focus
+      moves, as on the saved links page. It replaces the count, which is not
+      said again.
+
+      Given search is switched on
+      And I searched for "guides", which found <the results>, in that order
+      When I open the dialog for "<the link>" and press "Delete"
+      Then the dialog closes, and the result "<the link>" is gone
+      And focus moves to <where focus goes>
+      And half a second later the status message "Deleted “<the link>”." appears, in place of the count
+      And the page did not reload
+
+      Examples:
+        | the results                            | the link   | where focus goes                                                                                                                        |
+        | "First guide", "A guide", "Last guide" | A guide    | the title of the next result, "Last guide"                                                                                              |
+        | "First guide", "A guide", "Last guide" | Last guide | the title of the result before it, "A guide"                                                                                            |
+        | only "A guide"                         | A guide    | the heading "Search your saved links", and the message "You deleted every link this search found. Search again to find others." appears |
+
+    @voiceover:apps/worker/e2e/search-delete.voiceover.ts
+    Scenario: A screen reader user deletes a link from the results
+      The status message is written after focus has moved, as on the saved
+      links page. That is not the case of the search's count, which VoiceOver
+      doesn't speak yet because focus stays in the field (#237), so the test
+      searches before VoiceOver reads the page.
+
+      Given search is switched on
+      And I use VoiceOver
+      And I searched for "guides", which found "A guide"
+      When I press Enter on the button "Delete A guide"
+      Then VoiceOver announces the dialog as "Delete this link? A guide" before any of its buttons
+      When I press Escape
+      Then VoiceOver reads the button "Delete A guide"
+      When I open the dialog again and press "Delete"
+      Then VoiceOver says "Deleted “A guide”."
+
+    @playwright:apps/worker/e2e/search-delete.e2e.ts
+    @integration:apps/worker/test/search-page.test.ts
+    Scenario: Deleting a result through the confirmation page
+      The search page builds its results in the browser, so a result's Delete
+      button always has the page's script behind it, and the confirmation page
+      is for a browser that can't show the dialog. The browser test skips the
+      dialog as such a browser does. The results exist only in the page that
+      searched, and showing them again would mean searching again, so
+      confirming returns to the search page without results.
+
+      Given search is switched on
+      And my browser can't show the dialog
+      And I searched for "guides", which found "A guide"
+      When I press the button "Delete A guide"
+      Then I see the page titled "Delete this link? - Haystack", with "Title: A guide" and the link's address
+      When I press "Delete"
+      Then I am back on the search page, with no results
+      And the page's title is "Deleted “A guide” - Search - Haystack"
+      And the status message says "Deleted “A guide”."
+      And the page starts from the top, as any page that loads does
+
+    @playwright:apps/worker/e2e/search-delete.e2e.ts
+    @integration:apps/worker/test/search-page.test.ts
+    Scenario: Keeping a link from the results
+      Given search is switched on
+      And my browser can't show the dialog
+      And I pressed the button "Delete A guide" in the results
+      When I follow the link "Keep it and go back to search"
+      Then I am back on the search page
+      And nothing is deleted
+
+    @integration:apps/worker/test/search-page.test.ts
+    @integration:apps/worker/test/delete-bookmark.test.ts
+    Scenario Outline: Where the confirmation page returns to
+      The tests check where sign-in is told to return to, but none follows it
+      through sign-in.
+
+      Given search is switched on
+      And my browser can't show the dialog
+      And I pressed the button "Delete A guide" in the results
+      When <what happens>
+      Then <where I land>
+
+      Examples:
+        | what happens                                                       | where I land                                                           |
+        | I press "Delete", and then reload the page and send the form again | the page "This link isn't in your saved links"                         |
+        | the owner switched search off, and then I press "Delete"           | my saved links, saying "Deleted “A guide”."                            |
+        | my session ended, and then I press "Delete"                        | sign-in, which brings me back to the search page, with nothing deleted |
 
   Rule: A deleted link can be saved again
 

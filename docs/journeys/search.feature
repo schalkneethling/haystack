@@ -12,7 +12,10 @@ Feature: Searching my saved links
   `search-enabled` flag, which the owner turns on when search is released
   (#218). Until then the home page is the saved links, and the header has no
   "Search" link. Every scenario but the first is with the switch on, as the
-  browser tests run. Deleting a link from the results comes with #208.
+  browser tests run. Each result can be deleted from its card (#208), through
+  the same dialog and confirmation page as on the saved links page, which
+  delete.feature describes under "From the search results". The scenarios
+  here say what the search page shows afterwards.
 
   A search waits on the service that judges each link, so it can be slow, and
   it can fail for some of the links or for all of them. The page says while
@@ -57,10 +60,10 @@ Feature: Searching my saved links
     And it shows <cards>
 
     Examples:
-      | query      | found       | message                             | cards                             |
-      | testing    | two links   | 2 saved links match your search.   | two cards, in the order found     |
-      | one        | one link    | 1 saved link matches your search.  | one card                          |
-      | nothing    | no link     | No saved links match your search.  | no cards, and no error            |
+      | query   | found     | message                           | cards                         |
+      | testing | two links | 2 saved links match your search.  | two cards, in the order found |
+      | one     | one link  | 1 saved link matches your search. | one card                      |
+      | nothing | no link   | No saved links match your search. | no cards, and no error        |
 
   @playwright:apps/worker/e2e/search.e2e.ts
   Scenario: Searching again replaces the results
@@ -146,13 +149,47 @@ Feature: Searching my saved links
     And nothing is searched
 
   @playwright:apps/worker/e2e/search.e2e.ts
+  @playwright:apps/worker/e2e/search-delete.e2e.ts
+  @playwright:apps/worker/e2e/design.e2e.ts
   Scenario: What a result shows
+    design.e2e.ts checks that the Delete buttons of a row of results line up
+    at the bottom of their cards.
+
     Given my search finds "A guide", with the description "First line" and "Second line" on two lines
     When I search
     Then its card shows the title "A guide" as a heading, which links to the saved page
     And under it the description, on two lines
+    And at the bottom of the card, the button "Delete"
     And nothing else: not the address, nor the date it was saved
     And the saved site is not told that I came from Haystack, when I follow the link
+
+  @playwright:apps/worker/e2e/search-delete.e2e.ts
+  Scenario: Deleting every result of a search
+    The message doesn't say that I have saved nothing, because the search
+    found only some of my links. The next search's results, or its message
+    that nothing matches, replace it.
+
+    Given my search for "guides" finds only "A guide"
+    And I searched for "guides"
+    When I delete "A guide" from the results
+    Then focus moves to the heading "Search your saved links"
+    And the page says "You deleted every link this search found. Search again to find others."
+    When I search for something else
+    Then that message is gone, and the page shows what the new search found
+
+  @playwright:apps/worker/e2e/search-delete.e2e.ts
+  Scenario: A new search's results arrive while I am deleting
+    The results of a search stay until the next search answers, so I can open
+    the dialog for one of them while the next search runs.
+
+    Given I searched for "guides", which found "A guide" and "Another guide"
+    And I searched again, for "more guides", and Haystack has not answered yet
+    And I opened the dialog for "A guide"
+    When the new results arrive, "A guide" and "A third guide"
+    And I press "Delete" in the dialog
+    Then "A guide" is gone from the new results
+    And focus moves to the title of the next result, "A third guide"
+    And the status message says "Deleted “A guide”."
 
   @playwright:apps/worker/e2e/search.e2e.ts
   Scenario: Only a secure address is a link

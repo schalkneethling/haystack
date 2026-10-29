@@ -8,17 +8,17 @@ They are documentation, and the input for new Playwright tests. They do not run:
 
 There is one file per area, and each starts with a `Feature` that says who the journeys are for and why they matter.
 
-| File                     | What it covers                                                                                                                                                              |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sign-in.feature`        | Signing in with Google, the ways sign-in can fail, coming back to the page you started on, and signing out                                                                  |
-| `extension-save.feature` | Saving the current page from the extension's popup in Chrome and Firefox, and the pages it refuses                                                                          |
-| `address-form.feature`   | Saving a link by typing or pasting its address in the "Save a link" form (#97, #105)                                                                                        |
-| `save-form.feature`      | Confirming a link on the save form, its errors, its warning about a link that might be private (#132), describing it once it is saved (#133), and the "already saved" page  |
-| `search.feature`         | Searching my saved links from the home page, the results and the count of matches, a slow, incomplete or failed search (#207), with the keyboard and a screen reader (#206) |
-| `saved-links.feature`    | The saved links list at /saved-links, and moving through it with a screen reader                                                                                            |
-| `delete.feature`         | Deleting a link, with and without JavaScript                                                                                                                                |
-| `held.feature`           | Reviewing links that Haystack held back or couldn't describe at /held: releasing, retrying and deleting (#129)                                                              |
-| `errors.feature`         | Pages a person can reach by mistake, such as a page that doesn't exist, a form sent after the session ended, or a request from another site                                 |
+| File                     | What it covers                                                                                                                                                                                                                        |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sign-in.feature`        | Signing in with Google, the ways sign-in can fail, coming back to the page you started on, and signing out                                                                                                                            |
+| `extension-save.feature` | Saving the current page from the extension's popup in Chrome and Firefox, and the pages it refuses                                                                                                                                    |
+| `address-form.feature`   | Saving a link by typing or pasting its address in the "Save a link" form (#97, #105)                                                                                                                                                  |
+| `save-form.feature`      | Confirming a link on the save form, its errors, its warning about a link that might be private (#132), describing it once it is saved (#133), and the "already saved" page                                                            |
+| `search.feature`         | Searching my saved links from the home page, the results and the count of matches, a slow, incomplete or failed search (#207), with the keyboard and a screen reader (#206), and what the page shows after a result is deleted (#208) |
+| `saved-links.feature`    | The saved links list at /saved-links, and moving through it with a screen reader                                                                                                                                                      |
+| `delete.feature`         | Deleting a link from the saved links page or a search result (#208), with and without JavaScript                                                                                                                                      |
+| `held.feature`           | Reviewing links that Haystack held back or couldn't describe at /held: releasing, retrying and deleting (#129)                                                                                                                        |
+| `errors.feature`         | Pages a person can reach by mistake, such as a page that doesn't exist, a form sent after the session ended, or a request from another site                                                                                           |
 
 Every message, button label, page title and heading in quotation marks is copied from the code that shows it. Where a keyboard or screen reader user's experience differs, the scenario says so, or a separate scenario describes it.
 

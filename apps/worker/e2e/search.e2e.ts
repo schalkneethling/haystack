@@ -40,6 +40,11 @@ function results(page: Page) {
   return page.locator("#search-results > li");
 }
 
+/** Each result's title, without the Delete button that follows it in the card (#208). */
+function resultTitles(page: Page) {
+  return results(page).getByRole("heading", { level: 2 });
+}
+
 /** The Search button with its own label, as it is when no search runs. */
 function searchButton(page: Page) {
   return page.getByRole("button", { name: "Search", exact: true });
@@ -207,7 +212,8 @@ test("a result shows its title as a heading that wraps the link, then its descri
     "innerHTML",
     "First line<br>Second line",
   );
-  // The page shows the title and the description only: not the address, nor a date.
+  // The page shows the title, the description and the Delete button only (#208): not the
+  // address, nor a date. search-delete.e2e.ts checks the Delete button.
   await expect(first).not.toContainText("example.com");
   await expect(results(page).nth(1).locator("p")).toHaveCount(0);
   // The IDs the Delete control (#208) and the dialog need.
@@ -263,10 +269,10 @@ test("a new search replaces the results of the one before", async ({ page }) => 
   await page.goto("/");
   await field(page).fill("first");
   await field(page).press("Enter");
-  await expect(results(page)).toHaveText(["Found for first"]);
+  await expect(resultTitles(page)).toHaveText(["Found for first"]);
   await field(page).fill("second");
   await field(page).press("Enter");
-  await expect(results(page)).toHaveText(["Found for second"]);
+  await expect(resultTitles(page)).toHaveText(["Found for second"]);
 });
 
 // A newer search aborts the one it replaces (see "while a search runs"), so the browser drops
@@ -291,7 +297,7 @@ test("a late answer to a replaced query is ignored, even when the abort comes to
   const second = await searches.next(2);
 
   await second.answer([{ title: "Found for second" }]);
-  await expect(results(page)).toHaveText(["Found for second"]);
+  await expect(resultTitles(page)).toHaveText(["Found for second"]);
   await expect(status(page)).toHaveText(SEARCH_MESSAGES.one);
 
   await first.answer([{ title: "Found for first" }, { title: "Also for first" }]);
@@ -299,7 +305,7 @@ test("a late answer to a replaced query is ignored, even when the abort comes to
   // after the script's handling of it.
   await (await first.request.response())?.finished();
   await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
-  await expect(results(page)).toHaveText(["Found for second"]);
+  await expect(resultTitles(page)).toHaveText(["Found for second"]);
   await expect(status(page)).toHaveText(SEARCH_MESSAGES.one);
   await expect(field(page)).toHaveValue("second");
   await expect(searchButton(page)).toBeVisible();
@@ -391,7 +397,7 @@ test.describe("while a search runs", () => {
     // The new search runs, and its answer is the one shown.
     await expect(page.getByRole("button", { name: SEARCH_PROCESSING_LABEL })).toBeVisible();
     await second.answer([{ title: "Found for second" }]);
-    await expect(results(page)).toHaveText(["Found for second"]);
+    await expect(resultTitles(page)).toHaveText(["Found for second"]);
     await expect(searchButton(page)).toBeVisible();
   });
 

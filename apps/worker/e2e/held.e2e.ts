@@ -164,7 +164,7 @@ test.describe("with JavaScript, Delete", () => {
     expect(rows).toEqual([{ url: `${url}-older` }]);
   });
 
-  test("removes a section with its last card, then shows the empty state after the last one", async ({
+  test("hides a section with its last card, then shows the empty state after the last one", async ({
     page,
     run,
   }) => {

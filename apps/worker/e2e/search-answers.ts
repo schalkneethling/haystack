@@ -7,6 +7,8 @@
 import { SearchAnswer } from "@haystack/schemas";
 import { expect, type Page, type Request, type Route } from "@playwright/test";
 import * as v from "valibot";
+import type { HaystackWorker } from "./fixtures.ts";
+import { saveThroughForm } from "./save-through-form.ts";
 
 /** What search.js says in the page's live region. */
 export const SEARCH_MESSAGES = {
@@ -31,6 +33,11 @@ export const TRY_AGAIN = "Try again";
 
 /** One result, as a test describes it. */
 export interface StubbedResult {
+  /**
+   * The bookmark's ID, for a result that a test deletes, which must be a bookmark the test saved
+   * (`saveResults`). Left out, the answer makes one up.
+   */
+  readonly id?: string;
   readonly title: string;
   readonly description?: string | null;
   readonly url?: string;
@@ -67,13 +74,36 @@ export function searchAnswer(
   return v.parse(SearchAnswer, {
     runId: `run-${(nextId += 1)}`,
     outcome,
-    results: results.map(({ title, description = null, url }, index) => ({
-      id: `result-${nextId}-${index}`,
+    results: results.map(({ id, title, description = null, url }, index) => ({
+      id: id ?? `result-${nextId}-${index}`,
       title,
       description,
       url: url ?? `https://example.com/${encodeURIComponent(title)}`,
     })),
   });
+}
+
+/**
+ * Saves a link for each title through the save form, and returns them as results, with their
+ * bookmark IDs, in the same order, so that a test can delete them from the results (#208). The
+ * Worker's database is shared by the tests of a process, so each address starts with `prefix`,
+ * which must be the test's own.
+ */
+export async function saveResults(
+  page: Page,
+  query: HaystackWorker["query"],
+  prefix: string,
+  titles: readonly string[],
+): Promise<StubbedResult[]> {
+  const results: StubbedResult[] = [];
+  for (const [index, title] of titles.entries()) {
+    const url = `https://example.com/${prefix}-${index}`;
+    await saveThroughForm(page, url, title);
+    const rows = await query("SELECT id FROM bookmarks WHERE url = ?", url);
+    expect(rows, `one bookmark saved at ${url}`).toHaveLength(1);
+    results.push({ id: String(rows[0]?.id), title, url });
+  }
+  return results;
 }
 
 function queryIn(body: unknown): string {
