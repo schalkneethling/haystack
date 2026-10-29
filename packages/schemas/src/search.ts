@@ -30,16 +30,25 @@ export const SearchQuery = v.pipe(
 const RESULT_ID = /^[\w-]+$/;
 
 /**
- * One result as the search page shows it: the bookmark's confirmed title and description, its
- * address, and its ID, which the page's Delete control (#208) and the result's own element need.
- * The page shows the title and the description only, and links the title to the address only
- * when it is an https address (`isHttpsUrl`).
+ * The latest time a JavaScript `Date` can hold, in milliseconds since the epoch. The search page
+ * formats `createdAt` as a date, and a `Date` past it is invalid, so formatting would throw.
+ * search.js checks the same bound.
+ */
+const LATEST_DATE = 8.64e15;
+
+/**
+ * One result as the search page shows it, in the saved links page's card (design review): the
+ * bookmark's confirmed title and description, its address, when it was saved, and its ID, which
+ * the page's Delete control (#208) and the result's own element need. The page links the title
+ * to the address only when it is an https address (`isHttpsUrl`).
  */
 export const SearchResult = v.object({
   id: v.pipe(v.string(), v.regex(RESULT_ID, "Must be letters, digits, underscores or hyphens")),
   title: v.string(),
   description: v.nullable(v.string()),
   url: v.string(),
+  /** When the bookmark was saved, in milliseconds since the epoch: `bookmarks.created_at`. */
+  createdAt: v.pipe(v.number(), v.integer(), v.minValue(0), v.maxValue(LATEST_DATE)),
 });
 
 /**

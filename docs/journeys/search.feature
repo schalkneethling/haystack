@@ -1,7 +1,7 @@
 Feature: Searching my saved links
   The search page is Haystack's home page, at /. The owner of the collection
   describes what they are looking for in their own words, and the page shows
-  the links that match as cards, each with its title and description. It is
+  the links that match in the same cards as the saved links. It is
   built for the keyboard and for a screen reader: focus stays in the field,
   the count of matches is announced, and each result is a heading.
 
@@ -155,12 +155,17 @@ Feature: Searching my saved links
     design.e2e.ts checks that the Delete buttons of a row of results line up
     at the bottom of their cards.
 
-    Given my search finds "A guide", with the description "First line" and "Second line" on two lines
+    The card is the saved links page's card, so the date and the address help
+    me tell two similar links apart, for example before I delete one.
+
+    Given my search finds "A guide", saved on 1 October 2026, with the description "First line" and "Second line" on two lines
     When I search
-    Then its card shows the title "A guide" as a heading, which links to the saved page
-    And under it the description, on two lines
+    Then its card shows "Saved October 1, 2026"
+    And then the title "A guide" as a heading, which links to the saved page
+    And then the address
+    And then the description, on two lines
     And at the bottom of the card, the button "Delete"
-    And nothing else: not the address, nor the date it was saved
+    And the card is the one my saved links show for the same link
     And the saved site is not told that I came from Haystack, when I follow the link
 
   @playwright:apps/worker/e2e/search-delete.e2e.ts

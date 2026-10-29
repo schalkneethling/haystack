@@ -4,6 +4,7 @@
 // bookmark data is ever parsed as markup. Searching needs that script, so until it runs the page
 // says so and links to the saved links, which work without it.
 import { SEARCH_QUERY_CAP } from "@haystack/schemas";
+import { bookmarkCardTemplate } from "./bookmark-card.ts";
 import { SAVED_LINKS_PATH } from "./bookmark-paths.ts";
 import { html } from "./html.ts";
 import { type Outcome, SENSITIVE_NOTICE } from "./notices.ts";
@@ -35,7 +36,9 @@ const NEEDS_SCRIPT_ID = "search-needs-script";
  * shows the empty state, which search.js hides again with the next search's outcome. The live
  * region is in the page from the start, because a screen reader announces a change to a live
  * region that already exists. It is empty, or holds the result of a delete that returned here
- * (`outcome`). The results list is hidden until a search finds something.
+ * (`outcome`). The results list is hidden until a search finds something. Each result is a
+ * saved link's card, which search.js clones from the template at the end of the page (design
+ * review).
  */
 export function showSearchPage(outcome: Outcome | null = null): Response {
   const message = outcome === null ? null : html`<p>${outcome.message}</p>`;
@@ -55,7 +58,8 @@ export function showSearchPage(outcome: Outcome | null = null): Response {
       ${SENSITIVE_NOTICE}
       <div id="list-status" class="status" role="status">${message}</div>
       <ol id="search-results" class="cards" hidden></ol>
-      <p id="empty-state" class="empty-state" hidden>You deleted every link this search found. Search again to find others.</p>`,
+      <p id="empty-state" class="empty-state" hidden>You deleted every link this search found. Search again to find others.</p>
+      ${bookmarkCardTemplate()}`,
     200,
     { signedIn: true, width: "wide", current: "search", scripts: [SEARCH_SCRIPT] },
   );

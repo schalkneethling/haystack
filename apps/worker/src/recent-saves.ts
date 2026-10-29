@@ -1,9 +1,8 @@
 // The recent saves list at SAVED_LINKS_PATH (plan, Phase 4). It was the home page until #205
 // moved it, so that the search page (#206) could take `/`.
-import { isHttpsUrl } from "@haystack/schemas";
 import { and, count, desc, eq, gt, or } from "drizzle-orm";
 import { ADDRESS_FORM_SCRIPT, addressFormCard } from "./address-form.ts";
-import { DELETE_DIALOG_SCRIPT, deleteForm, savedDate } from "./bookmark-card.ts";
+import { bookmarkCard, type CardBookmark, DELETE_DIALOG_SCRIPT } from "./bookmark-card.ts";
 import { HELD_PATH } from "./bookmark-paths.ts";
 import type { Db } from "./db/client.ts";
 import { bookmarks } from "./db/schema.ts";
@@ -16,48 +15,7 @@ import { htmlResponse } from "./page.ts";
 // The list shows the newest links only. It kept the limit when it moved to its own page (#205).
 export const RECENT_SAVES_LIMIT = 50;
 
-/**
- * Links `content` to a saved address. Escaping does not make a URL safe, so only an https URL
- * becomes a link; anything else, such as a row saved before only https was accepted, is shown
- * without one. `noreferrer` keeps the saved site from learning where the visit came from.
- */
-export function savedLink(url: string, content: string): SafeHtml {
-  return isHttpsUrl(url)
-    ? html`<a href="${url}" rel="noreferrer">${content}</a>`
-    : html`${content}`;
-}
-
-interface RecentSave {
-  id: string;
-  url: string;
-  title: string;
-  description: string | null;
-  createdAt: number;
-}
-
-// Line breaks typed into the description are kept as <br>.
-function withLineBreaks(text: string): SafeHtml {
-  return html`${text.split("\n").map((line, index) => (index === 0 ? line : html`<br>${line}`))}`;
-}
-
-// An optional part starts with its own line break and sits at the end of the line before it,
-// so leaving it out leaves no blank line in the page.
-function item(save: RecentSave): SafeHtml {
-  const description =
-    save.description === null
-      ? null
-      : html`
-        <p class="card-description">${withLineBreaks(save.description)}</p>`;
-  // The date comes first, as the card shows it, so the reading order matches what is seen.
-  return html`<li id="bookmark-${save.id}">
-        <p class="card-date">${savedDate(save.createdAt)}</p>
-        <h2 id="title-${save.id}">${savedLink(save.url, save.title)}</h2>
-        <p class="address">${save.url}</p>${description}
-        ${deleteForm(save.id)}
-      </li>`;
-}
-
-function list(saves: readonly RecentSave[], more: boolean): SafeHtml {
+function list(saves: readonly CardBookmark[], more: boolean): SafeHtml {
   // With older links beyond the limit, an emptied list does not mean nothing is saved.
   const emptyText = more
     ? html`You deleted every link shown here. Reload the page to see your older links.`
@@ -74,7 +32,7 @@ function list(saves: readonly RecentSave[], more: boolean): SafeHtml {
       `
     : null;
   return html`${limitNote}<ol id="recent-saves" class="cards">
-        ${saves.map(item)}
+        ${saves.map((save) => bookmarkCard(save))}
       </ol>
       ${emptyState}`;
 }

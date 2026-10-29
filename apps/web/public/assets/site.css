@@ -550,16 +550,6 @@ search {
   color: var(--color-accent);
 }
 
-/* A search result's card holds an article, which lays out the card's content as an item of the
-   saved links does, and fills the card, so that its Delete control can be pinned to the bottom
-   as the saved links' Delete buttons are (#208). */
-.result {
-  display: flex;
-  flex-direction: column;
-  flex-grow: 1;
-  gap: var(--space-2xs);
-}
-
 .card-date {
   color: var(--color-ink-muted);
   font-size: var(--text-xsmall);
@@ -575,10 +565,8 @@ search {
   margin-block-start: var(--space-3xs);
 }
 
-/* Pinned to the bottom, so the buttons of a row line up. A card on the saved links page has one
-   form, a search result has one at the end of its article (#208), and a card on /held has a row
-   of them. */
-.result > form,
+/* Pinned to the bottom, so the buttons of a row line up. A card on the saved links page and a
+   search result have one form, and a card on /held has a row of them. */
 .cards > li > form,
 .card-actions {
   margin-block-start: auto;

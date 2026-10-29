@@ -10,6 +10,8 @@ import {
   answerSearches,
   type HeldSearch,
   holdSearches,
+  SAVED_AT,
+  saveResults,
   SEARCH_MESSAGES,
   SEARCH_PROCESSING_LABEL,
   SEARCH_STATUS,
@@ -186,7 +188,7 @@ test("an empty query sends nothing and says what to do", async ({ page }) => {
   expect(requests).toHaveLength(0);
 });
 
-test("a result shows its title as a heading that wraps the link, then its description", async ({
+test("a result shows the saved link's card: the date, the title as a link, the address, the description", async ({
   page,
 }) => {
   await answerSearches(page, () => [
@@ -194,6 +196,7 @@ test("a result shows its title as a heading that wraps the link, then its descri
       title: "A guide",
       description: "First line\nSecond line",
       url: "https://example.com/guide?page=2",
+      createdAt: Date.UTC(2026, 9, 1, 23, 30),
     },
     { title: "No description", description: null },
   ]);
@@ -202,24 +205,54 @@ test("a result shows its title as a heading that wraps the link, then its descri
   await field(page).press("Enter");
 
   const first = results(page).first();
-  await expect(first.getByRole("article")).toHaveCount(1);
+  // The date in UTC, as the saved links page shows it, so 23:30 on 1 October is still that day.
+  const time = first.locator("p.card-date time");
+  await expect(first.locator("p.card-date")).toHaveText("Saved October 1, 2026");
+  await expect(time).toHaveAttribute("datetime", "2026-10-01T23:30:00.000Z");
   const heading = first.getByRole("heading", { level: 2, name: "A guide" });
   const link = heading.getByRole("link", { name: "A guide" });
   await expect(link).toHaveAttribute("href", "https://example.com/guide?page=2");
   await expect(link).toHaveAttribute("rel", "noreferrer");
+  await expect(first.locator("p.address")).toHaveText("https://example.com/guide?page=2");
   // The line break is kept, as on the saved links page.
   await expect(first.locator("p.card-description")).toHaveJSProperty(
     "innerHTML",
     "First line<br>Second line",
   );
-  // The page shows the title, the description and the Delete button only (#208): not the
-  // address, nor a date. search-delete.e2e.ts checks the Delete button.
-  await expect(first).not.toContainText("example.com");
-  await expect(results(page).nth(1).locator("p")).toHaveCount(0);
+  // A result without a description has no description paragraph, as on the saved links page.
+  await expect(results(page).nth(1).locator("p.card-description")).toHaveCount(0);
   // The IDs the Delete control (#208) and the dialog need.
   const [id, titleId] = await first.evaluate((item) => [item.id, item.querySelector("h2")?.id]);
   expect(id).toMatch(/^bookmark-/);
   expect(titleId).toBe(`title-${id?.slice("bookmark-".length)}`);
+});
+
+// The two pages share one card (design review), built from bookmark-card.ts: on the saved links
+// page by the Worker, and on the search page by search.js from the Worker's template. For the
+// same bookmark, the two cards have the same elements, attributes and text, apart from the Delete
+// form's field that returns a delete to the search page.
+test("a result's card is the saved links page's card for the same bookmark", async ({
+  page,
+  query,
+}) => {
+  const [saved] = await saveResults(page, query, "same-card", ["The same card"]);
+  if (saved === undefined) {
+    throw new Error("The bookmark was not saved");
+  }
+  // The card as markup, with the whitespace between elements, which only the Worker's template
+  // literals write, left out.
+  const cardOf = (item: ReturnType<typeof results>) =>
+    item.evaluate((element) => element.outerHTML.replace(/>\s+</g, "><"));
+  await page.goto("/saved-links");
+  const onSavedLinks = await cardOf(page.locator(`#recent-saves > li#bookmark-${saved.id}`));
+  await answerSearches(page, () => [saved]);
+  await page.goto("/");
+  await field(page).fill("the same card");
+  await field(page).press("Enter");
+  const onSearch = await cardOf(results(page).first());
+  const returnField = '<input type="hidden" name="return_to" value="/">';
+  expect(onSearch).toContain(returnField);
+  expect(onSearch.replace(returnField, "")).toBe(onSavedLinks);
 });
 
 test("bookmark text is shown as text, and never parsed as markup", async ({ page }) => {
@@ -600,8 +633,15 @@ test.describe("a failed search", () => {
 
   // The page checks the answer's shape by hand, as the schema does, and the stub's answers
   // always pass the schema, so these answers are written by hand. A result's ID goes into
-  // element IDs, which an aria-labelledby list refers to (#208).
-  const result = { id: "b-1", title: "A guide", description: null, url: "https://example.com/" };
+  // element IDs, which an aria-labelledby list refers to (#208), and its saved time is formatted
+  // as a date, which a time outside a Date's range can't be.
+  const result = {
+    id: "b-1",
+    title: "A guide",
+    description: null,
+    url: "https://example.com/",
+    createdAt: SAVED_AT,
+  };
   for (const [kind, body] of [
     [
       "with a result ID that holds whitespace",
@@ -609,6 +649,14 @@ test.describe("a failed search", () => {
     ],
     ["without an outcome", { runId: "r-1", results: [result] }],
     ["with the failed outcome", { runId: "r-1", outcome: "failed", results: [] }],
+    [
+      "with a result without its saved time",
+      { runId: "r-1", outcome: "ok", results: [{ ...result, createdAt: undefined }] },
+    ],
+    [
+      "with a saved time past the latest Date",
+      { runId: "r-1", outcome: "ok", results: [{ ...result, createdAt: 8.64e15 + 1 }] },
+    ],
   ] as const) {
     test(`by an answer ${kind} says so`, async ({ page }) => {
       await page.route("**/api/search", (route) =>

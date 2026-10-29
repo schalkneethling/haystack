@@ -1,6 +1,7 @@
 import { normalizeUrl } from "@haystack/schemas";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
-import { RECENT_SAVES_LIMIT, savedLink } from "../src/recent-saves.ts";
+import { savedLink } from "../src/bookmark-card.ts";
+import { RECENT_SAVES_LIMIT } from "../src/recent-saves.ts";
 import {
   seedBookmark,
   seedBookmarks,

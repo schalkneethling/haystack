@@ -42,7 +42,15 @@ export interface StubbedResult {
   readonly title: string;
   readonly description?: string | null;
   readonly url?: string;
+  /**
+   * When the bookmark was saved, in milliseconds since the epoch. Left out, the answer says
+   * SAVED_AT.
+   */
+  readonly createdAt?: number;
 }
+
+/** When a result whose test doesn't say so was saved: 1 October 2026, in UTC. */
+export const SAVED_AT = Date.UTC(2026, 9, 1);
 
 /** Whether every link was searched, as the answer says it. */
 export type SearchOutcome = SearchAnswer["outcome"];
@@ -75,11 +83,12 @@ export function searchAnswer(
   return v.parse(SearchAnswer, {
     runId: `run-${(nextId += 1)}`,
     outcome,
-    results: results.map(({ id, title, description = null, url }, index) => ({
+    results: results.map(({ id, title, description = null, url, createdAt = SAVED_AT }, index) => ({
       id: id ?? `result-${nextId}-${index}`,
       title,
       description,
       url: url ?? `https://example.com/${encodeURIComponent(title)}`,
+      createdAt,
     })),
   });
 }
@@ -100,9 +109,14 @@ export async function saveResults(
   for (const [index, title] of titles.entries()) {
     const url = `https://example.com/${prefix}-${index}`;
     await saveThroughForm(page, url, title);
-    const rows = await query("SELECT id FROM bookmarks WHERE url = ?", url);
+    const rows = await query("SELECT id, created_at FROM bookmarks WHERE url = ?", url);
     expect(rows, `one bookmark saved at ${url}`).toHaveLength(1);
-    results.push({ id: String(rows[0]?.id), title, url });
+    results.push({
+      id: String(rows[0]?.id),
+      title,
+      url,
+      createdAt: Number(rows[0]?.created_at),
+    });
   }
   return results;
 }
