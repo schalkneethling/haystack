@@ -217,8 +217,9 @@ async function handleAppRoute(
 ): Promise<Response> {
   const path = new URL(request.url).pathname;
   // Until the search page takes `/` (#206), the home page sends the user on to the saved links.
-  // The redirect is a 302, not a 301, because a browser keeps a 301 and would never ask for `/`
-  // again once the search page is there.
+  // The browser asks for `/` again each time, so it finds the search page once it is there,
+  // for two reasons: the redirect is a 302, not a 301, which a browser keeps, and like every
+  // redirect it carries `cache-control: no-store` (security-headers.ts), so no cache keeps it.
   if (path === "/" && isReadRequest(request)) {
     return redirect(SAVED_LINKS_PATH, 302);
   }

@@ -549,6 +549,7 @@ test.describe("the header", () => {
       .getByRole("navigation", { name: "Main" })
       .getByRole("link", { name: "Saved links" });
     await page.goto("/saved-links");
+    await expect(savedLinks).toHaveAttribute("href", "/saved-links");
     await expect(savedLinks).toHaveAttribute("aria-current", "page");
     await page.goto(saveUrl({ url: "https://example.com/current" }));
     await expect(savedLinks).not.toHaveAttribute("aria-current");

@@ -542,9 +542,12 @@ describe("a save link given to sign-in directly", () => {
   it.each([
     `/save?${new URLSearchParams({ url: article, canonical_url: article, title: "An article" }).toString()}`,
     "/?view=recent#bookmark-1",
-  ])("stores %j as given", async (returnTo) => {
-    await startSignIn(returnTo);
+    "/saved-links",
+  ])("stores %j as given, and returns there", async (returnTo) => {
+    const start = await startSignIn(returnTo);
     expect(await storedReturnTargets()).toEqual([{ return_to: returnTo }]);
+    const signedIn = await callBack(start);
+    expect(signedIn.headers.get("location")).toBe(returnTo);
   });
 });
 

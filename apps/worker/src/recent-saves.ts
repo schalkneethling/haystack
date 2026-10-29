@@ -1,5 +1,5 @@
-// The recent saves list at SAVED_LINKS_PATH (plan, Phase 4). It was the home page until the
-// search page took `/` in Milestone 3 (#205).
+// The recent saves list at SAVED_LINKS_PATH (plan, Phase 4). It was the home page until #205
+// moved it, so that the search page (#206) can take `/`.
 import { isHttpsUrl } from "@haystack/schemas";
 import { and, count, desc, eq, gt, or } from "drizzle-orm";
 import { ADDRESS_FORM_SCRIPT, addressFormCard } from "./address-form.ts";

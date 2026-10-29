@@ -564,6 +564,24 @@ test.describe("8. a lookup that fails leaves the form ready to try again", () =>
     await expectTryAgain(page, lookups);
   });
 
+  // The link returns to the page's own path, so from the card on the saved links page it
+  // returns to the list (#205).
+  test("401 on the saved links page links to sign in and back to the list", async ({
+    page,
+    pages,
+  }) => {
+    const lookups = await holdLookups(page);
+    await page.goto("/saved-links");
+    await field(page).fill(pages.url("/signed-out-list"));
+    await field(page).press("Enter");
+    await (await lookups.next(1)).answer(401);
+    await expect(status(page)).toHaveText(MESSAGES.signedOut);
+    await expect(status(page).getByRole("link", { name: "Sign in again" })).toHaveAttribute(
+      "href",
+      "/auth/sign-in?return_to=%2Fsaved-links",
+    );
+  });
+
   test("any other answer says something went wrong", async ({ page, pages }) => {
     const lookups = await holdLookups(page);
     await page.goto("/save");
