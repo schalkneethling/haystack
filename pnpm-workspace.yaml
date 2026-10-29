@@ -1,6 +1,8 @@
 packages:
   - apps/*
   - packages/*
+  # The evaluation scripts and the contract check (#203), which run only on demand.
+  - evals
 allowBuilds:
   esbuild: true
   # Needed only for the Guidepup setup tool's screen recording, which Haystack doesn't use. Its

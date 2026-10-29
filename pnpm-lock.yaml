@@ -310,6 +310,25 @@ importers:
         specifier: 4.151.3
         version: 4.151.3(@types/node@25.9.9)
 
+  evals:
+    dependencies:
+      '@haystack/schemas':
+        specifier: workspace:*
+        version: link:../packages/schemas
+      valibot:
+        specifier: ^1.5.0
+        version: 1.5.0(typescript@7.0.2)
+    devDependencies:
+      '@types/node':
+        specifier: ^25.9.9
+        version: 25.9.9
+      varlock:
+        specifier: ^1.23.0
+        version: 1.23.0
+      wrangler:
+        specifier: 4.151.3
+        version: 4.151.3(@types/node@25.9.9)
+
   packages/schemas:
     dependencies:
       valibot:

@@ -45,7 +45,12 @@
 //   Requests setting is off (see "Deploys" in the plan), and no `cf-aig-max-attempts` header is
 //   sent, because Request handling doesn't say whether its count includes the first request. No
 //   `cf-aig-request-timeout` is sent either: the shared time limit covers the whole request.
-import { type AnthropicTiming, ANTHROPIC_TIMING, messagesProvider } from "./anthropic-messages.ts";
+import {
+  type AnthropicTiming,
+  ANTHROPIC_TIMING,
+  messagesProvider,
+  type MessagesTransport,
+} from "./anthropic-messages.ts";
 import { checkedBaseUrl, configurationError } from "./configuration.ts";
 import type { EnrichmentProvider } from "./enrichment-provider.ts";
 
@@ -88,6 +93,56 @@ function requireId(name: "AI_GATEWAY_ACCOUNT_ID" | "AI_GATEWAY_ID", value: strin
 }
 
 /**
+ * How the adapter reaches Anthropic through the gateway: the gateway's Anthropic endpoint, the
+ * token in `cf-aig-authorization`, the key in `x-api-key`, and the gateway headers that every
+ * request carries. The contract check (evals/contract-checks.ts, #203) sends its request through
+ * it too, so that request carries `cf-aig-collect-log-payload: false` like the adapter's.
+ */
+export function aiGatewayTransport(config: AiGatewayConfig): MessagesTransport {
+  return {
+    apiKey: config.ANTHROPIC_API_KEY,
+    // The gateway answers a key in `authorization` with a 400 (see above).
+    keyHeader: "x-api-key",
+    endpoint() {
+      // An empty token would get the gateway's error for every bookmark (#98).
+      if (!config.AI_GATEWAY_TOKEN || config.AI_GATEWAY_TOKEN.trim() === "") {
+        throw configurationError("AI_GATEWAY_TOKEN is empty", "AI_GATEWAY_TOKEN_EMPTY");
+      }
+      const account = requireId("AI_GATEWAY_ACCOUNT_ID", config.AI_GATEWAY_ACCOUNT_ID);
+      const gateway = requireId("AI_GATEWAY_ID", config.AI_GATEWAY_ID);
+      const base = checkedBaseUrl("AI_GATEWAY_BASE_URL", config.AI_GATEWAY_BASE_URL);
+      return {
+        url: new URL(`/v1/${account}/${gateway}/anthropic/v1/messages`, base),
+        headers: {
+          // Authentication: the provider endpoints take the token in this header.
+          "cf-aig-authorization": `Bearer ${config.AI_GATEWAY_TOKEN}`,
+          // Q7: metadata only. The Logging page says this skips storing the bodies, while
+          // "metadata such as token counts, model, provider, status code, cost, and duration
+          // will still be logged". It describes no gateway-wide setting for the bodies, so this
+          // header is where the decision is set, on every request, the validation retry
+          // included.
+          "cf-aig-collect-log-payload": "false",
+          // Caching is off by default, but if it were turned on, the validation retry, which
+          // sends the same request again, could be answered with the same cached invalid output.
+          "cf-aig-skip-cache": "true",
+          // Costs stay on Haystack's Anthropic account. The Unified Billing page says the
+          // gateway's "Require provider credentials" setting makes a request without
+          // credentials it can use return "an HTTP `400` response instead of using
+          // Cloudflare-managed credentials", and that this header does the same for one request:
+          // it "can prevent Unified Billing fallback". So the gateway can never bill a request
+          // to Cloudflare credits. The setting is on too (see "Deploys" in the plan). On
+          // 2026-10-24 the two turned a key in the wrong header into that 400. Without them, by
+          // the credential precedence the Unified Billing page describes, the gateway would
+          // presumably have billed the request to Cloudflare credits instead, which wasn't
+          // tested.
+          "cf-aig-no-wholesale": "true",
+        },
+      };
+    },
+  };
+}
+
+/**
  * The AI Gateway adapter. Each `enrich()` call sends one request through the gateway to
  * Anthropic, with the enrichment prompt and the structured-output schema. It throws for an empty
  * gateway token, Anthropic key or model, for an account or gateway ID that is empty or isn't a
@@ -99,49 +154,5 @@ export function aiGatewayProvider(
   config: AiGatewayConfig,
   timing: AnthropicTiming = ANTHROPIC_TIMING,
 ): EnrichmentProvider {
-  return messagesProvider(
-    "ai-gateway",
-    {
-      apiKey: config.ANTHROPIC_API_KEY,
-      // The gateway answers a key in `authorization` with a 400 (see above).
-      keyHeader: "x-api-key",
-      endpoint() {
-        // An empty token would get the gateway's error for every bookmark (#98).
-        if (!config.AI_GATEWAY_TOKEN || config.AI_GATEWAY_TOKEN.trim() === "") {
-          throw configurationError("AI_GATEWAY_TOKEN is empty", "AI_GATEWAY_TOKEN_EMPTY");
-        }
-        const account = requireId("AI_GATEWAY_ACCOUNT_ID", config.AI_GATEWAY_ACCOUNT_ID);
-        const gateway = requireId("AI_GATEWAY_ID", config.AI_GATEWAY_ID);
-        const base = checkedBaseUrl("AI_GATEWAY_BASE_URL", config.AI_GATEWAY_BASE_URL);
-        return {
-          url: new URL(`/v1/${account}/${gateway}/anthropic/v1/messages`, base),
-          headers: {
-            // Authentication: the provider endpoints take the token in this header.
-            "cf-aig-authorization": `Bearer ${config.AI_GATEWAY_TOKEN}`,
-            // Q7: metadata only. The Logging page says this skips storing the bodies, while
-            // "metadata such as token counts, model, provider, status code, cost, and duration
-            // will still be logged". It describes no gateway-wide setting for the bodies, so this
-            // header is where the decision is set, on every request, the validation retry
-            // included.
-            "cf-aig-collect-log-payload": "false",
-            // Caching is off by default, but if it were turned on, the validation retry, which
-            // sends the same request again, could be answered with the same cached invalid output.
-            "cf-aig-skip-cache": "true",
-            // Costs stay on Haystack's Anthropic account. The Unified Billing page says the
-            // gateway's "Require provider credentials" setting makes a request without
-            // credentials it can use return "an HTTP `400` response instead of using
-            // Cloudflare-managed credentials", and that this header does the same for one request:
-            // it "can prevent Unified Billing fallback". So the gateway can never bill a request
-            // to Cloudflare credits. The setting is on too (see "Deploys" in the plan). On
-            // 2026-10-24 the two turned a key in the wrong header into that 400. Without them, by
-            // the credential precedence the Unified Billing page describes, the gateway would
-            // presumably have billed the request to Cloudflare credits instead, which wasn't
-            // tested.
-            "cf-aig-no-wholesale": "true",
-          },
-        };
-      },
-    },
-    timing,
-  );
+  return messagesProvider("ai-gateway", aiGatewayTransport(config), timing);
 }

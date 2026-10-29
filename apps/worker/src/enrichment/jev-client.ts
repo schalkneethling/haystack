@@ -172,9 +172,12 @@ export function choiceAnswer<const Option extends string>(options: readonly [Opt
   );
 }
 
-// The fields of a response that Haystack reads. Fields it does not read, such as
-// `usage.output_tokens`, aren't checked, so a change to them can't fail an answer.
-const SystemOneResponse = v.object({
+/**
+ * The fields of a response that Haystack reads. Fields it does not read, such as
+ * `usage.output_tokens`, aren't checked, so a change to them can't fail an answer. The contract
+ * check (evals/contract-checks.ts, #203) validates TypeSafe's live answer with it too.
+ */
+export const SystemOneResponse = v.object({
   model: v.pipe(v.string(), v.nonEmpty()),
   answers: v.record(v.string(), v.unknown()),
   usage: v.object({ input_tokens: v.pipe(v.number(), v.integer(), v.minValue(0)) }),
@@ -319,6 +322,36 @@ function endpoint(config: JevConfig): URL {
   return new URL("/v1/systemone", checkedBaseUrl("JEV_BASE_URL", config.JEV_BASE_URL));
 }
 
+/** The questions of one request, each under the name its answer comes back under. */
+export type JevQuestions = Readonly<Record<string, NoulQuestion | ChoiceQuestion<string>>>;
+
+/**
+ * The request that asks `questions` about `state`: the pinned model, the key in the
+ * `authorization` header, and no redirects followed. It throws the configuration errors `askJev`
+ * throws, before anything is sent. askJev sends it with one question. The contract check
+ * (evals/contract-checks.ts, #203) sends it once with fixed questions and a fixed state, so the
+ * live request that check makes is this one.
+ */
+export function jevRequest(
+  config: JevConfig,
+  state: JevContent,
+  questions: JevQuestions,
+): { readonly url: URL; readonly init: RequestInit } {
+  return {
+    url: endpoint(config),
+    init: {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${config.TYPESAFE_API_KEY}`,
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      body: JSON.stringify({ model: config.JEV_MODEL, state, questions }),
+      redirect: "manual",
+    },
+  };
+}
+
 /**
  * Throws for the configuration error that `askJev` would throw, and sends nothing. The
  * enrichment module calls it before it sends anything for a bookmark, so a missing key is found
@@ -350,17 +383,7 @@ export async function askJev<Answer>(
   signal?: AbortSignal,
 ): Promise<JevResult<Answer>> {
   signal?.throwIfAborted();
-  const url = endpoint(config);
-  const init: RequestInit = {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${config.TYPESAFE_API_KEY}`,
-      "content-type": "application/json",
-      accept: "application/json",
-    },
-    body: JSON.stringify({ model: config.JEV_MODEL, state, questions: { [id]: question } }),
-    redirect: "manual",
-  };
+  const { url, init } = jevRequest(config, state, { [id]: question });
   const attemptLimit = checkedAttemptLimit(timing);
   for (let attempts = 1; ; attempts += 1) {
     const outcome = await attempt(url, init, timing.attemptTimeoutMs);

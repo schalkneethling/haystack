@@ -8,7 +8,12 @@
 // limits and how its failures are classified. This one supplies only the URL:
 // - The key is sent only to ANTHROPIC_BASE_URL, and only over https, or over http to a loopback
 //   host, where the integration tests' recorded server runs (see "Testing strategy" in the plan).
-import { type AnthropicTiming, ANTHROPIC_TIMING, messagesProvider } from "./anthropic-messages.ts";
+import {
+  type AnthropicTiming,
+  ANTHROPIC_TIMING,
+  messagesProvider,
+  type MessagesTransport,
+} from "./anthropic-messages.ts";
 import { checkedBaseUrl } from "./configuration.ts";
 import type { EnrichmentProvider } from "./enrichment-provider.ts";
 
@@ -17,6 +22,23 @@ export interface AnthropicConfig {
   // The Claude API's origin. The request goes to `/v1/messages` on it.
   ANTHROPIC_BASE_URL: string;
   ANTHROPIC_API_KEY: string;
+}
+
+/**
+ * How the adapter reaches the Claude API: `/v1/messages` on ANTHROPIC_BASE_URL, with the key in
+ * `authorization`. The contract check (evals/contract-checks.ts, #203) sends its request through
+ * it too.
+ */
+export function anthropicTransport(config: AnthropicConfig): MessagesTransport {
+  return {
+    apiKey: config.ANTHROPIC_API_KEY,
+    // The overview page names `authorization: Bearer` as the way to send an API key.
+    keyHeader: "authorization",
+    endpoint() {
+      const base = checkedBaseUrl("ANTHROPIC_BASE_URL", config.ANTHROPIC_BASE_URL);
+      return { url: new URL("/v1/messages", base) };
+    },
+  };
 }
 
 /**
@@ -30,17 +52,5 @@ export function anthropicProvider(
   config: AnthropicConfig,
   timing: AnthropicTiming = ANTHROPIC_TIMING,
 ): EnrichmentProvider {
-  return messagesProvider(
-    "anthropic",
-    {
-      apiKey: config.ANTHROPIC_API_KEY,
-      // The overview page names `authorization: Bearer` as the way to send an API key.
-      keyHeader: "authorization",
-      endpoint() {
-        const base = checkedBaseUrl("ANTHROPIC_BASE_URL", config.ANTHROPIC_BASE_URL);
-        return { url: new URL("/v1/messages", base) };
-      },
-    },
-    timing,
-  );
+  return messagesProvider("anthropic", anthropicTransport(config), timing);
 }

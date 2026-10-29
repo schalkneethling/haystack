@@ -80,9 +80,13 @@ export const ANTHROPIC_TIMING: AnthropicTiming = {
   requestTimeoutMs: ANTHROPIC_REQUEST_TIMEOUT_MS,
 };
 
-// The fields of a Message that Haystack reads. Fields it doesn't read, such as `id` and the
-// thinking blocks' contents, aren't checked, so a change to them can't fail an answer.
-const MessageResponse = v.object({
+/**
+ * The fields of a Message that Haystack reads. Fields it doesn't read, such as `id` and the
+ * thinking blocks' contents, aren't checked, so a change to them can't fail an answer. The
+ * contract check (evals/contract-checks.ts, #203) validates the live Messages API's answer with it
+ * too, directly and through the gateway.
+ */
+export const MessageResponse = v.object({
   model: v.pipe(v.string(), v.nonEmpty()),
   stop_reason: v.string(),
   // The Messages API reference documents `stop_details` as a RefusalStopDetails (`type:
@@ -296,6 +300,53 @@ export interface MessagesTransport {
 }
 
 /**
+ * Where a Messages API request through `transport` goes, and every header it carries: the
+ * adapter's own, the key in the one header the adapter chooses, and the shared ones, which come
+ * last so an adapter can't replace them. It throws for an empty key or an empty model, and for
+ * whatever the transport's `endpoint()` throws, before anything is sent, because those are
+ * configuration errors. Every `enrich()` call sends its request here. The contract check
+ * (evals/contract-checks.ts, #203) sends one fixed request here for each adapter, so the live
+ * requests that check makes have the adapters' own addresses and headers.
+ */
+export function messagesRequestTarget(
+  transport: MessagesTransport,
+  model: string,
+): { readonly url: URL; readonly headers: Readonly<Record<string, string>> } {
+  // An empty secret is easy to store by mistake (#98), and Anthropic would only answer 401.
+  // The value can also be missing, although `Env` says `string`: the test harness and local
+  // development don't bind a required secret they can't find.
+  if (!transport.apiKey || transport.apiKey.trim() === "") {
+    throw configurationError("ANTHROPIC_API_KEY is empty", "ANTHROPIC_API_KEY_EMPTY");
+  }
+  // The caller passes ANTHROPIC_MODEL. An empty one would only get a 400 for every bookmark,
+  // each counted as a permanent failure.
+  if (!model || model.trim() === "") {
+    throw configurationError("ANTHROPIC_MODEL is empty", "ANTHROPIC_MODEL_EMPTY");
+  }
+  const endpoint = transport.endpoint();
+  // An adapter's own `authorization` or `x-api-key` would send a second credential, or the
+  // key in a header the provider doesn't read (#125). Header names aren't case-sensitive.
+  for (const name of Object.keys(endpoint.headers ?? {})) {
+    if (KEY_HEADERS.has(name.toLowerCase())) {
+      throw configurationError(
+        `An adapter's headers can't include ${name}; use keyHeader`,
+        "MESSAGES_KEY_HEADER_IN_HEADERS",
+      );
+    }
+  }
+  return {
+    url: endpoint.url,
+    headers: {
+      ...endpoint.headers,
+      ...keyHeaders(transport.keyHeader, transport.apiKey),
+      "anthropic-version": ANTHROPIC_VERSION,
+      "content-type": "application/json",
+      accept: "application/json",
+    },
+  };
+}
+
+/**
  * A provider that sends one Messages API request per `enrich()` call, with the enrichment prompt
  * and the structured-output schema, to the transport's endpoint. It throws for an empty key or an
  * empty model, and for whatever the transport's `endpoint()` throws, before anything is sent,
@@ -307,52 +358,21 @@ export function messagesProvider(
   transport: MessagesTransport,
   timing: AnthropicTiming,
 ): EnrichmentProvider {
-  // The checks every request runs first, and its endpoint. `checkConfiguration()` runs them on
-  // their own, so the enrichment module can find an error before it asks Jev or GitHub anything.
-  const prepare = (model: string): MessagesEndpoint => {
-    // An empty secret is easy to store by mistake (#98), and Anthropic would only answer 401.
-    // The value can also be missing, although `Env` says `string`: the test harness and local
-    // development don't bind a required secret they can't find.
-    if (!transport.apiKey || transport.apiKey.trim() === "") {
-      throw configurationError("ANTHROPIC_API_KEY is empty", "ANTHROPIC_API_KEY_EMPTY");
-    }
-    // The caller passes ANTHROPIC_MODEL. An empty one would only get a 400 for every bookmark,
-    // each counted as a permanent failure.
-    if (!model || model.trim() === "") {
-      throw configurationError("ANTHROPIC_MODEL is empty", "ANTHROPIC_MODEL_EMPTY");
-    }
-    const endpoint = transport.endpoint();
-    // An adapter's own `authorization` or `x-api-key` would send a second credential, or the
-    // key in a header the provider doesn't read (#125). Header names aren't case-sensitive.
-    for (const name of Object.keys(endpoint.headers ?? {})) {
-      if (KEY_HEADERS.has(name.toLowerCase())) {
-        throw configurationError(
-          `An adapter's headers can't include ${name}; use keyHeader`,
-          "MESSAGES_KEY_HEADER_IN_HEADERS",
-        );
-      }
-    }
-    return endpoint;
-  };
   return {
     id,
+    // The checks every request runs first, on their own, so the enrichment module can find an
+    // error before it asks Jev or GitHub anything.
     checkConfiguration({ model }) {
-      prepare(model);
+      messagesRequestTarget(transport, model);
     },
     async enrich(input, { model }) {
-      const { url, headers } = prepare(model);
+      const { url, headers } = messagesRequestTarget(transport, model);
       const { system, user } = enrichmentPrompt(input);
       const outcome = await request(
         url,
         {
           method: "POST",
-          headers: {
-            ...headers,
-            ...keyHeaders(transport.keyHeader, transport.apiKey),
-            "anthropic-version": ANTHROPIC_VERSION,
-            "content-type": "application/json",
-            accept: "application/json",
-          },
+          headers,
           body: JSON.stringify({
             model,
             max_tokens: ANTHROPIC_MAX_TOKENS,
