@@ -22,6 +22,7 @@ import {
 } from "@haystack/schemas";
 import { and, eq } from "drizzle-orm";
 import { addressFormPage, type AddressFormState } from "./address-form.ts";
+import { SAVED_LINKS_PATH } from "./bookmark-paths.ts";
 import type { Db } from "./db/client.ts";
 import { bookmarks } from "./db/schema.ts";
 import { BOOKMARK_TO_ENRICH_COLUMNS, type BookmarkToEnrich } from "./enrichment/enrich-bookmark.ts";
@@ -118,10 +119,10 @@ function sensitivePage(reason: SensitiveUrlReason): Response {
 async function alreadySavedPage(db: Db, userId: string, existing: ListPosition): Promise<Response> {
   // The list shows only the newest links, so an older bookmark has no anchor to link to.
   const where = (await isInRecentSaves(db, userId, existing))
-    ? html`<p><a href="/#bookmark-${existing.id}">See it in your saved links</a></p>`
+    ? html`<p><a href="${SAVED_LINKS_PATH}#bookmark-${existing.id}">See it in your saved links</a></p>`
     : html`<p>
         It is older than the ${RECENT_SAVES_LIMIT} most recent links that
-        <a href="/">your saved links</a> show.
+        <a href="${SAVED_LINKS_PATH}">your saved links</a> show.
       </p>`;
   return htmlResponse(
     "Already saved",
@@ -605,7 +606,7 @@ function savedPage(bookmarkId: string): Response {
   return htmlResponse(
     "Saved",
     html`<h1>Saved</h1>
-      <p><a href="/#bookmark-${bookmarkId}">See it in your saved links</a></p>`,
+      <p><a href="${SAVED_LINKS_PATH}#bookmark-${bookmarkId}">See it in your saved links</a></p>`,
     200,
     SIGNED_IN,
   );

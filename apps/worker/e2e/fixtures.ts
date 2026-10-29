@@ -86,7 +86,9 @@ function sessionTransport(browserName: string): SessionTransport {
  * see the hops of a redirect, so the redirect to Google could not be stopped. It loads the
  * signed-out page, which looks up no session, and asks for `/` with the page's own `fetch`. The
  * browser sends the session with it as with any request, and the Worker answers a request that
- * is not for a page with 401 when it has no session, instead of a redirect to sign-in.
+ * is not for a page with 401 when it has no session, instead of a redirect to sign-in. With a
+ * session, `fetch` follows whatever `/` answers to its end, so the check passes on the final 200,
+ * whichever page that is: while #205's redirect is in place, `/` sends it on to /saved-links.
  */
 export async function expectSignedIn(page: Page): Promise<void> {
   await page.goto("/auth/signed-out");

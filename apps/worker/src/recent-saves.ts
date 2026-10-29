@@ -1,4 +1,5 @@
-// The recent saves list at `/` (plan, Phase 4). Milestone 3 replaces it with the search page.
+// The recent saves list at SAVED_LINKS_PATH (plan, Phase 4). It was the home page until #205
+// moved it, so that the search page (#206) can take `/`.
 import { isHttpsUrl } from "@haystack/schemas";
 import { and, count, desc, eq, gt, or } from "drizzle-orm";
 import { ADDRESS_FORM_SCRIPT, addressFormCard } from "./address-form.ts";
@@ -12,7 +13,7 @@ import { html, type SafeHtml } from "./html.ts";
 import { type Outcome, SENSITIVE_NOTICE } from "./notices.ts";
 import { htmlResponse } from "./page.ts";
 
-// Until search arrives, the list shows the newest links only.
+// The list shows the newest links only. It kept the limit when it moved to its own page (#205).
 export const RECENT_SAVES_LIMIT = 50;
 
 /**

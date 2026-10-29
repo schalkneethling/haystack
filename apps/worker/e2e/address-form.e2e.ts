@@ -85,7 +85,7 @@ const HINT = "Paste the address of a page. You confirm its title on the next ste
 // On the saved links page the form comes before the heading, so it is a named form landmark. On
 // its own page the heading is its label, so the form is not named again.
 test("the form is a landmark named Save a link on the saved links page only", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/saved-links");
   const form = page.getByRole("form", { name: "Save a link" });
   await expect(form).toBeVisible();
   await expect(form.getByLabel("Save a link")).toBeVisible();
@@ -99,7 +99,7 @@ test("typing an address on the saved links page and pressing Enter opens the sav
   pages,
 }) => {
   const address = pageAbout(pages, "/typed-on-the-list", "Typed on the list");
-  await page.goto("/");
+  await page.goto("/saved-links");
   await tabToField(page);
   await page.keyboard.type(address);
   await page.keyboard.press("Enter");
@@ -196,7 +196,7 @@ test.describe("while a lookup runs", () => {
     pages,
   }) => {
     const lookups = await holdLookups(page);
-    await page.goto("/");
+    await page.goto("/saved-links");
     await tabToField(page);
     await page.keyboard.type(pages.url("/processing-field"));
     await page.keyboard.press("Enter");
@@ -363,7 +363,7 @@ test("6. on success, the browser goes to the save link with its fields", async (
   pages,
 }) => {
   const address = pageAbout(pages, "/success", "Success");
-  await page.goto("/");
+  await page.goto("/saved-links");
   await field(page).fill(address);
   await field(page).press("Enter");
   await page.waitForURL((url) => url.pathname === "/save" && url.searchParams.has("og_title"));
@@ -401,7 +401,7 @@ test.describe("7. a rejected address", () => {
   test("shows the server's error markup, and the field gets focus, reading the error, then the hint", async ({
     page,
   }) => {
-    await page.goto("/");
+    await page.goto("/saved-links");
     await field(page).fill("pages.test/no-scheme");
     await page.getByRole("button", { name: "Continue" }).click();
     await expect(field(page)).toBeFocused();
@@ -413,7 +413,7 @@ test.describe("7. a rejected address", () => {
     // The typed value stays, so it can be corrected.
     await expect(field(page)).toHaveValue("pages.test/no-scheme");
     await expectReady(page);
-    expect(new URL(page.url()).pathname).toBe("/");
+    expect(new URL(page.url()).pathname).toBe("/saved-links");
   });
 
   // The server's error page is titled "Check the address", and the title is what VoiceOver says
@@ -424,7 +424,7 @@ test.describe("7. a rejected address", () => {
     pages,
   }) => {
     const lookups = await holdLookups(page);
-    await page.goto("/");
+    await page.goto("/saved-links");
     await expect(page).toHaveTitle("Saved links - Haystack");
     await field(page).fill("pages.test/no-scheme");
     await field(page).press("Enter");
@@ -564,6 +564,24 @@ test.describe("8. a lookup that fails leaves the form ready to try again", () =>
     await expectTryAgain(page, lookups);
   });
 
+  // The link returns to the page's own path, so from the card on the saved links page it
+  // returns to the list (#205).
+  test("401 on the saved links page links to sign in and back to the list", async ({
+    page,
+    pages,
+  }) => {
+    const lookups = await holdLookups(page);
+    await page.goto("/saved-links");
+    await field(page).fill(pages.url("/signed-out-list"));
+    await field(page).press("Enter");
+    await (await lookups.next(1)).answer(401);
+    await expect(status(page)).toHaveText(MESSAGES.signedOut);
+    await expect(status(page).getByRole("link", { name: "Sign in again" })).toHaveAttribute(
+      "href",
+      "/auth/sign-in?return_to=%2Fsaved-links",
+    );
+  });
+
   test("any other answer says something went wrong", async ({ page, pages }) => {
     const lookups = await holdLookups(page);
     await page.goto("/save");
@@ -643,7 +661,7 @@ test.describe("review of #105", () => {
   test("7. the error goes where the server puts it: before the hint in the card, before the form on its own page", async ({
     page,
   }) => {
-    await page.goto("/");
+    await page.goto("/saved-links");
     await field(page).fill("pages.test/in-card");
     await field(page).press("Enter");
     await expect(page.locator("form.address-form .alert + #save-url-hint")).toHaveCount(1);

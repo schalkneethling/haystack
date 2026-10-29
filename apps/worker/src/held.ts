@@ -14,7 +14,7 @@
 // dialog script works here as on the saved links page.
 import { and, eq, exists, gte, sql } from "drizzle-orm";
 import { bookmarkHost, DELETE_DIALOG_SCRIPT, deleteForm, savedDate } from "./bookmark-card.ts";
-import { bookmarkAction, HELD_PATH } from "./bookmark-paths.ts";
+import { bookmarkAction, HELD_PATH, SAVED_LINKS_PATH } from "./bookmark-paths.ts";
 import type { Db } from "./db/client.ts";
 import { bookmarks, enrichmentFailures } from "./db/schema.ts";
 import type { EnrichmentFailureReason, EnrichmentStep } from "./enrichment/enrich-bookmark.ts";
@@ -263,7 +263,7 @@ function heldPage(
       <div id="list-status" class="status" role="status">${message}</div>${section(HELD_SECTION, held)}${section(FAILED_SECTION, failed)}
       <div id="empty-state" class="empty-state"${empty ? null : html` hidden`}>
         <p><strong>Nothing to review.</strong> Links that Haystack holds back because they might be private, and links it couldn't describe, appear here.</p>
-        <p><a href="/">Go to your saved links</a></p>
+        <p><a href="${SAVED_LINKS_PATH}">Go to your saved links</a></p>
       </div>`,
     status,
     { signedIn: true, width: "wide", scripts: [DELETE_DIALOG_SCRIPT] },

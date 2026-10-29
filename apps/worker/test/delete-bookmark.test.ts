@@ -75,7 +75,9 @@ describe("POST /bookmarks/:id/delete", () => {
       `<p><strong>Address:</strong> <span class="address">${url}</span></p>`,
     );
     expect(markup).toContain('<input type="hidden" name="confirm" value="yes">');
-    expect(markup).toContain(`<a href="/#bookmark-${bookmarkId}">`);
+    expect(markup).toContain(
+      `<a href="/saved-links#bookmark-${bookmarkId}">Keep it and go back to your saved links</a>`,
+    );
     // The page's own button. The header's Sign out button is outside <main>.
     expect(mainContent(markup).match(/<button/g)).toHaveLength(1);
     await expectValidHtml(markup);
@@ -102,6 +104,10 @@ describe("POST /bookmarks/:id/delete", () => {
       '<div id="list-status" class="status" role="status"><p>Deleted “A guide”.</p></div>',
     );
     expect(markup).toContain("<title>Deleted “A guide” - Saved links - Haystack</title>");
+    expect(markup).toContain('<h1 id="list-heading">Saved links</h1>');
+    expect(markup).toContain(
+      '<a class="nav-link" href="/saved-links" aria-current="page">Saved links</a>',
+    );
     expect(markup).not.toContain(`bookmark-${bookmarkId}`);
     expect(markup).toContain(`bookmark-${other}`);
     await expectValidHtml(markup);
@@ -147,7 +153,7 @@ describe("POST /bookmarks/:id/delete", () => {
     expect(response.status).toBe(404);
     const markup = await response.text();
     expect(markup).toContain("<h1>This link isn't in your saved links</h1>");
-    expect(markup).toContain('<a href="/">Go to your saved links</a>');
+    expect(markup).toContain('<a href="/saved-links">Go to your saved links</a>');
     await expectValidHtml(markup);
   });
 
@@ -190,7 +196,7 @@ describe("POST /bookmarks/:id/delete", () => {
     });
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe(
-      `/auth/sign-in?return_to=${encodeURIComponent("/")}`,
+      `/auth/sign-in?return_to=${encodeURIComponent("/saved-links")}`,
     );
     expect(await bookmarkIds()).toEqual([bookmarkId]);
   });
@@ -217,7 +223,7 @@ describe("POST /bookmarks/:id/delete", () => {
 
 describe("the list's delete buttons", () => {
   it("post to the delete endpoint, named by the delete label and the title", async () => {
-    const response = await server.fetch("/", {
+    const response = await server.fetch("/saved-links", {
       headers: { accept: "text/html", cookie: owner.cookie },
     });
     const markup = await response.text();

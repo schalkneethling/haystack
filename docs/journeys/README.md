@@ -14,7 +14,7 @@ There is one file per area, and each starts with a `Feature` that says who the j
 | `extension-save.feature` | Saving the current page from the extension's popup in Chrome and Firefox, and the pages it refuses                                                                         |
 | `address-form.feature`   | Saving a link by typing or pasting its address in the "Save a link" form (#97, #105)                                                                                       |
 | `save-form.feature`      | Confirming a link on the save form, its errors, its warning about a link that might be private (#132), describing it once it is saved (#133), and the "already saved" page |
-| `saved-links.feature`    | The saved links list, and moving through it with a screen reader                                                                                                           |
+| `saved-links.feature`    | The saved links list at /saved-links, which the home page sends me on to until search arrives, and moving through it with a screen reader                                  |
 | `delete.feature`         | Deleting a link, with and without JavaScript                                                                                                                               |
 | `held.feature`           | Reviewing links that Haystack held back or couldn't describe at /held: releasing, retrying and deleting (#129)                                                             |
 | `errors.feature`         | Pages a person can reach by mistake, such as a page that doesn't exist, a form sent after the session ended, or a request from another site                                |

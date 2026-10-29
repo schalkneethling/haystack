@@ -18,7 +18,12 @@ import {
 } from "./auth/sessions.ts";
 import { upsertUser } from "./auth/users.ts";
 import { createDb, type Db } from "./db/client.ts";
-import { bookmarkActionPath, type BookmarkRoute, HELD_PATH } from "./bookmark-paths.ts";
+import {
+  bookmarkActionPath,
+  type BookmarkRoute,
+  HELD_PATH,
+  SAVED_LINKS_PATH,
+} from "./bookmark-paths.ts";
 import { deleteBookmark, deleteReturnPage, readForm } from "./delete-bookmark.ts";
 import { enrichOnSave } from "./enrichment/enrich-on-save.ts";
 import { errorCode } from "./error-code.ts";
@@ -85,9 +90,10 @@ function redirectUri(request: Request): string {
 // The return target a sign-in stores. A save link is screened here as a signed-out /save is,
 // because a URL that carries a secret is never stored (plan, decision 18), and a hand-built
 // /auth/sign-in link never passes through /save. A save link that would get a page instead of
-// the form falls back to `/`, as a target off this origin does. A save link with no captured
-// field, such as a bare /save, holds no value, so it is stored as `/save`, which shows the
-// address form (plan, "Return targets").
+// the form falls back to the saved links, which have the address form, rather than ending the
+// sign-in. A save link with no captured field, such as a bare /save, holds no value, so it is
+// stored as `/save`, which shows the address form (plan, "Return targets"). A target off this
+// origin falls back to `/` in safeReturnTarget.
 function storedReturnTarget(request: Request, value: string | null): string {
   const target = safeReturnTarget(value);
   const url = new URL(target, request.url);
@@ -95,7 +101,7 @@ function storedReturnTarget(request: Request, value: string | null): string {
     return target;
   }
   const screened = signedOutSave(url);
-  return "page" in screened ? "/" : screened.returnTo;
+  return "page" in screened ? SAVED_LINKS_PATH : screened.returnTo;
 }
 
 async function signIn(request: Request, env: Env, db: Db): Promise<Response> {
@@ -210,7 +216,14 @@ async function handleAppRoute(
   session: AuthenticatedSession,
 ): Promise<Response> {
   const path = new URL(request.url).pathname;
+  // Until the search page takes `/` (#206), the home page sends the user on to the saved links.
+  // The browser asks for `/` again each time, so it finds the search page once it is there,
+  // for two reasons: the redirect is a 302, not a 301, which a browser keeps, and like every
+  // redirect it carries `cache-control: no-store` (security-headers.ts), so no cache keeps it.
   if (path === "/" && isReadRequest(request)) {
+    return redirect(SAVED_LINKS_PATH, 302);
+  }
+  if (path === SAVED_LINKS_PATH && isReadRequest(request)) {
     return showRecentSaves(db, session.user.id, env);
   }
   if (path === HELD_PATH && isReadRequest(request)) {
@@ -270,7 +283,7 @@ async function afterSubmission(request: Request): Promise<SignedOutSave> {
     case "delete":
       return { returnTo: deleteReturnPage(await readForm(request)) };
     case undefined:
-      return { returnTo: "/" };
+      return { returnTo: SAVED_LINKS_PATH };
   }
 }
 

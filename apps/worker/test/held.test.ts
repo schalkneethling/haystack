@@ -197,7 +197,7 @@ describe("GET /held", () => {
     expect(markup).toMatch(
       /<div id="empty-state" class="empty-state">\s*<p><strong>Nothing to review\.<\/strong>/,
     );
-    expect(markup).toContain('<a href="/">Go to your saved links</a>');
+    expect(markup).toContain('<a href="/saved-links">Go to your saved links</a>');
     expect(markup).not.toContain("<section");
     expect(markup).not.toContain("<ol");
     await expectValidHtml(markup);
@@ -677,7 +677,7 @@ describe("deleting from /held", () => {
     expect(await failureVersions(id)).toEqual([]);
   });
 
-  it.each(["/", "/elsewhere", "https://evil.example/held", ""])(
+  it.each(["/saved-links", "/", "/elsewhere", "https://evil.example/held", ""])(
     "returns to the saved links for the return page %j",
     async (returnTo) => {
       const id = await saveHeld("https://example.com/held", { title: "A guide" });
@@ -718,7 +718,7 @@ describe("deleting from /held", () => {
 
 describe("the saved links page's link to /held", () => {
   async function listMarkup(): Promise<string> {
-    const response = await server.fetch("/", {
+    const response = await server.fetch("/saved-links", {
       headers: { accept: "text/html", cookie: owner.cookie },
     });
     expect(response.status).toBe(200);
@@ -820,7 +820,7 @@ describe("with an attempt limit that can't be read", () => {
   });
 
   it("shows the saved links without the link to /held", async () => {
-    const response = await misconfigured.fetch("/", {
+    const response = await misconfigured.fetch("/saved-links", {
       headers: { accept: "text/html", cookie: user.cookie },
     });
     expect(response.status).toBe(200);

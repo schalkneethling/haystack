@@ -15,7 +15,7 @@ test("moving by heading reads the page heading, then each saved link's title", a
 }) => {
   await saveThroughForm(page, "https://example.com/voiceover-older", "Older guide");
   await saveThroughForm(page, "https://example.com/voiceover-newer", "Newer guide");
-  await page.goto("/");
+  await page.goto("/saved-links");
   await page.getByRole("heading", { level: 1 }).waitFor();
   await voiceOver.navigateToWebContent();
 

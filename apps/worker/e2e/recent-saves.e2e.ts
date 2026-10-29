@@ -10,14 +10,14 @@ test.beforeEach(async ({ signIn }) => {
 
 // axe runs in the page, so these scans need JavaScript.
 test("the empty list has no axe violations", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/saved-links");
   await expect(page.getByText("You haven't saved any links yet.")).toBeVisible();
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
 
 test("the list has no axe violations", async ({ page }) => {
   await saveThroughForm(page, "https://example.com/guide", "A guide");
-  await page.goto("/");
+  await page.goto("/saved-links");
   await expect(page.getByRole("listitem")).toHaveCount(1);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });

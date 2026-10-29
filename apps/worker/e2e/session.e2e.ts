@@ -26,7 +26,7 @@ test("the session lasts through the address form's lookup and its redirect", asy
 // The path the delete dialog's VoiceOver tests take: a save link, then the confirmation.
 test("the session lasts through a save", async ({ page }) => {
   await saveThroughForm(page, "https://example.com/session-save", "Session save");
-  await page.goto("/");
+  await page.goto("/saved-links");
   await expect(page.getByRole("button", { name: "Delete Session save" })).toBeVisible();
 });
 

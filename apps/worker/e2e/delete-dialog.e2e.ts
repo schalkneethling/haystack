@@ -14,7 +14,7 @@ async function saveThree(page: Page, prefix: string): Promise<void> {
   for (const name of ["Oldest", "Middle", "Newest"]) {
     await saveThroughForm(page, `https://example.com/${prefix}-${name}`, `${name} ${prefix}`);
   }
-  await page.goto("/");
+  await page.goto("/saved-links");
 }
 
 test("the dialog confirms, deletes, moves focus to the next item, and announces it", async ({
@@ -44,8 +44,8 @@ test("the dialog confirms, deletes, moves focus to the next item, and announces 
   // The next item down the list, which is the older one.
   await expect(items.nth(1).getByRole("heading", { level: 2 })).toBeFocused();
   await expect(items.nth(1)).toContainText("Oldest confirm");
-  // No page load: the list stayed on /.
-  expect(new URL(page.url()).pathname).toBe("/");
+  // No page load: the list stayed on the saved links page.
+  expect(new URL(page.url()).pathname).toBe("/saved-links");
   const rows = await query(
     "SELECT title FROM bookmarks WHERE url LIKE ? ORDER BY title",
     "https://example.com/confirm-%",
@@ -65,7 +65,7 @@ test("deleting the only item moves focus to the heading and shows the empty stat
   page,
 }) => {
   await saveThroughForm(page, "https://example.com/only", "Only guide");
-  await page.goto("/");
+  await page.goto("/saved-links");
   await page.getByRole("button", { name: "Delete Only guide" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Saved links" })).toBeFocused();
@@ -78,7 +78,7 @@ test("a second Enter after opening the dialog deletes nothing, and Tab reaches C
   query,
 }) => {
   await saveThroughForm(page, "https://example.com/keyboard", "Keyboard guide");
-  await page.goto("/");
+  await page.goto("/saved-links");
   await page.getByRole("button", { name: "Delete Keyboard guide" }).focus();
   await page.keyboard.press("Enter");
   const dialog = page.getByRole("dialog", { name: "Delete this link?" });
@@ -124,7 +124,7 @@ for (const [how, close] of [
     query,
   }) => {
     await saveThroughForm(page, `https://example.com/kept-${how}`, `Kept ${how}`);
-    await page.goto("/");
+    await page.goto("/saved-links");
     const button = page.getByRole("button", { name: `Delete Kept ${how}` });
     await button.click();
     await close(page);
@@ -244,7 +244,7 @@ test("after a failed delete, the status message is written once focus is back on
 
 test("a bookmark already deleted elsewhere is removed and announced", async ({ page, query }) => {
   await saveThroughForm(page, "https://example.com/elsewhere", "Elsewhere guide");
-  await page.goto("/");
+  await page.goto("/saved-links");
   await page.getByRole("button", { name: "Delete Elsewhere guide" }).click();
   // Another tab deletes it while the dialog is open.
   const [row] = await query(
@@ -262,7 +262,7 @@ test("a bookmark already deleted elsewhere is removed and announced", async ({ p
 
 test("the dialog cannot be closed while the delete request runs", async ({ page, query }) => {
   await saveThroughForm(page, "https://example.com/in-flight", "In-flight guide");
-  await page.goto("/");
+  await page.goto("/saved-links");
   // Hold the delete request until the test lets it go. Routing is local; nothing leaves the
   // machine.
   let release = (): void => undefined;
@@ -294,7 +294,7 @@ test("the dialog cannot be closed while the delete request runs", async ({ page,
 
 test("a delete after the session ended keeps the item and says why", async ({ page, signOut }) => {
   await saveThroughForm(page, "https://example.com/signed-out", "Signed-out guide");
-  await page.goto("/");
+  await page.goto("/saved-links");
   const button = page.getByRole("button", { name: "Delete Signed-out guide" });
   await button.click();
   // Ends the session in the browser, as an ended session would.

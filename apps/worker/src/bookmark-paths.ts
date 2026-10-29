@@ -1,6 +1,14 @@
-// Paths for a bookmark's own routes, shared by the pages that link to them and the router. Each
-// is a POST: delete from any page that lists the bookmark, and release and retry from /held.
+// Paths for the pages that list bookmarks and for a bookmark's own routes, shared by the pages
+// that link to them and the router. Each bookmark route is a POST: delete from any page that
+// lists the bookmark, and release and retry from /held.
 const ACTION_PATH = /^\/bookmarks\/([^/]+)\/(delete|release|retry)$/;
+
+/**
+ * The saved links page, which lists the user's most recent bookmarks (recent-saves.ts). It moved
+ * from `/` so that the search page can take the home page (#205). The path names the page as its
+ * heading and the navigation do.
+ */
+export const SAVED_LINKS_PATH = "/saved-links";
 
 /** The review page for the user's Held and Failed bookmarks (held.ts). */
 export const HELD_PATH = "/held";
