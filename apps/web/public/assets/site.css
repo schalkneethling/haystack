@@ -301,9 +301,11 @@ main > :where(p, ul, div) {
   overflow-wrap: anywhere;
 }
 
-/* The address form (#97). The field and Continue share a row, capped at the form pages' width,
-   and Continue moves under the field when the row has no room for both. */
-.address-form {
+/* The address form (#97) and the search form (#206). The field and the button share a row,
+   capped at the form pages' width, and the button moves under the field when the row has no room
+   for both. */
+.address-form,
+.search-form {
   gap: var(--space-s);
 }
 
@@ -319,7 +321,8 @@ main > :where(p, ul, div) {
   font-size: var(--text-small);
 }
 
-.address-row {
+.address-row,
+.search-row {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-s);
@@ -328,19 +331,30 @@ main > :where(p, ul, div) {
 
 /* A field's automatic minimum width grows with the text size, so `min-inline-size: 0` lets it
    shrink to the row at any text size instead of overflowing. */
-.address-input {
+.address-input,
+.search-input {
   background-color: var(--color-field);
   border: 1px solid var(--color-control-border);
   border-radius: var(--radius-pill);
   color: var(--color-ink);
   flex: 1 1 18rem;
   font: inherit;
-  font-family: var(--font-mono);
-  font-size: var(--text-small);
   min-block-size: var(--target-primary);
   min-inline-size: 0;
   padding-block: var(--space-s);
   padding-inline: 1.125rem;
+}
+
+/* An address is set in the monospace font, as everywhere else. A query is words, so it keeps the
+   body's font and size. */
+.address-input {
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+}
+
+/* The search page (#206). Browsers that predate the element would draw it inline. */
+search {
+  display: block;
 }
 
 /* While the page is looked up (#105, address-form.js), and when a lookup fails, the status
@@ -456,6 +470,13 @@ main > :where(p, ul, div) {
   padding: 0;
 }
 
+/* The grid's `display` would win over the `hidden` attribute, which the browser's own stylesheet
+   draws as `display: none`. The search page's results list is hidden until a search finds
+   something. */
+.cards[hidden] {
+  display: none;
+}
+
 /* Each item's own `display: flex` replaces `list-item`, so it draws no marker, and the list
    needs no `list-style: none`. */
 .cards > li {
@@ -482,6 +503,16 @@ main > :where(p, ul, div) {
 
 .cards h2 a:hover {
   color: var(--color-accent);
+}
+
+/* A search result's card holds an article, which lays out the card's content as an item of the
+   saved links does, and fills the card, so that a control at its end can be pinned to the bottom
+   as the saved links' Delete buttons are (#208). */
+.result {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  gap: var(--space-2xs);
 }
 
 .card-date {

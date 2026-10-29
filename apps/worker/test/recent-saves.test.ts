@@ -202,22 +202,6 @@ describe("GET /saved-links", () => {
   });
 });
 
-// Until the search page takes the home page (#206), `/` sends a signed-in user on to the list.
-describe("GET /", () => {
-  it.each(["GET", "HEAD"])(
-    "answers %s with a temporary redirect to the saved links",
-    async (method) => {
-      const response = await server.fetch("/", {
-        method,
-        headers: { accept: "text/html", cookie: owner.cookie },
-        redirect: "manual",
-      });
-      expect(response.status).toBe(302);
-      expect(response.headers.get("location")).toBe("/saved-links");
-    },
-  );
-});
-
 describe("the already-saved page", () => {
   async function alreadySaved(url: string): Promise<string> {
     const response = await server.fetch(`/save?${new URLSearchParams({ url }).toString()}`, {

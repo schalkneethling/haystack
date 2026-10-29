@@ -7,6 +7,15 @@ import { html, type SafeHtml } from "./html.ts";
 // them. The popup imports the same tokens file into its build.
 const STYLESHEETS = ["/assets/tokens.css", "/assets/site.css"] as const;
 
+/** The pages the header's navigation links to. */
+type NavigationPage = "search" | "saved-links";
+
+// In the order the header shows them. The search page is the home page (#206).
+const NAVIGATION: readonly { page: NavigationPage; href: string; label: string }[] = [
+  { page: "search", href: "/", label: "Search" },
+  { page: "saved-links", href: SAVED_LINKS_PATH, label: "Saved links" },
+];
+
 export interface PageOptions {
   /**
    * Whether the page is shown to a signed-in user. Their header adds the main navigation and a
@@ -14,26 +23,29 @@ export interface PageOptions {
    */
   readonly signedIn: boolean;
   /**
-   * The saved links page and /held are wide, so their grids have room for columns. Every other
-   * page is narrow.
+   * The search page, the saved links page and /held are wide, so their grids have room for
+   * columns. Every other page is narrow.
    */
   readonly width?: "narrow" | "wide";
   /** The navigation link to mark as the current page. */
-  readonly current?: "saved-links";
+  readonly current?: NavigationPage;
   /**
    * Paths of module scripts served as static assets from apps/web/public. Each enhances a page
-   * that already works without it.
+   * that already works without it, except the search page's, which searching needs, because the
+   * results are built from JSON in the browser (search-page.ts).
    */
   readonly scripts?: readonly string[];
 }
 
 // Sign out is a form, because it is a POST with the Origin check, and works without JavaScript.
 function siteActions(current: PageOptions["current"]): SafeHtml {
-  const currentPage = current === "saved-links" ? html` aria-current="page"` : null;
+  const links = NAVIGATION.map(
+    ({ page, href, label }) => html`
+            <a class="nav-link" href="${href}"${page === current ? html` aria-current="page"` : null}>${label}</a>`,
+  );
   return html`
         <div class="site-actions">
-          <nav class="site-nav" aria-label="Main">
-            <a class="nav-link" href="${SAVED_LINKS_PATH}"${currentPage}>Saved links</a>
+          <nav class="site-nav" aria-label="Main">${links}
           </nav>
           <form method="post" action="/auth/sign-out">
             <button class="button button-small" type="submit">Sign out</button>

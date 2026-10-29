@@ -30,6 +30,7 @@ import { errorCode } from "./error-code.ts";
 import { readReviewPolicy, releaseBookmark, retryBookmark, showHeld } from "./held.ts";
 import { showRecentSaves } from "./recent-saves.ts";
 import { runScheduled } from "./scheduled.ts";
+import { showSearchPage } from "./search-page.ts";
 import {
   saveBookmark,
   showSaveForm,
@@ -216,12 +217,10 @@ async function handleAppRoute(
   session: AuthenticatedSession,
 ): Promise<Response> {
   const path = new URL(request.url).pathname;
-  // Until the search page takes `/` (#206), the home page sends the user on to the saved links.
-  // The browser asks for `/` again each time, so it finds the search page once it is there,
-  // for two reasons: the redirect is a 302, not a 301, which a browser keeps, and like every
-  // redirect it carries `cache-control: no-store` (security-headers.ts), so no cache keeps it.
+  // The search page is the home page (#206). /api/search has no route until #214, so a search
+  // gets the 404 that every unknown route gets, and a deploy in between shows no results.
   if (path === "/" && isReadRequest(request)) {
-    return redirect(SAVED_LINKS_PATH, 302);
+    return showSearchPage();
   }
   if (path === SAVED_LINKS_PATH && isReadRequest(request)) {
     return showRecentSaves(db, session.user.id, env);

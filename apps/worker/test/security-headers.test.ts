@@ -241,24 +241,23 @@ const cases: Case[] = [
     status: 303,
     kind: "redirect",
   },
-  // Until the search page takes `/` (#206), `/` sends a signed-in user on to the saved links.
-  // The redirect's no-store is part of what makes the browser ask for `/` again.
+  // The search page is the home page (#206). Until then, `/` was a redirect to the saved links.
   {
-    name: "the home page's redirect to the saved links",
+    name: "the search page",
     path: "/",
     headers: HTML,
     signedIn: true,
-    status: 302,
-    kind: "redirect",
+    status: 200,
+    kind: "page",
   },
   {
-    name: "the home page's redirect to the saved links, for HEAD",
+    name: "the search page, for HEAD",
     method: "HEAD",
     path: "/",
     headers: HTML,
     signedIn: true,
-    status: 302,
-    kind: "redirect",
+    status: 200,
+    kind: "page",
   },
   {
     name: "the saved links",

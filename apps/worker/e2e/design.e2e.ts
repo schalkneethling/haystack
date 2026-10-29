@@ -8,6 +8,7 @@ import { INVALID_LINK, openRefusalPage } from "./rejected-save-pages.ts";
 import { saveThroughForm } from "./save-through-form.ts";
 import { ADDRESS_FORM_STATES, bringAddressFormTo, holdLookups } from "./held-lookups.ts";
 import { saveFailed, saveHeld } from "./review-items.ts";
+import { answerSearches, SEARCH_MESSAGES, SEARCH_STATUS } from "./search-answers.ts";
 import { openWarnedForm, sendWithoutTheBox } from "./sensitivity-warning.ts";
 
 // One unbroken word, with no hyphen or slash a line could break at, so only `overflow-wrap` can
@@ -44,6 +45,35 @@ async function rejectTitle(page: Page): Promise<void> {
   // still loading, and a test that reads layout right after the match sees the unstyled page
   // (#159).
   await page.waitForLoadState("load");
+}
+
+// The states of the search page (#206), with its answers stubbed in the browser.
+const SEARCH_STATES = ["at first load", "with results", "with no results"] as const;
+
+async function bringSearchPageTo(
+  page: Page,
+  state: (typeof SEARCH_STATES)[number],
+  title: string,
+): Promise<void> {
+  await answerSearches(page, (query) =>
+    query === "nothing"
+      ? []
+      : [
+          { title, description: `A description of ${title}.` },
+          { title: "A second result", description: null },
+        ],
+  );
+  await page.goto("/");
+  const field = page.getByRole("searchbox", { name: "Search your saved links" });
+  await expect(field).toBeVisible();
+  if (state === "at first load") {
+    return;
+  }
+  await field.fill(state === "with results" ? "results" : "nothing");
+  await field.press("Enter");
+  await expect(page.locator(SEARCH_STATUS)).toHaveText(
+    state === "with results" ? "2 saved links match your search." : SEARCH_MESSAGES.none,
+  );
 }
 
 async function openDeleteDialog(page: Page, url: string, title: string): Promise<void> {
@@ -95,6 +125,14 @@ test.describe("at a 320 px viewport, nothing scrolls horizontally", () => {
         await page.goto(saveUrl({ url: LONG_URL, ...returned }));
         await expect(page).toHaveTitle("Not saved yet - Haystack");
         await page.waitForLoadState("load");
+        await expectNoHorizontalScroll(page);
+      });
+    }
+
+    // The title is one unbroken word, so only `overflow-wrap` keeps it in its card.
+    for (const state of SEARCH_STATES) {
+      test(`the search page ${state}, with a long title in a result`, async ({ page }) => {
+        await bringSearchPageTo(page, state, LONG_TITLE);
         await expectNoHorizontalScroll(page);
       });
     }
@@ -192,6 +230,13 @@ for (const [colorScheme, ground] of [
         await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
         await expectNoViolations(page);
       });
+
+      for (const state of SEARCH_STATES) {
+        test(`the search page ${state}`, async ({ page }) => {
+          await bringSearchPageTo(page, state, "A guide");
+          await expectNoViolations(page);
+        });
+      }
 
       test("the empty saved links list", async ({ page }) => {
         await page.goto("/saved-links");
@@ -357,6 +402,7 @@ test.describe("the stylesheets and fonts load under the CSP", () => {
 
   for (const [name, path] of [
     ["the signed-out page", "/auth/signed-out"],
+    ["the search page", "/"],
     ["the save form", saveUrl({ url: "https://example.com/fonts", og_title: "Fonts" })],
   ] as const) {
     test(`on ${name}`, async ({ page, signIn, baseURL }) => {
@@ -502,6 +548,16 @@ test.describe("in forced colors", () => {
     ).toBe("visible");
   });
 
+  test("the search field keeps its focus ring and its edge", async ({ page }) => {
+    await page.goto("/");
+    const field = page.getByRole("searchbox", { name: "Search your saved links" });
+    await expect(field).toHaveCSS("border-top-style", "solid");
+    // A text field matches :focus-visible however it got focus.
+    await field.focus();
+    await expect(field).toHaveCSS("outline-style", "solid");
+    await expect(field).toHaveCSS("outline-width", "3px");
+  });
+
   test("only the current page's link is outlined and underlined", async ({ page }) => {
     const savedLinks = page
       .getByRole("navigation", { name: "Main" })
@@ -544,15 +600,25 @@ test.describe("the header", () => {
     await signIn();
   });
 
-  test("marks Saved links as the current page on the list only", async ({ page }) => {
-    const savedLinks = page
-      .getByRole("navigation", { name: "Main" })
-      .getByRole("link", { name: "Saved links" });
+  // Search is the home page (#206), and Saved links is the list at /saved-links (#205).
+  test("marks Search and Saved links as the current page on their own pages only", async ({
+    page,
+  }) => {
+    const nav = page.getByRole("navigation", { name: "Main" });
+    const search = nav.getByRole("link", { name: "Search" });
+    const savedLinks = nav.getByRole("link", { name: "Saved links" });
+    await page.goto("/");
+    await expect(search).toHaveAttribute("href", "/");
+    await expect(savedLinks).toHaveAttribute("href", "/saved-links");
+    await expect(search).toHaveAttribute("aria-current", "page");
+    await expect(savedLinks).not.toHaveAttribute("aria-current");
     await page.goto("/saved-links");
     await expect(savedLinks).toHaveAttribute("href", "/saved-links");
     await expect(savedLinks).toHaveAttribute("aria-current", "page");
+    await expect(search).not.toHaveAttribute("aria-current");
     await page.goto(saveUrl({ url: "https://example.com/current" }));
     await expect(savedLinks).not.toHaveAttribute("aria-current");
+    await expect(search).not.toHaveAttribute("aria-current");
   });
 
   test.describe("without JavaScript", () => {

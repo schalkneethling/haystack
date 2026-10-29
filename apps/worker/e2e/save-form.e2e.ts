@@ -120,9 +120,10 @@ test.describe("other /save pages have no axe violations", () => {
 
 test("the save form can be completed with the keyboard alone", async ({ page }) => {
   await page.goto(saveUrl(fields));
-  // The header's three stops come first: the wordmark, the navigation and Sign out.
+  // The header's four stops come first: the wordmark, the navigation's two links and Sign out.
   for (const control of [
     page.getByRole("link", { name: "Haystack", exact: true }),
+    page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Search" }),
     page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Saved links" }),
     page.getByRole("button", { name: "Sign out" }),
     page.getByLabel("Title"),
