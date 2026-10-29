@@ -6,7 +6,7 @@
 import { SEARCH_QUERY_CAP } from "@haystack/schemas";
 import { SAVED_LINKS_PATH } from "./bookmark-paths.ts";
 import { html } from "./html.ts";
-import { SENSITIVE_NOTICE } from "./notices.ts";
+import { type Outcome, SENSITIVE_NOTICE } from "./notices.ts";
 import { htmlResponse } from "./page.ts";
 
 /**
@@ -29,15 +29,19 @@ const NEEDS_SCRIPT_ID = "search-needs-script";
  * the form with no fields, which only loads this page again, so the query never reaches a URL,
  * where the browser's history and Cloudflare's logs would keep it.
  *
- * The live region is in the page from the start, empty, because a screen reader announces a
- * change to a live region that already exists. It has the ID the saved links page and /held
- * give theirs, so that the delete dialog (#208) can write its message to the page's one live
- * region. The results list is hidden until a search finds something.
+ * The heading, the live region and the empty state have the IDs the saved links page and /held
+ * give theirs, so that the delete dialog finds them (#208): focus moves to the heading when the
+ * last result is deleted, the dialog writes its message to the page's one live region, and it
+ * shows the empty state, which search.js hides again with the next search's outcome. The live
+ * region is in the page from the start, because a screen reader announces a change to a live
+ * region that already exists. It is empty, or holds the result of a delete that returned here
+ * (`outcome`). The results list is hidden until a search finds something.
  */
-export function showSearchPage(): Response {
+export function showSearchPage(outcome: Outcome | null = null): Response {
+  const message = outcome === null ? null : html`<p>${outcome.message}</p>`;
   return htmlResponse(
-    "Search",
-    html`<h1><label for="${FIELD_ID}">${LABEL}</label></h1>
+    outcome === null ? "Search" : `${outcome.title} - Search`,
+    html`<h1 id="list-heading"><label for="${FIELD_ID}">${LABEL}</label></h1>
       <search>
         <form class="panel search-form" method="get" action="/" data-search-form>
           <p id="${HINT_ID}" class="hint">Describe what you're looking for in your own words.</p>
@@ -49,8 +53,9 @@ export function showSearchPage(): Response {
       </search>
       <p id="${NEEDS_SCRIPT_ID}" class="callout">Searching needs JavaScript, which isn't running in this browser. <a href="${SAVED_LINKS_PATH}">Go to your saved links</a> to browse them instead.</p>
       ${SENSITIVE_NOTICE}
-      <div id="list-status" class="status" role="status"></div>
-      <ol id="search-results" class="cards" hidden></ol>`,
+      <div id="list-status" class="status" role="status">${message}</div>
+      <ol id="search-results" class="cards" hidden></ol>
+      <p id="empty-state" class="empty-state" hidden>You deleted every link this search found. Search again to find others.</p>`,
     200,
     { signedIn: true, width: "wide", current: "search", scripts: [SEARCH_SCRIPT] },
   );

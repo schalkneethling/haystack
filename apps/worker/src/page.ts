@@ -1,6 +1,6 @@
 // The shared page layout. The security headers every answer carries are added by the Worker's
 // entry point (security-headers.ts), so the answers built here set only their content type.
-import { SAVED_LINKS_PATH } from "./bookmark-paths.ts";
+import { SAVED_LINKS_PATH, SEARCH_PATH } from "./bookmark-paths.ts";
 import { html, type SafeHtml } from "./html.ts";
 
 // Static assets in apps/web/public. The tokens come first, because the page's stylesheet uses
@@ -9,9 +9,6 @@ const STYLESHEETS = ["/assets/tokens.css", "/assets/site.css"] as const;
 
 /** The pages the header's navigation links to. */
 type NavigationPage = "search" | "saved-links";
-
-// The search page is the home page (#206).
-const SEARCH_PATH = "/";
 
 // In the order the header shows them.
 const NAVIGATION: readonly { page: NavigationPage; href: string; label: string }[] = [

@@ -5,8 +5,10 @@ import { html, type SafeHtml } from "./html.ts";
 
 /**
  * The script that confirms a delete in a dialog and deletes in place, on every page with Delete
- * buttons. It finds each button's form by `data-delete-form`, so it leaves a page's other forms,
- * such as Release on /held, alone. It reveals the page's empty state after the last item.
+ * buttons. It finds each button's form by `data-delete-form` when the form is submitted, so it
+ * leaves a page's other forms, such as Release on /held, alone, and handles forms added after
+ * the page loaded, such as the search results' (#208). It reveals the page's empty state after
+ * the last item. The search page loads it through search.js, which imports it.
  */
 export const DELETE_DIALOG_SCRIPT = "/assets/delete-dialog.js";
 
@@ -36,7 +38,9 @@ export function bookmarkHost(url: string): string {
  * The bookmark's Delete button, in a form that posts to the delete endpoint. Its name is "Delete"
  * followed by the title, so a list of them is told apart, which needs the card's title heading
  * to have the id `title-<bookmark id>`. From /held, the form says so (`returnTo`), and the delete
- * returns there.
+ * returns there. search.js builds the same form for each search result in the browser, with
+ * SEARCH_PATH as its return page (#208), because the results are built from JSON there; a change
+ * here changes it there too.
  */
 export function deleteForm(bookmarkId: string, returnTo?: typeof HELD_PATH): SafeHtml {
   const returnField =

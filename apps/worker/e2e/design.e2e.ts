@@ -37,6 +37,23 @@ async function expectNoHorizontalScroll(page: Page): Promise<void> {
   expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
 }
 
+// An open modal dialog is in the top layer, which the document's scroll width doesn't measure,
+// so the dialog's own box is checked: inside the viewport, and with nothing in it wider than it.
+async function expectDialogInViewport(page: Page, viewportWidth: number): Promise<void> {
+  const dialog = page.getByRole("dialog");
+  const box = await dialog.boundingBox();
+  if (box === null) {
+    throw new Error("The open dialog has no box");
+  }
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(viewportWidth);
+  const { scrollWidth, clientWidth } = await dialog.evaluate((element) => ({
+    scrollWidth: element.scrollWidth,
+    clientWidth: element.clientWidth,
+  }));
+  expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
+}
+
 // The save links that sign-in returns to after a save whose session had ended (#34): with the
 // values the user entered, and with the note that they did not fit in the link.
 const RETURNED_FORMS = [
@@ -55,8 +72,10 @@ async function rejectTitle(page: Page): Promise<void> {
   await page.waitForLoadState("load");
 }
 
-// The states of the search page (#206, #207), with its answers stubbed in the browser. Each
+// The states of the search page (#206, #207, #208), with its answers stubbed in the browser. Each
 // state but the first is a search for the state's name, and the message the page then shows.
+// The last two then press a result's Delete button: one leaves the dialog open, and the other
+// deletes the search's only result, which leaves the empty state.
 const SEARCH_STATES = [
   "at first load",
   "with results",
@@ -65,6 +84,8 @@ const SEARCH_STATES = [
   "with incomplete results",
   "after a failed search",
   "signed out",
+  "with the delete dialog open",
+  "after deleting its only result",
 ] as const;
 
 type SearchState = (typeof SEARCH_STATES)[number];
@@ -76,6 +97,8 @@ const SEARCH_STATE_MESSAGES: Record<Exclude<SearchState, "at first load">, strin
   "with incomplete results": `2 saved links match your search. ${SEARCH_MESSAGES.incomplete}`,
   "after a failed search": `${SEARCH_MESSAGES.failed}${TRY_AGAIN}`,
   "signed out": SEARCH_MESSAGES.signedOut,
+  "with the delete dialog open": "2 saved links match your search.",
+  "after deleting its only result": SEARCH_MESSAGES.one,
 };
 
 async function bringSearchPageTo(page: Page, state: SearchState, title: string): Promise<void> {
@@ -97,6 +120,8 @@ async function bringSearchPageTo(page: Page, state: SearchState, title: string):
           return { status: 503 };
         case "signed out":
           return { status: 401 };
+        case "after deleting its only result":
+          return found.slice(0, 1);
         default:
           return found;
       }
@@ -111,6 +136,22 @@ async function bringSearchPageTo(page: Page, state: SearchState, title: string):
   await field.fill(state);
   await field.press("Enter");
   await expect(page.locator(SEARCH_STATUS)).toHaveText(SEARCH_STATE_MESSAGES[state]);
+  if (state !== "with the delete dialog open" && state !== "after deleting its only result") {
+    return;
+  }
+  await page.getByRole("button", { name: `Delete ${title}` }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  if (state === "with the delete dialog open") {
+    return;
+  }
+  // The stubbed results are not bookmarks, so the Worker would answer the delete with a 404, and
+  // the page would say the link was already deleted. The delete is answered in the browser, as
+  // the search is, so the page shows what a delete shows.
+  await page.route("**/bookmarks/*/delete", (route) => route.fulfill({ status: 200 }));
+  await dialog.getByRole("button", { name: "Delete" }).click();
+  await expect(page.locator(SEARCH_STATUS)).toHaveText(`Deleted “${title}”.`);
+  await expect(page.locator("#empty-state")).toBeVisible();
 }
 
 async function openDeleteDialog(page: Page, url: string, title: string): Promise<void> {
@@ -171,6 +212,9 @@ test.describe("at a 320 px viewport, nothing scrolls horizontally", () => {
       test(`the search page ${state}, with a long title in a result`, async ({ page }) => {
         await bringSearchPageTo(page, state, LONG_TITLE);
         await expectNoHorizontalScroll(page);
+        if (state === "with the delete dialog open") {
+          await expectDialogInViewport(page, 320);
+        }
       });
     }
 
@@ -549,6 +593,47 @@ for (const [width, beside] of [
   });
 }
 
+// A result's Delete button is pinned to the bottom of its card, as on the saved links cards, so
+// the buttons of a row line up when one card's description is longer (#208).
+test.describe("at 1280 px wide, with results in a row", () => {
+  test.use({ viewport: { width: 1280, height: 900 } });
+
+  test("each result's Delete button is at the bottom of its card", async ({ page, signIn }) => {
+    await signIn();
+    await answerSearches(page, () => [
+      { title: "A short card", description: null },
+      { title: "A long card", description: "A description\nthat runs\nover four\nlines." },
+    ]);
+    await page.goto("/");
+    const field = page.getByRole("searchbox", { name: "Search your saved links" });
+    await field.fill("cards");
+    await field.press("Enter");
+    const cards = page.locator("#search-results > li");
+    await expect(cards).toHaveCount(2);
+    const boxes = await Promise.all(
+      [0, 1].map(async (index) => {
+        const card = await cards.nth(index).boundingBox();
+        const button = await cards.nth(index).getByRole("button").boundingBox();
+        if (card === null || button === null) {
+          throw new Error(`Result ${index + 1} or its Delete button is not drawn`);
+        }
+        return { card, button };
+      }),
+    );
+    const [short, long] = boxes;
+    if (short === undefined || long === undefined) {
+      throw new Error("Both results were not measured");
+    }
+    // In one row, with the cards stretched to the taller one's height.
+    expect(short.card.y).toBeCloseTo(long.card.y, 0);
+    expect(short.card.height).toBeCloseTo(long.card.height, 0);
+    expect(short.button.y).toBeCloseTo(long.button.y, 0);
+    // The short card's button is above its padding, the card's 20 px, not after its title.
+    const below = short.card.y + short.card.height - (short.button.y + short.button.height);
+    expect(below).toBeLessThan(32);
+  });
+});
+
 // Forced colors, such as Windows' contrast themes, replace the palette with system colors.
 test.describe("in forced colors", () => {
   test.use({ forcedColors: "active" });
@@ -629,6 +714,21 @@ test.describe("in forced colors", () => {
       "border-top-style",
       "solid",
     );
+  });
+
+  // A result's Delete button is the saved links' outlined button, and the empty state after the
+  // last result is deleted is their dashed card (#208). Both are borders, which forced colors
+  // keep.
+  test("a search result's Delete button keeps its edge, and the empty state its dashed border", async ({
+    page,
+  }) => {
+    await bringSearchPageTo(page, "with results", "A guide");
+    await expect(page.getByRole("button", { name: "Delete A guide" })).toHaveCSS(
+      "border-top-style",
+      "solid",
+    );
+    await bringSearchPageTo(page, "after deleting its only result", "A guide");
+    await expect(page.locator("#empty-state")).toHaveCSS("border-top-style", "dashed");
   });
 
   test("only the current page's link is outlined and underlined", async ({ page }) => {

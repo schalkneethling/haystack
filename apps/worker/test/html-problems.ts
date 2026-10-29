@@ -26,11 +26,17 @@ export async function htmlProblems(markup: string): Promise<string[]> {
   return messagesOf(await validator.validateString(markup, filename));
 }
 
-// The browser serializes a boolean attribute such as `hidden` as `hidden=""`, and keeps the
-// whitespace that was around an element a script removed, so these two rules would report the
-// serializer's style, not markup that Haystack wrote. Every other rule of the config still runs.
+// The browser serializes an attribute that can be left empty, such as `hidden`, as `hidden=""`,
+// and a boolean attribute, such as an open dialog's `open` (#208), as `open=""`, and it keeps the
+// whitespace that was around an element a script removed. So these three rules would report the
+// serializer's style, not markup that Haystack wrote. html-validate's own `browser` preset turns
+// off the same rules, for the same reasons. Every other rule of the config still runs.
 const SERIALIZED_BY_THE_BROWSER = {
-  rules: { "attribute-empty-style": "off", "no-trailing-whitespace": "off" },
+  rules: {
+    "attribute-boolean-style": "off",
+    "attribute-empty-style": "off",
+    "no-trailing-whitespace": "off",
+  },
 } as const;
 
 /**

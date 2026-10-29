@@ -13,9 +13,13 @@ export const SAVED_LINKS_PATH = "/saved-links";
 /** The review page for the user's Held and Failed bookmarks (held.ts). */
 export const HELD_PATH = "/held";
 
+/** The search page, which is the home page (#206), and lists the results of a search. */
+export const SEARCH_PATH = "/";
+
 /**
- * The delete form's field that names the page to return to. Only /held's forms send it, with
- * HELD_PATH. Without it, a delete returns to the saved links.
+ * The delete form's field that names the page to return to. /held's forms send it with
+ * HELD_PATH, and the search results' forms, which search.js builds, with SEARCH_PATH (#208).
+ * Without it, a delete returns to the saved links.
  */
 export const RETURN_FIELD = "return_to";
 

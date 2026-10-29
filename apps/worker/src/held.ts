@@ -195,7 +195,7 @@ const FAILED_SECTION: SectionContent = {
 };
 
 // A kind with nothing in it has no section, so the page shows only what needs the user. The
-// dialog script removes a section when its last item is deleted, for the same reason.
+// dialog script hides a section when its last item is deleted, for the same reason.
 function section(content: SectionContent, items: readonly ReviewItem[]): SafeHtml | null {
   if (items.length === 0) {
     return null;
