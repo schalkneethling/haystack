@@ -23,10 +23,14 @@
 // - Results that may be incomplete, because some of the collection could not be searched, are
 //   shown with a notice that says so. A search that failed shows an error state with Try again in
 //   place of the results, never an empty list, which would read as "nothing matches".
+// - Each result has a Delete control (#208), the saved links' Delete form, which the delete
+//   dialog handles: it finds the form when it is used, because the results come after the page
+//   loaded. After a delete, the dialog moves focus and writes "Deleted …" to the one live region,
+//   in place of the count, and shows the empty state when no result is left. The next search's
+//   outcome hides the empty state again.
 //
 // The page's one script, so it imports the delete dialog's module (plan, "Search page",
-// "Performance"). The dialog wires the Delete forms that are in the page when it loads, which
-// on this page is none, until the results get their Delete control (#208).
+// "Performance").
 import "./delete-dialog.js";
 
 const FORM = "form[data-search-form]";
@@ -35,6 +39,14 @@ const RESULTS_ID = "search-results";
 const NEEDS_SCRIPT_ID = "search-needs-script";
 // The page's one live region, which the delete dialog finds by the same ID (#208).
 const STATUS_ID = "list-status";
+// What the delete dialog shows when the last result is deleted (#208).
+const EMPTY_STATE_ID = "empty-state";
+
+// The Delete form's field that names the page a delete returns to, and this page's path: the
+// Worker's RETURN_FIELD and SEARCH_PATH (apps/worker/src/bookmark-paths.ts), which the assets,
+// with no build step, can't import.
+const RETURN_FIELD = "return_to";
+const SEARCH_PAGE = "/";
 
 /** The route that searches (#214). It answers 404 until then, which the page calls a failure. */
 const SEARCH_PATH = "/api/search";
@@ -183,9 +195,35 @@ function paragraphOf(...content) {
 }
 
 /**
+ * A result's Delete control (#208): the form that `deleteForm` in apps/worker/src/bookmark-card.ts
+ * renders on the saved links page, built here because the results are, with this page as the
+ * page to return to. So without the dialog, the button leads to the confirmation page, and
+ * confirming there returns to this page. The button is named "Delete" followed by the title,
+ * through its own ID and the title heading's.
+ * @param {string} id A result ID, which matches RESULT_ID.
+ */
+function deleteForm(id) {
+  const form = /** @type {HTMLFormElement} */ (element("form"));
+  form.method = "post";
+  form.action = `/bookmarks/${encodeURIComponent(id)}/delete`;
+  form.dataset.deleteForm = "";
+  const returnTo = /** @type {HTMLInputElement} */ (element("input"));
+  returnTo.type = "hidden";
+  returnTo.name = RETURN_FIELD;
+  returnTo.value = SEARCH_PAGE;
+  const button = /** @type {HTMLButtonElement} */ (element("button", "Delete"));
+  button.className = "button button-small button-danger-outline";
+  button.type = "submit";
+  button.id = `delete-${id}`;
+  button.setAttribute("aria-labelledby", `${button.id} title-${id}`);
+  form.append(returnTo, button);
+  return form;
+}
+
+/**
  * A result's card: the title as a heading that wraps the link, then the description, with its
- * line breaks kept, as the saved links page shows them. The IDs are the saved links page's, so
- * the Delete control (#208) is named by the title and the dialog finds the item.
+ * line breaks kept, as the saved links page shows them, then the Delete control. The IDs are the
+ * saved links page's, so the Delete control is named by the title and the dialog finds the item.
  * @param {Result} result
  */
 function resultItem({ id, title, description, url }) {
@@ -216,6 +254,7 @@ function resultItem({ id, title, description, url }) {
     }
     article.append(paragraph);
   }
+  article.append(deleteForm(id));
   item.append(article);
   return item;
 }
@@ -251,8 +290,9 @@ async function outcomeOf(response, signal) {
  * @param {HTMLButtonElement} button
  * @param {HTMLOListElement} list
  * @param {HTMLElement} status
+ * @param {HTMLElement | null} emptyState
  */
-function enhance(form, field, button, list, status) {
+function enhance(form, field, button, list, status, emptyState) {
   const idleLabel = button.textContent ?? "";
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let announcement;
@@ -281,10 +321,13 @@ function enhance(form, field, button, list, status) {
     status.replaceChildren();
   }
 
+  // Every outcome shows its results, or none, so the empty state that the delete dialog showed
+  // after the last result of the search before goes with them.
   /** @param {Result[]} results */
   function show(results) {
     list.replaceChildren(...results.map(resultItem));
     list.hidden = results.length === 0;
+    emptyState?.setAttribute("hidden", "");
   }
 
   /**
@@ -442,6 +485,6 @@ if (
   list instanceof HTMLOListElement &&
   status !== null
 ) {
-  enhance(form, field, button, list, status);
+  enhance(form, field, button, list, status, document.getElementById(EMPTY_STATE_ID));
   document.getElementById(NEEDS_SCRIPT_ID)?.setAttribute("hidden", "");
 }

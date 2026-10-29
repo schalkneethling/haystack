@@ -1,18 +1,19 @@
 // The search page at `/` (#206), with the `search-enabled` flag on (#235). The browser tests
 // answer /api/search with a stub (e2e/search-answers.ts), so these check what the Worker serves
 // itself: the page, and that the real route answers no search until #214. search-switch.test.ts
-// checks the flag off.
-import { SEARCH_QUERY_CAP } from "@haystack/schemas";
+// checks the flag off. A delete from a result returns here (#208); the dialog that deletes in
+// place is checked in the browser, in e2e/search-delete.e2e.ts.
+import { normalizeUrl, SEARCH_QUERY_CAP } from "@haystack/schemas";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
 import { SEARCH_ENABLED_FLAG } from "../src/flags.ts";
 import { SENSITIVE_NOTICE } from "../src/notices.ts";
 import { mainContent } from "./main-content.ts";
-import { seedSignedInUser, type SeededUser } from "./seed.ts";
+import { seedBookmark, seedSignedInUser, type SeededUser } from "./seed.ts";
 import { createTestWorker } from "./test-worker.ts";
 import { expectValidHtml } from "./validate-html.ts";
 
 const server = createTestWorker({
-  vars: { ALLOWED_EMAILS: "owner@example.com" },
+  vars: { ALLOWED_EMAILS: "owner@example.com, second@example.com" },
   flags: { [SEARCH_ENABLED_FLAG]: true },
 });
 let origin: string;
@@ -30,7 +31,11 @@ let owner: SeededUser;
 
 beforeEach(async () => {
   const DB = (await server.getWorker().getEnv()).DB;
-  await DB.batch([DB.prepare("DELETE FROM sessions"), DB.prepare("DELETE FROM users")]);
+  await DB.batch([
+    DB.prepare("DELETE FROM bookmarks"),
+    DB.prepare("DELETE FROM sessions"),
+    DB.prepare("DELETE FROM users"),
+  ]);
   owner = await seedSignedInUser(DB, "owner@example.com");
 });
 
@@ -47,7 +52,11 @@ describe("GET /", () => {
   it("is the search page, with the field's label as its heading", async () => {
     const markup = await searchPage();
     expect(markup).toContain("<title>Search - Haystack</title>");
-    expect(markup).toContain('<h1><label for="search-query">Search your saved links</label></h1>');
+    // The ID is the saved links page's, so the delete dialog moves focus to it when the last
+    // result is deleted (#208).
+    expect(markup).toContain(
+      '<h1 id="list-heading"><label for="search-query">Search your saved links</label></h1>',
+    );
     await expectValidHtml(markup);
   });
 
@@ -85,11 +94,15 @@ describe("GET /", () => {
   });
 
   // The script fills both. The live region is in the page from the start, so a screen reader
-  // announces what the script writes to it.
-  it("has an empty live region and an empty, hidden results list", async () => {
+  // announces what the script writes to it. The delete dialog shows the empty state after the
+  // last result is deleted (#208).
+  it("has an empty live region, an empty, hidden results list and a hidden empty state", async () => {
     const main = mainContent(await searchPage());
     expect(main).toContain('<div id="list-status" class="status" role="status"></div>');
     expect(main).toContain('<ol id="search-results" class="cards" hidden></ol>');
+    expect(main).toContain(
+      '<p id="empty-state" class="empty-state" hidden>You deleted every link this search found. Search again to find others.</p>',
+    );
   });
 
   it("loads one module script, which imports the delete dialog's", async () => {
@@ -122,6 +135,105 @@ describe("GET /", () => {
     });
     expect(response.status).toBe(302);
     expect(response.headers.get("location")).toBe("/auth/sign-in?return_to=%2F");
+  });
+});
+
+// A result's Delete form, which search.js builds, names the search page as the page to return to
+// (#208). Without the dialog, the button leads to the confirmation page, which passes it on.
+describe("POST /bookmarks/:id/delete from a search result", () => {
+  const url = "https://example.com/guide";
+  let bookmarkId: string;
+
+  beforeEach(async () => {
+    const DB = (await server.getWorker().getEnv()).DB;
+    bookmarkId = await seedBookmark(DB, owner.userId, url, normalizeUrl(url), { title: "A guide" });
+  });
+
+  function postDelete(
+    id: string,
+    fields: Record<string, string>,
+    headers: Record<string, string> = {},
+  ) {
+    return server.fetch(`/bookmarks/${encodeURIComponent(id)}/delete`, {
+      method: "POST",
+      headers: { origin, cookie: owner.cookie, ...headers },
+      body: new URLSearchParams({ return_to: "/", ...fields }),
+      redirect: "manual",
+    });
+  }
+
+  async function bookmarkIds(): Promise<unknown[]> {
+    const DB = (await server.getWorker().getEnv()).DB;
+    const { results } = await DB.prepare("SELECT id FROM bookmarks ORDER BY id").all();
+    return results.map((row: { id: unknown }) => row.id);
+  }
+
+  it("shows the confirmation page, which returns to the search page", async () => {
+    const response = await postDelete(bookmarkId, {});
+    expect(response.status).toBe(200);
+    const markup = await response.text();
+    expect(markup).toContain("<h1>Delete this link?</h1>");
+    expect(markup).toContain(
+      `<p><strong>Address:</strong> <span class="address">${url}</span></p>`,
+    );
+    expect(markup).toContain('<input type="hidden" name="return_to" value="/">');
+    // The results exist only in the page that searched, so "Keep it" goes to the search page.
+    expect(markup).toContain('<a href="/">Keep it and go back to search</a>');
+    await expectValidHtml(markup);
+    expect(await bookmarkIds()).toEqual([bookmarkId]);
+  });
+
+  it("deletes when confirmed, and shows the search page saying what was deleted", async () => {
+    const response = await postDelete(bookmarkId, { confirm: "yes" });
+    expect(response.status).toBe(200);
+    const markup = await response.text();
+    expect(markup).toContain("<title>Deleted “A guide” - Search - Haystack</title>");
+    expect(markup).toContain('<a class="nav-link" href="/" aria-current="page">Search</a>');
+    const main = mainContent(markup);
+    expect(main).toContain(
+      '<div id="list-status" class="status" role="status"><p>Deleted “A guide”.</p></div>',
+    );
+    // No results, because showing them again would mean searching again, and the empty state
+    // stays hidden, because it is for a search whose results were all deleted in the page.
+    expect(main).toContain('<ol id="search-results" class="cards" hidden></ol>');
+    expect(main).toContain('<p id="empty-state" class="empty-state" hidden>');
+    await expectValidHtml(markup);
+    expect(await bookmarkIds()).toEqual([]);
+  });
+
+  it("answers a second confirmation, as a reload sends, with the 404 page", async () => {
+    await postDelete(bookmarkId, { confirm: "yes" });
+    const response = await postDelete(bookmarkId, { confirm: "yes" });
+    expect(response.status).toBe(404);
+    expect(await response.text()).toContain("<h1>This link isn't in your saved links</h1>");
+  });
+
+  it.each([
+    ["not yet confirmed", {}],
+    ["confirmed", { confirm: "yes" }],
+  ])("returns 404 for another user's bookmark, %s, and deletes nothing", async (_, fields) => {
+    const DB = (await server.getWorker().getEnv()).DB;
+    const second = await seedSignedInUser(DB, "second@example.com");
+    const theirs = await seedBookmark(DB, second.userId, url, normalizeUrl(url), {
+      title: "Their guide",
+    });
+    const response = await postDelete(theirs, fields);
+    expect(response.status).toBe(404);
+    expect(await response.text()).not.toContain("Their guide");
+    expect(await bookmarkIds()).toEqual([bookmarkId, theirs].toSorted());
+  });
+
+  // A POST can't be repeated by returning to its path, so sign-in returns to the page the delete
+  // started from, as it does for /held (#34).
+  it("sends a submission without a session through sign-in, back to the search page", async () => {
+    const response = await postDelete(
+      bookmarkId,
+      { confirm: "yes" },
+      { cookie: "", accept: "text/html,application/xhtml+xml" },
+    );
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe("/auth/sign-in?return_to=%2F");
+    expect(await bookmarkIds()).toEqual([bookmarkId]);
   });
 });
 

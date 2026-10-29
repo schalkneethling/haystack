@@ -23,6 +23,7 @@ import {
   type BookmarkRoute,
   HELD_PATH,
   SAVED_LINKS_PATH,
+  SEARCH_PATH,
 } from "./bookmark-paths.ts";
 import { deleteBookmark, deleteReturnPage, readForm } from "./delete-bookmark.ts";
 import { enrichOnSave } from "./enrichment/enrich-on-save.ts";
@@ -193,16 +194,18 @@ async function handleAuthRoute(
 }
 
 // A bookmark's own routes: Delete from any page that lists it, and Release and Retry from /held.
+// A delete from a search result reads the search switch, to return to the search page.
 function handleBookmarkRoute(
   request: Request,
   env: Env,
   db: Db,
   userId: string,
   { bookmarkId, action }: BookmarkRoute,
+  search: () => Promise<SearchFlags>,
 ): Promise<Response> {
   switch (action) {
     case "delete":
-      return deleteBookmark(request, db, userId, bookmarkId, env);
+      return deleteBookmark(request, db, userId, bookmarkId, env, search);
     case "release":
       return releaseBookmark(request, db, userId, bookmarkId, env);
     case "retry":
@@ -225,7 +228,7 @@ async function handleAppRoute(
   // and every search would get the 404 that every unknown route gets. The browser asks for `/`
   // again each time, because the redirect is a 302, not a 301, which a browser keeps, and like
   // every redirect it carries `cache-control: no-store` (security-headers.ts).
-  if (path === "/" && isReadRequest(request)) {
+  if (path === SEARCH_PATH && isReadRequest(request)) {
     return (await search()).enabled ? showSearchPage() : redirect(SAVED_LINKS_PATH, 302);
   }
   if (path === SAVED_LINKS_PATH && isReadRequest(request)) {
@@ -251,7 +254,7 @@ async function handleAppRoute(
   }
   const bookmarkRoute = request.method === "POST" ? bookmarkActionPath(path) : undefined;
   if (bookmarkRoute !== undefined) {
-    return handleBookmarkRoute(request, env, db, session.user.id, bookmarkRoute);
+    return handleBookmarkRoute(request, env, db, session.user.id, bookmarkRoute, search);
   }
   return notFoundPage(true);
 }

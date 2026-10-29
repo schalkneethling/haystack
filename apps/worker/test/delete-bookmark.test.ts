@@ -114,6 +114,19 @@ describe("POST /bookmarks/:id/delete", () => {
     expect(await bookmarkIds()).toEqual([other]);
   });
 
+  // This Worker has no `search-enabled` flag, so search is switched off, and `/` sends the user
+  // on to the saved links (#235). search-page.test.ts checks the return with search on.
+  it("returns to the saved links from a search result while search is switched off", async () => {
+    const response = await postDelete(bookmarkId, { ...confirmed, return_to: "/" });
+    expect(response.status).toBe(200);
+    const markup = await response.text();
+    expect(markup).toContain("<title>Deleted “A guide” - Saved links - Haystack</title>");
+    expect(markup).toContain(
+      '<div id="list-status" class="status" role="status"><p>Deleted “A guide”.</p></div>',
+    );
+    expect(await bookmarkIds()).toEqual([]);
+  });
+
   it("renders a deleted title containing markup as text", async () => {
     const DB = await db();
     const id = await seedBookmark(DB, owner.userId, "https://example.com/x", "y", {
