@@ -227,7 +227,7 @@ if (main !== null && typeof HTMLDialogElement === "function") {
     // Close the dialog and move focus first. VoiceOver does not speak a status message that is
     // written in the same task as the dialog closing, even after focus has moved (#56; plan,
     // "Deleting bookmarks"). So the message is written 500 ms later. 100 ms was enough until the
-    // address form's empty status region came before the list heading (#105): with it,
+    // address form gave the saved links page a second, empty status region (#105): with it,
     // VoiceOver read the heading that took focus and dropped a message written 100 ms after it
     // every time, and spoke one written 500 ms after it every time (plan, "Deleting
     // bookmarks"). If the dialog is opened again within those 500 ms, the page is inert again

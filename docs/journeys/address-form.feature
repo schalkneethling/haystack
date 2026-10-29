@@ -172,7 +172,7 @@ Feature: Saving a link by typing or pasting its address
 
     Examples:
       | the page               | the address                | the error                                                                                                                            | where                              | what the field holds |
-      | my saved links         | example.com/page           | Haystack saves only secure pages, so the address must be a complete https:// link, without spaces and at most 2,048 characters long. | in the form, before the hint       | what I typed         |
+      | my saved links         | example.com/page           | Haystack saves only secure pages, so the address must be a complete https:// link, without spaces and at most 2,048 characters long. | after the heading, before the form | what I typed         |
       | the "Save a link" page | http://example.com/page    | Haystack saves only secure pages, so the address must be a complete https:// link, without spaces and at most 2,048 characters long. | after the heading, before the form | what I typed         |
       | the "Save a link" page | https://example.com/a page | Haystack saves only secure pages, so the address must be a complete https:// link, without spaces and at most 2,048 characters long. | after the heading, before the form | what I typed         |
       | the "Save a link" page |                            | Enter the address of a page, starting with https://.                                                                                 | after the heading, before the form | nothing              |

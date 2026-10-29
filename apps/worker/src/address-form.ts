@@ -3,7 +3,7 @@
 // with them (#105, save-address.ts), so saving itself does not change. See "Save flow" in
 // plans/haystack-v1-implementation-plan.md.
 //
-// The saved links page shows the form at its top. GET /save shows it as a page of its own when
+// The saved links page shows the form under its heading. GET /save shows it as a page of its own when
 // the request carries no captured field, and both GET /save and POST /save/address show it again
 // with an error when the checks reject the address.
 //
@@ -38,7 +38,7 @@ export const ADDRESS_ERROR_TITLE = "Check the address";
 const FIELD_ID = "save-url";
 const HINT_ID = "save-url-hint";
 const ERROR_ID = "save-url-error";
-// The card's label, which also names its form.
+// The card's heading, above the card, which is the field's label and also names its form.
 const TITLE_ID = "save-url-label";
 
 // The status region, where address-form.js says that the page is being looked up, and how a

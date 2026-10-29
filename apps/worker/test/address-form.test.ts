@@ -121,7 +121,7 @@ function expectNoError(markup: string): void {
 }
 
 describe("the address form", () => {
-  it("is at the top of the saved links page, labelled as the design shows it", async () => {
+  it("is under the saved links page's heading, labelled by a heading of its own", async () => {
     const response = await get("/saved-links");
     expect(response.status).toBe(200);
     const markup = await response.text();
@@ -138,7 +138,8 @@ describe("the address form", () => {
     // After the page heading, as the search page puts its heading above its form.
     const main = mainContent(markup);
     expect(main.indexOf("<h1")).toBeLessThan(main.indexOf("<h2"));
-    expect(main.indexOf("<h2")).toBeLessThan(main.indexOf("<form"));
+    // Directly above the panel, with nothing between the heading and the form.
+    expect(main).toMatch(/<\/label><\/h2>\s*<form class="panel address-form"/);
     await expectValidHtml(markup);
   });
 

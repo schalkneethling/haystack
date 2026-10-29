@@ -28,6 +28,7 @@ test("moving by heading reads the page heading, the address form's heading, then
   // The address form's heading, under the page's (design review).
   await voiceOver.nextHeading();
   const formHeading = await voiceOver.lastSpokenPhrase();
+  expect(formHeading).toMatch(/\bheading\b/i);
   expect(formHeading).toMatch(/\blevel 2\b/i);
   expect(formHeading).toContain("Save a link");
 
