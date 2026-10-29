@@ -1,5 +1,5 @@
-// Seeds users, sessions, bookmarks, and their enrichment rows in a harness D1, for tests that
-// need them.
+// Seeds users, sessions, bookmarks, their enrichment rows, search runs and their answers, and
+// evaluation labels in a harness D1, for tests that need them.
 import {
   generateSessionId,
   hashSessionId,
@@ -17,14 +17,24 @@ export interface SeededUser {
   cookie: string;
 }
 
-export async function seedSignedInUser(db: D1Like, email: string): Promise<SeededUser> {
+/** A user with no session, and a Google account ID made from their own ID. */
+export async function seedUser(
+  db: D1Like,
+  email = "user@example.com",
+  createdAt = Date.now(),
+): Promise<string> {
   const userId = crypto.randomUUID();
-  const sessionId = generateSessionId();
-  const now = Date.now();
   await db
     .prepare("INSERT INTO users (id, google_sub, email, created_at) VALUES (?, ?, ?, ?)")
-    .bind(userId, `sub-${userId}`, email, now)
+    .bind(userId, `sub-${userId}`, email, createdAt)
     .run();
+  return userId;
+}
+
+export async function seedSignedInUser(db: D1Like, email: string): Promise<SeededUser> {
+  const sessionId = generateSessionId();
+  const now = Date.now();
+  const userId = await seedUser(db, email, now);
   await db
     .prepare("INSERT INTO sessions (id_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)")
     .bind(await hashSessionId(sessionId), userId, now + SESSION_LIFETIME_MS - 1000, now)
@@ -192,4 +202,124 @@ export async function seedBookmarks(
     .bind(userId, JSON.stringify(rows))
     .run();
   return rows.map((row) => row.id);
+}
+
+// The text columns take any string, so that a test can show what each CHECK constraint refuses.
+export interface SeededSearchRunFields {
+  channel?: string;
+  inputMode?: string | null;
+  requestMode?: string;
+  questions?: string;
+  displaySignal?: string;
+  outcome?: string;
+  createdAt?: number;
+}
+
+/**
+ * A search run by the user, for "a query", with valid values unless a test gives others: a
+ * typed web search in batched mode that asked both questions, showed the Score and succeeded.
+ */
+export async function seedSearchRun(
+  db: D1Like,
+  userId: string,
+  {
+    channel = "web",
+    inputMode = "typed",
+    requestMode = "batched",
+    questions = "both",
+    displaySignal = "score",
+    outcome = "ok",
+    createdAt = Date.now(),
+  }: SeededSearchRunFields = {},
+): Promise<string> {
+  const id = crypto.randomUUID();
+  await db
+    .prepare(
+      "INSERT INTO search_runs (id, user_id, query, channel, input_mode, request_mode, jev_model, questions, display_signal, noul_threshold, score_threshold, outcome, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(
+      id,
+      userId,
+      "a query",
+      channel,
+      inputMode,
+      requestMode,
+      "jev-1.14.0",
+      questions,
+      displaySignal,
+      0.5,
+      2,
+      outcome,
+      createdAt,
+    )
+    .run();
+  return id;
+}
+
+// `null` leaves a signal's column empty, as for a run that did not ask its question.
+export interface SeededSearchAnswerFields {
+  noul?: number | null;
+  score?: number | null;
+  // Stored as JSON, as the `score_probabilities` column holds it.
+  scoreProbabilities?: Record<string, number> | null;
+  scoreConfidence?: number | null;
+  shown?: boolean;
+}
+
+/**
+ * The run's answer for the bookmark, with both signals and shown unless a test says otherwise.
+ * `clicked` is left to its default.
+ */
+export async function seedSearchAnswer(
+  db: D1Like,
+  searchRunId: string,
+  bookmarkId: string,
+  {
+    noul = 0.8,
+    score = 2.3,
+    scoreProbabilities = { "0": 0.1, "1": 0.1, "2": 0.2, "3": 0.6 },
+    scoreConfidence = 0.7,
+    shown = true,
+  }: SeededSearchAnswerFields = {},
+): Promise<void> {
+  await db
+    .prepare(
+      "INSERT INTO search_answers (search_run_id, bookmark_id, noul, score, score_probabilities, score_confidence, shown) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(
+      searchRunId,
+      bookmarkId,
+      noul,
+      score,
+      scoreProbabilities === null ? null : JSON.stringify(scoreProbabilities),
+      scoreConfidence,
+      // The column is an integer that Drizzle reads as a boolean.
+      Number(shown),
+    )
+    .run();
+}
+
+/** A labeled query of the user's, for evaluations. */
+export async function seedEvalQuery(db: D1Like, userId: string, query: string): Promise<string> {
+  const id = crypto.randomUUID();
+  await db
+    .prepare("INSERT INTO eval_queries (id, user_id, query, created_at) VALUES (?, ?, ?, ?)")
+    .bind(id, userId, query, Date.now())
+    .run();
+  return id;
+}
+
+/** A label saying whether the bookmark should match the labeled query. */
+export async function seedEvalLabel(
+  db: D1Like,
+  evalQueryId: string,
+  bookmarkId: string,
+  relevant: boolean,
+): Promise<void> {
+  await db
+    .prepare(
+      "INSERT INTO eval_labels (eval_query_id, bookmark_id, relevant, labeled_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind(evalQueryId, bookmarkId, Number(relevant), Date.now())
+    .run();
 }

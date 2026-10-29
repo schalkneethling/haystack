@@ -1,8 +1,8 @@
 // The enrichment migration applied to a database that already holds Milestone 1 rows, as the
 // production database does. The other tests migrate an empty database, so they cannot show
 // that existing rows survive it.
-import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
+import { applyMigration, tableRows } from "./migrations.ts";
 import { createTestWorker } from "./test-worker.ts";
 
 const server = createTestWorker();
@@ -19,38 +19,12 @@ async function d1() {
   return (await server.getWorker().getEnv()).DB;
 }
 
-// Runs one migration file as a single batch, split into statements where drizzle-kit marks
-// the breaks. This test applies the files itself, rather than with `applyD1Migrations`,
-// because it needs rows in the database between the two migrations.
-async function applyMigration(name: string): Promise<void> {
-  const DB = await d1();
-  const sql = await readFile(new URL(`../migrations/${name}`, import.meta.url), "utf8");
-  const statements = sql
-    .split("--> statement-breakpoint")
-    .map((statement) => statement.trim())
-    .filter((statement) => statement !== "");
-  await DB.batch(statements.map((statement) => DB.prepare(statement)));
-}
-
 const TABLES = ["users", "sessions", "auth_flows", "bookmarks"];
-
-type Row = Record<string, unknown>;
-
-async function rows(): Promise<Record<string, Row[]>> {
-  const DB = await d1();
-  const entries = await Promise.all(
-    TABLES.map(async (table) => {
-      const { results } = await DB.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all();
-      return [table, results] as const;
-    }),
-  );
-  return Object.fromEntries(entries);
-}
 
 describe("the enrichment migration", () => {
   it("leaves Milestone 1 rows unchanged, with the new column NULL", async () => {
-    await applyMigration("0000_init.sql");
     const DB = await d1();
+    await applyMigration(DB, "0000_init.sql");
     await DB.batch([
       DB.prepare(
         "INSERT INTO users (id, google_sub, email, display_name, created_at) VALUES ('user-1', 'sub-1', 'owner@example.com', 'Owner', 1000)",
@@ -69,12 +43,12 @@ describe("the enrichment migration", () => {
         "INSERT INTO bookmarks (id, user_id, url, normalized_url, title, created_at) VALUES ('bookmark-2', 'user-1', 'https://example.com/', 'https://example.com', 'Home', 1004)",
       ),
     ]);
-    const before = await rows();
+    const before = await tableRows(DB, TABLES);
 
-    await applyMigration("0001_enrichment.sql");
+    await applyMigration(DB, "0001_enrichment.sql");
 
     const { bookmarks: bookmarksBefore = [], ...othersBefore } = before;
-    const { bookmarks: bookmarksAfter = [], ...othersAfter } = await rows();
+    const { bookmarks: bookmarksAfter = [], ...othersAfter } = await tableRows(DB, TABLES);
     expect(othersAfter).toEqual(othersBefore);
     expect(bookmarksBefore).toHaveLength(2);
     expect(bookmarksAfter).toEqual(
