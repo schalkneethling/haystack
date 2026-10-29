@@ -339,10 +339,9 @@ main > :where(p, ul, div) {
    focus rings, each 3 px out from its control, otherwise nearly meet on a phone. */
 .address-row,
 .search-row {
-  column-gap: var(--space-s);
   display: flex;
   flex-wrap: wrap;
-  row-gap: calc(2 * var(--space-s));
+  gap: calc(2 * var(--space-s)) var(--space-s);
 }
 
 /* A field's automatic minimum width grows with the text size, so `min-inline-size: 0` lets it
