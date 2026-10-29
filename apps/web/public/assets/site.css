@@ -9,9 +9,13 @@
   box-sizing: border-box;
 }
 
-/* The message bar's height, which message-bar.js keeps up to date, so a control that Tab moves to
-   is scrolled into view below the bar, never under it (WCAG 2.4.11). */
+/* The ground is the root's background, which always fills the whole canvas. The body's would
+   only reach past the content by propagating to the canvas, which the body's containment below
+   stops. The message bar's height, which message-bar.js keeps up to date, is the scroll padding,
+   so a control that Tab moves to is scrolled into view below the bar, never under it
+   (WCAG 2.4.11). */
 html {
+  background-color: var(--color-ground);
   scroll-padding-block-start: var(--message-bar-height, 0);
 }
 
@@ -22,7 +26,6 @@ body {
   --gutter: clamp(var(--space-m), 5vi, var(--space-l));
   --page-width: var(--width-narrow);
 
-  background-color: var(--color-ground);
   color: var(--color-ink);
   container-type: inline-size;
   font-family: var(--font-sans);

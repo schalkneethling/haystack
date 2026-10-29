@@ -284,7 +284,8 @@ for (const [colorScheme, ground] of [
     test.use({ colorScheme });
 
     async function expectNoViolations(page: Page): Promise<void> {
-      await expect(page.locator("body")).toHaveCSS("background-color", ground);
+      // The ground is the root's background, which fills the canvas (site.css says why).
+      await expect(page.locator("html")).toHaveCSS("background-color", ground);
       expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
     }
 
@@ -519,7 +520,7 @@ test.describe("the stylesheets and fonts load under the CSP", () => {
 
       // The browser default is a serif font on a white or transparent background.
       await expect(page.locator("body")).toHaveCSS("font-family", /^"Space Grotesk"/);
-      await expect(page.locator("body")).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      await expect(page.locator("html")).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       const loaded = await page.evaluate(async () => {
         await document.fonts.ready;
         return [...document.fonts]
