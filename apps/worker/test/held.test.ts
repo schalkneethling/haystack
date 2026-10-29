@@ -308,9 +308,10 @@ describe("GET /held", () => {
     const markup = await heldMarkup();
     expect(markup).not.toContain("<img");
     expect(markup).toContain("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
-    // The only script is the dialog's module.
-    expect(markup.match(/<script/g)).toHaveLength(1);
+    // The only scripts are the dialog's module and the message bar's.
+    expect(markup.match(/<script/g)).toHaveLength(2);
     expect(markup).toContain('<script type="module" src="/assets/delete-dialog.js"></script>');
+    expect(markup).toContain('<script type="module" src="/assets/message-bar.js"></script>');
   });
 
   it("answers HEAD like GET", async () => {

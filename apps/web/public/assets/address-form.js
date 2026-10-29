@@ -18,6 +18,9 @@ const FIELD_ID = "save-url";
 const HINT_ID = "save-url-hint";
 const ERROR_ID = "save-url-error";
 const STATUS_ID = "save-url-status";
+// The page's message bar, which holds the status and the error: MESSAGE_BAR_ID in
+// apps/worker/src/notices.ts.
+const MESSAGE_BAR_ID = "messages";
 
 const PROCESSING_LABEL = "Processing…";
 
@@ -192,7 +195,7 @@ function enhance(form, field, button, status) {
       : (form.dataset.idleTitle ?? document.title);
   // The rejected address's error, in the markup the server renders: an alert holding the
   // paragraph that the field's description points at, error first, then the hint. On both pages
-  // the alert follows the form's heading, before the form, as the server renders it. The page's
+  // the alert comes first in the page's message bar, as the server renders it. The page's
   // title changes with it, to the title the server gives the address form with an error, which
   // the answer carries, and back when the error is cleared.
   /** @param {{ text: string, title: string } | null} error */
@@ -215,7 +218,12 @@ function enhance(form, field, button, status) {
       paragraph.id = ERROR_ID;
       paragraph.textContent = text;
       alert.append(paragraph);
-      form.before(alert);
+      const bar = document.getElementById(MESSAGE_BAR_ID);
+      if (bar === null) {
+        form.before(alert);
+      } else {
+        bar.prepend(alert);
+      }
     } else {
       existing.textContent = text;
     }

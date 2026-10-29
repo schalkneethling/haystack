@@ -121,11 +121,14 @@ test.describe("other /save pages have no axe violations", () => {
 test("the save form can be completed with the keyboard alone", async ({ page }) => {
   await page.goto(saveUrl(fields));
   // The header's four stops come first: the wordmark, the navigation's two links and Sign out.
+  // Then the message bar's Close, which is shown because the notice about private links is
+  // (design review), and then the form.
   for (const control of [
     page.getByRole("link", { name: "Haystack", exact: true }),
     page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Search" }),
     page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Saved links" }),
     page.getByRole("button", { name: "Sign out" }),
+    page.getByRole("button", { name: "Close messages" }),
     page.getByLabel("Title"),
   ]) {
     await page.keyboard.press("Tab");

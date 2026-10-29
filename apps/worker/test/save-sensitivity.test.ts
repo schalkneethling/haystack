@@ -377,9 +377,9 @@ describe("POST /save", () => {
     expect(response.status).toBe(400);
     const markup = await response.text();
     expect(markup).toContain("<title>Check the form - Haystack</title>");
-    // The error comes right after the heading, as a rejected title's does.
+    // The error comes first in the message bar, right after the heading, as a rejected title's does.
     expect(markup).toContain(
-      `<h1>Save a link</h1><div class="alert" role="alert"><p id="save-error">${UNTICKED_ERROR}</p></div>`,
+      `<h1>Save a link</h1>\n      <div id="messages" class="message-bar">\n        <div class="alert" role="alert"><p id="save-error">${UNTICKED_ERROR}</p></div>`,
     );
     // The box reads the error first, then the warning, and nothing takes focus.
     expect(markup).toContain(

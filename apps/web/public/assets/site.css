@@ -9,12 +9,22 @@
   box-sizing: border-box;
 }
 
+/* The message bar's height, which message-bar.js keeps up to date, so a control that Tab moves to
+   is scrolled into view below the bar, never under it (WCAG 2.4.11). */
+html {
+  scroll-padding-block-start: var(--message-bar-height, 0);
+}
+
+/* The body is a size container, so the message bar can reach the viewport's edges with `cqi`,
+   which, unlike `vw`, leaves out a classic scrollbar, so the bar never makes the page scroll
+   sideways. */
 body {
   --gutter: clamp(var(--space-m), 5vi, var(--space-l));
   --page-width: var(--width-narrow);
 
   background-color: var(--color-ground);
   color: var(--color-ink);
+  container-type: inline-size;
   font-family: var(--font-sans);
   font-size: var(--text-body);
   line-height: var(--leading-body);
@@ -383,28 +393,54 @@ search {
   display: block;
 }
 
-/* While the page is looked up (#105, address-form.js), and when a lookup fails, the status
-   message appears under the row. The status region is empty otherwise, and sits in a wrapper
-   with the row, so it takes no space and adds no gap. Continue keeps its usual style: only its
-   label changes, because it is never disabled. */
-.address-status > p {
-  margin-block-start: var(--space-s);
+/* Notices and messages. */
+
+/* The message bar (design review): every message on the page, in one region after the page's
+   heading (`messageBar` in notices.ts). It spans the viewport, and its messages line up with the
+   page's content and keep a readable line length. Only a bar with something to show is drawn:
+   a status region is empty until a message arrives, and an empty one takes no space. While the
+   address form looks a page up (#105, address-form.js), and when a lookup fails, its status is
+   here too. Continue keeps its usual style: only its label changes, because it is never
+   disabled. */
+.message-bar {
+  margin-inline: calc(50% - 50cqi);
+  max-inline-size: none;
+  padding-inline: calc(50cqi - 50%);
+}
+
+.message-bar:has(> :not(:empty, [hidden])) {
+  background-color: var(--color-surface);
+  border-block: 1px solid var(--color-border);
+  padding-block: var(--space-m);
+}
+
+.message-bar > * {
   max-inline-size: var(--width-narrow);
 }
 
-/* Notices and messages. */
+/* Only between messages that show something, so an empty status region adds no gap. */
+.message-bar > :not(:empty, [hidden]) ~ :not(:empty, [hidden]) {
+  margin-block-start: var(--space-s);
+}
+
+/* A message's own `display`, such as the alert's flex or the button's inline-flex, would win over
+   the `hidden` attribute, which the browser's own stylesheet draws as `display: none`. Close
+   hides messages, and itself when there is nothing to close. */
+.message-bar > [hidden] {
+  display: none;
+}
+
+/* With message-bar.js, which can close it, the bar sticks to the top of the viewport, above the
+   content it scrolls over. */
+.message-bar[data-enhanced] {
+  inset-block-start: 0;
+  position: sticky;
+  z-index: 1;
+}
 
 .notice {
   color: var(--color-ink-muted);
   font-size: var(--text-small);
-}
-
-.panel .notice {
-  background-color: var(--color-raised);
-  border-radius: var(--radius-field);
-  color: var(--color-ink-secondary);
-  padding-block: 0.875rem;
-  padding-inline: var(--space-m);
 }
 
 /* The alert's icon is drawn here, not in the markup. */
@@ -456,9 +492,9 @@ search {
 }
 
 /* A search that failed (#207): the alert's box in the status region, in place of the results,
-   with Try again under the message. Try again is the primary button, because the secondary
-   button's edge is 2.95:1 on the dark alert, under the 3:1 a control's edge needs, while the
-   primary button's straw keeps 8.71:1 there, and its ochre edge 5.74:1 on the light alert. */
+   with Try again under the message. Try again has the danger style, the error's own theme
+   (design review): its fill is 6.36:1 on the dark alert and 5.91:1 on the light one, over the 3:1
+   a control's edge needs, and its text 8.06:1 and 6.57:1 on the fill. */
 .search-failure-body {
   align-items: flex-start;
   display: flex;

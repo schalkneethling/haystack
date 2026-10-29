@@ -7,7 +7,7 @@ import { SEARCH_QUERY_CAP } from "@haystack/schemas";
 import { bookmarkCardTemplate } from "./bookmark-card.ts";
 import { SAVED_LINKS_PATH } from "./bookmark-paths.ts";
 import { html } from "./html.ts";
-import { type Outcome, SENSITIVE_NOTICE } from "./notices.ts";
+import { messageBar, type Outcome, SENSITIVE_NOTICE } from "./notices.ts";
 import { htmlResponse } from "./page.ts";
 
 /**
@@ -45,6 +45,11 @@ export function showSearchPage(outcome: Outcome | null = null): Response {
   return htmlResponse(
     outcome === null ? "Search" : `${outcome.title} - Search`,
     html`<h1 id="list-heading"><label for="${FIELD_ID}">${LABEL}</label></h1>
+      ${messageBar(
+        html`<p id="${NEEDS_SCRIPT_ID}" class="callout">Searching needs JavaScript, which isn't running in this browser. <a href="${SAVED_LINKS_PATH}">Go to your saved links</a> to browse them instead.</p>`,
+        html`<div id="list-status" class="status" role="status">${message}</div>`,
+        SENSITIVE_NOTICE,
+      )}
       <search>
         <form class="panel search-form" method="get" action="/" data-search-form>
           <p id="${HINT_ID}" class="hint">Describe what you're looking for in your own words.</p>
@@ -54,9 +59,6 @@ export function showSearchPage(outcome: Outcome | null = null): Response {
           </div>
         </form>
       </search>
-      <p id="${NEEDS_SCRIPT_ID}" class="callout">Searching needs JavaScript, which isn't running in this browser. <a href="${SAVED_LINKS_PATH}">Go to your saved links</a> to browse them instead.</p>
-      ${SENSITIVE_NOTICE}
-      <div id="list-status" class="status" role="status">${message}</div>
       <ol id="search-results" class="cards" hidden></ol>
       <p id="empty-state" class="empty-state" hidden>You deleted every link this search found. Search again to find others.</p>
       ${bookmarkCardTemplate()}`,

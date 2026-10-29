@@ -138,10 +138,11 @@ describe("GET /saved-links", () => {
     expect(response.headers.get("content-security-policy")).toContain("default-src 'none'");
     const markup = await response.text();
     expect(markup).not.toContain("<img");
-    // The only scripts are the dialog's module and the address form's.
-    expect(markup.match(/<script/g)).toHaveLength(2);
+    // The only scripts are the dialog's module, the address form's and the message bar's.
+    expect(markup.match(/<script/g)).toHaveLength(3);
     expect(markup).toContain('<script type="module" src="/assets/delete-dialog.js"></script>');
     expect(markup).toContain('<script type="module" src="/assets/address-form.js"></script>');
+    expect(markup).toContain('<script type="module" src="/assets/message-bar.js"></script>');
     expect(markup).toContain("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
     expect(markup).toContain("&lt;script&gt;alert(2)&lt;/script&gt;");
   });

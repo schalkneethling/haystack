@@ -32,7 +32,7 @@ import {
   NOT_PRIVATE_LABEL,
   notPrivateCheckbox,
 } from "./not-private-checkbox.ts";
-import { fieldError, SENSITIVE_NOTICE } from "./notices.ts";
+import { fieldError, MESSAGE_BAR_SCRIPT, messageBar, SENSITIVE_NOTICE } from "./notices.ts";
 import { htmlResponse } from "./page.ts";
 import { isInRecentSaves, RECENT_SAVES_LIMIT, type ListPosition } from "./recent-saves.ts";
 import {
@@ -90,6 +90,8 @@ function capturedFields(parameters: URLSearchParams): Record<string, string> {
 // The save pages a signed-in user reaches. The validation page and the address form are also
 // shown before sign-in, so they take the signed-in state from the caller.
 const SIGNED_IN = { signedIn: true } as const;
+// The pages with a message bar load its script (notices.ts).
+const SIGNED_IN_WITH_MESSAGES = { signedIn: true, scripts: [MESSAGE_BAR_SCRIPT] } as const;
 
 function invalidPage(invalidFields: readonly CaptureField[], signedIn: boolean): Response {
   return htmlResponse(
@@ -109,10 +111,10 @@ function sensitivePage(reason: SensitiveUrlReason): Response {
   return htmlResponse(
     "This link can't be saved",
     html`<h1>This link can't be saved</h1>
-      <p>${SENSITIVE_URL_EXPLANATIONS[reason]}</p>
-      ${SENSITIVE_NOTICE}`,
+      ${messageBar(SENSITIVE_NOTICE)}
+      <p>${SENSITIVE_URL_EXPLANATIONS[reason]}</p>`,
     400,
-    SIGNED_IN,
+    SIGNED_IN_WITH_MESSAGES,
   );
 }
 
@@ -263,17 +265,17 @@ function formPage(payload: CapturePayload, url: string, state: FormState): Respo
     logWarningShown(state.warning.noul);
   }
   const error =
-    state.invalid === undefined ? "" : fieldError("save-error", FORM_ERRORS[state.invalid]);
+    state.invalid === undefined ? null : fieldError("save-error", FORM_ERRORS[state.invalid]);
   const resumed =
     state.resumed === undefined
-      ? ""
+      ? null
       : html`<div class="status" role="status"><p>${RESUMED_MESSAGES[state.resumed]}</p></div>`;
   return htmlResponse(
     formTitle(state),
-    html`<h1>Save a link</h1>${error}${resumed}
+    html`<h1>Save a link</h1>
+      ${messageBar(error, resumed, SENSITIVE_NOTICE)}
       <form class="panel" method="post" action="/save">
-        <p class="address-field"><strong>Address:</strong> <span id="save-address" class="address">${url}</span></p>
-        ${SENSITIVE_NOTICE}${sensitivityCheck(state)}
+        <p class="address-field"><strong>Address:</strong> <span id="save-address" class="address">${url}</span></p>${sensitivityCheck(state)}
         <p class="field">
           <label for="confirmed-title">Title</label>
           <input
@@ -300,7 +302,7 @@ function formPage(payload: CapturePayload, url: string, state: FormState): Respo
         </p>
       </form>`,
     state.invalid === undefined ? 200 : 400,
-    SIGNED_IN,
+    SIGNED_IN_WITH_MESSAGES,
   );
 }
 

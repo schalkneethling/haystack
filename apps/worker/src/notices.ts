@@ -32,3 +32,31 @@ export interface Outcome {
   // so the dialog script can announce a deletion in it.
   message: string;
 }
+
+/** The ID of a page's message bar, where the page's scripts write their messages. */
+export const MESSAGE_BAR_ID = "messages";
+
+/**
+ * The script that makes the message bar stick to the top of the viewport, scrolls it into view
+ * when a message arrives, and adds its Close button. Every page with a message bar loads it,
+ * except the search page, whose one script imports it.
+ */
+export const MESSAGE_BAR_SCRIPT = "/assets/message-bar.js";
+
+/**
+ * A page's one message region (design review): a direct child of `<main>`, right after the page's
+ * heading, holding every message the page shows: errors first, then the live status regions, then
+ * the notices that are on every load. A sticky element only sticks inside its parent, so a
+ * message inside a form could not stick to the viewport where it was, and two messages stuck to
+ * the top would cover each other. Without the script, the bar is in the page's flow, where the
+ * messages were before.
+ */
+export function messageBar(...messages: readonly (SafeHtml | null)[]): SafeHtml {
+  return html`<div id="${MESSAGE_BAR_ID}" class="message-bar">${messages.map((message) =>
+    message === null
+      ? null
+      : html`
+        ${message}`,
+  )}
+      </div>`;
+}

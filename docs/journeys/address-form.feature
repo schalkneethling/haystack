@@ -66,7 +66,7 @@ Feature: Saving a link by typing or pasting its address
     When I <enter> the address of a page that has a title and a description
     And I press Enter
     Then Continue's label changes to "Processing…"
-    And a moment later the message "Looking up the page. This can take a few seconds." appears under the field and takes focus
+    And a moment later the message "Looking up the page. This can take a few seconds." appears in the message bar above the form and takes focus
     And then the save form opens for the address, under the heading "Save a link"
     And its Title and Description fields hold the page's own title and description
 
@@ -191,14 +191,15 @@ Feature: Saving a link by typing or pasting its address
   @integration:apps/worker/test/save-address.test.ts
   Scenario: A rejected address, without JavaScript
     Focus is not moved on the page that loads. A screen reader announces its
-    title, and the error is the next thing after the heading.
+    title, and the error is the next thing after the heading, first in the
+    page's message bar.
 
     Given my browser has JavaScript turned off
     And I am on the "Save a link" page
     When I enter "http://example.com/page"
     And I press Continue
     Then I see the page titled "Check the address - Haystack"
-    And the alert "Haystack saves only secure pages, so the address must be a complete https:// link, without spaces and at most 2,048 characters long." comes right after the heading "Save a link"
+    And the alert "Haystack saves only secure pages, so the address must be a complete https:// link, without spaces and at most 2,048 characters long." comes first in the message bar, right after the heading "Save a link"
     And the field still holds "http://example.com/page", marked invalid, with the error as its description
     And nothing was looked up
 

@@ -30,9 +30,10 @@
 //   in place of the count, and shows the empty state when no result is left. The next search's
 //   outcome hides the empty state again.
 //
-// The page's one script, so it imports the delete dialog's module (plan, "Search page",
-// "Performance").
+// The page's one script, so it imports the delete dialog's module and the message bar's (plan,
+// "Search page", "Performance").
 import "./delete-dialog.js";
+import "./message-bar.js";
 
 const FORM = "form[data-search-form]";
 const FIELD_ID = "search-query";
@@ -368,7 +369,9 @@ function enhance(form, field, button, list, template, status, emptyState) {
     body.className = "search-failure-body";
     const retry = /** @type {HTMLButtonElement} */ (element("button", MESSAGES.tryAgain));
     retry.type = "button";
-    retry.className = "button button-primary button-small";
+    // The error's own theme, the danger style (design review), which keeps 6.36:1 on the dark
+    // alert and 5.91:1 on the light one, over the 3:1 a control's edge needs.
+    retry.className = "button button-danger button-small";
     retry.addEventListener("click", () => {
       // The query that failed goes back in the field, so the field always holds the query whose
       // results the page shows. Focus moves to the Search button before the search empties the

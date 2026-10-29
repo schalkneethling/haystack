@@ -103,6 +103,8 @@ function expectAddressForm(markup: string, signedIn = true): void {
   } else {
     expect(markup).not.toContain(script);
   }
+  // The message bar's script, on every page with the form, which closes the bar.
+  expect(markup).toContain('<script type="module" src="/assets/message-bar.js"></script>');
   const field = addressField(markup);
   expect(field.get("name")).toBe("url");
   expect(field.get("type")).toBe("url");
@@ -183,10 +185,13 @@ const ADDRESS_RULE =
   "Haystack saves only secure pages, so the address must be a complete https:// link, without spaces and at most 2,048 characters long.";
 
 // The error after the heading, in the alert pattern the save form uses, and tied to the field.
+// The error is the first message in the page's message bar, right after the heading (design
+// review).
 function expectError(markup: string, message: string): void {
   expect(markup).toContain("<title>Check the address - Haystack</title>");
+  const alert = `<div class="alert" role="alert"><p id="save-url-error">${message}</p></div>`;
   expect(markup).toContain(
-    `<h1><label for="save-url">Save a link</label></h1><div class="alert" role="alert"><p id="save-url-error">${message}</p></div>`,
+    `<h1><label for="save-url">Save a link</label></h1>\n      <div id="messages" class="message-bar">\n        ${alert}`,
   );
   const field = addressField(markup);
   expect(field.get("aria-invalid")).toBe("true");

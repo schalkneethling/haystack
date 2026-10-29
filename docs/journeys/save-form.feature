@@ -98,7 +98,7 @@ Feature: Confirming and saving a link
     When I replace the title with spaces
     And I press Save
     Then I see the page titled "Check the form - Haystack"
-    And the alert "Enter a title of up to 200 characters." comes right after the heading "Save a link"
+    And the alert "Enter a title of up to 200 characters." comes first in the message bar, right after the heading "Save a link"
     And the Title field is marked invalid, with the error as its description
     And the description I entered is still in its field
     And nothing was saved
@@ -213,7 +213,7 @@ Feature: Confirming and saving a link
     And Haystack's check when I press Save thinks the link might be private
     When I change the title to "My planning doc" and press Save
     Then I see the page titled "Check the form - Haystack"
-    And the alert "Tick “This link does not give access to anything private” to save this link." comes right after the heading "Save a link"
+    And the alert "Tick “This link does not give access to anything private” to save this link." comes first in the message bar, right after the heading "Save a link"
     And the form shows the warning, and the checkbox, marked invalid, with the error and then the warning as its description
     And the title I entered is still in its field
     And nothing was saved
@@ -226,7 +226,7 @@ Feature: Confirming and saving a link
     Given the save form is open for a link that Haystack thinks might be private
     When I tick "This link does not give access to anything private"
     And I replace the title with spaces and press Save
-    Then the alert "Enter a title of up to 200 characters." comes right after the heading "Save a link"
+    Then the alert "Enter a title of up to 200 characters." comes first in the message bar, right after the heading "Save a link"
     And the form still shows the warning, with the box ticked
     And nothing was saved
 
