@@ -1818,7 +1818,11 @@ The script should work where nothing blocks that access, for example with Full D
 - **Google's published keys aren't checked.** Haystack has no schema of its own for them: oauth4webapi fetches and reads them during sign-in (`validateApplicationLevelSignature` in `apps/worker/src/auth/google.ts`), and the sign-in tests generate their keys for each run rather than recording Google's. A check would either define a schema of its own, which #203 rules out, or test oauth4webapi's behaviour, which this section rules out. A change to Google's keys that oauth4webapi couldn't read would fail every sign-in at once, so it can't go unnoticed.
 - **Adding a request** means adding a `ContractCheck` to `CONTRACT_CHECKS` in `evals/contract-checks.ts`: its name, the client's time limit, the client's request builder with a fixed body, and the client's schemas with the path each applies at. #210 adds Jev's search request this way.
 - **Milestone 2 was deployed without the check.** _Decided by Schalk on 2026-10-28._ Its sweep had already run the same clients against the live APIs in production, which was the same evidence. Milestone 3's deploy (#218) waits for the check.
-- **The first run** hasn't been made yet. Its date and the result for each API are recorded here when it is (#203).
+- **The first run** was made on 2026-10-29 with `vp -C evals run contract` (#203). The check's 23 tests passed, and then it made exactly 4 requests, with `JEV_MODEL` `jev-1.14.0` from `apps/worker/wrangler.jsonc`. Every API passed:
+  - Jev (the sensitivity and kind questions): passed.
+  - Anthropic: passed.
+  - Anthropic through AI Gateway: passed.
+  - GitHub: passed.
 
 **Evaluations** live in `evals/` and are separate from the test suite. They run only when explicitly invoked with a live key. The labeled dataset is a set of queries, each with the bookmark IDs that should and should not match. It starts with roughly 30 queries written by Schalk against Schalk's own bookmarks.
 
