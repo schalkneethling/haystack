@@ -14,7 +14,8 @@ import { html, type SafeHtml } from "./html.ts";
  */
 export const DELETE_DIALOG_SCRIPT = "/assets/delete-dialog.js";
 
-// Dates are shown in UTC: the server does not know the reader's time zone.
+// Dates are shown in UTC: the server does not know the reader's time zone. search.js repeats this
+// formatter (SAVED_DATE there) for the search results' cards, which it fills in the browser.
 const SAVED_DATE = new Intl.DateTimeFormat("en", { dateStyle: "long", timeZone: "UTC" });
 
 /** "Saved" and the date, for the first line of a card. */

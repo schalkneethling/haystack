@@ -500,6 +500,30 @@ function enhance(form, field, button, list, template, status, emptyState) {
   });
 }
 
+/**
+ * Whether a result's card can be built from the template: a sample card is built once, before
+ * the page is enhanced. A template that has drifted from what `resultItem` expects would
+ * otherwise throw in the middle of a search, after the button's label was reset and before the
+ * results were replaced, which would leave the last query's results under the new one. Without
+ * enhancing, the page keeps saying that searching needs JavaScript, and links to the saved links.
+ * @param {HTMLTemplateElement} template
+ */
+function fillsTheTemplate(template) {
+  try {
+    resultItem(template, {
+      id: "sample",
+      title: "Sample",
+      description: "Sample",
+      url: "https://example.com/",
+      createdAt: 0,
+    });
+    return true;
+  } catch (error) {
+    console.error(error);
+    return false;
+  }
+}
+
 const form = document.querySelector(FORM);
 const field = document.getElementById(FIELD_ID);
 const button = form?.querySelector('button[type="submit"]');
@@ -512,7 +536,8 @@ if (
   button instanceof HTMLButtonElement &&
   list instanceof HTMLOListElement &&
   template instanceof HTMLTemplateElement &&
-  status !== null
+  status !== null &&
+  fillsTheTemplate(template)
 ) {
   enhance(form, field, button, list, template, status, document.getElementById(EMPTY_STATE_ID));
   document.getElementById(NEEDS_SCRIPT_ID)?.setAttribute("hidden", "");

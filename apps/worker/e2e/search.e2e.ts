@@ -230,29 +230,70 @@ test("a result shows the saved link's card: the date, the title as a link, the a
 // The two pages share one card (design review), built from bookmark-card.ts: on the saved links
 // page by the Worker, and on the search page by search.js from the Worker's template. For the
 // same bookmark, the two cards have the same elements, attributes and text, apart from the Delete
-// form's field that returns a delete to the search page.
+// form's field that returns a delete to the search page. One card has a description over two
+// lines, which both sides split at line breaks, and the other an http address, which neither
+// links.
 test("a result's card is the saved links page's card for the same bookmark", async ({
   page,
   query,
 }) => {
-  const [saved] = await saveResults(page, query, "same-card", ["The same card"]);
-  if (saved === undefined) {
-    throw new Error("The bookmark was not saved");
+  const [described, plain] = await saveResults(page, query, "same-card", [
+    "A described card",
+    "A card without a link",
+  ]);
+  if (described === undefined || plain === undefined) {
+    throw new Error("The bookmarks were not saved");
   }
+  const description = "First line\nSecond line";
+  const httpUrl = "http://example.com/same-card-plain";
+  await query("UPDATE bookmarks SET description = ? WHERE id = ?", description, described.id);
+  await query("UPDATE bookmarks SET url = ? WHERE id = ?", httpUrl, plain.id);
+  const bookmarks = [
+    { ...described, description },
+    { ...plain, url: httpUrl },
+  ];
   // The card as markup, with the whitespace between elements, which only the Worker's template
   // literals write, left out.
   const cardOf = (item: ReturnType<typeof results>) =>
     item.evaluate((element) => element.outerHTML.replace(/>\s+</g, "><"));
-  await page.goto("/saved-links");
-  const onSavedLinks = await cardOf(page.locator(`#recent-saves > li#bookmark-${saved.id}`));
-  await answerSearches(page, () => [saved]);
-  await page.goto("/");
-  await field(page).fill("the same card");
-  await field(page).press("Enter");
-  const onSearch = await cardOf(results(page).first());
   const returnField = '<input type="hidden" name="return_to" value="/">';
-  expect(onSearch).toContain(returnField);
-  expect(onSearch.replace(returnField, "")).toBe(onSavedLinks);
+  await page.goto("/saved-links");
+  const onSavedLinks = await Promise.all(
+    bookmarks.map(({ id }) => cardOf(page.locator(`#recent-saves > li#bookmark-${id}`))),
+  );
+  await answerSearches(page, () => bookmarks);
+  await page.goto("/");
+  await field(page).fill("the same cards");
+  await field(page).press("Enter");
+  await expect(results(page)).toHaveCount(2);
+  for (const [index, card] of onSavedLinks.entries()) {
+    const onSearch = await cardOf(results(page).nth(index));
+    expect(onSearch).toContain(returnField);
+    expect(onSearch.replace(returnField, "")).toBe(card);
+  }
+  expect(onSavedLinks[0]).toContain("First line<br>Second line");
+  expect(onSavedLinks[1]).not.toContain("<a ");
+});
+
+// search.js builds a sample card before it enhances the page. A template that has drifted from
+// what it expects would otherwise throw in the middle of a search, and leave the last query's
+// results under the new one.
+test("a card template that has drifted leaves the page saying it needs JavaScript", async ({
+  page,
+}) => {
+  await page.route(
+    (url) => url.pathname === "/",
+    async (route) => {
+      const response = await route.fetch();
+      const body = (await response.text()).replace(
+        '<p class="address">https://example.com/</p>',
+        '<p class="link-address">https://example.com/</p>',
+      );
+      await route.fulfill({ response, body });
+    },
+  );
+  await page.goto("/");
+  await expect(page.locator("#search-needs-script")).toBeVisible();
 });
 
 test("bookmark text is shown as text, and never parsed as markup", async ({ page }) => {
