@@ -8,17 +8,17 @@ They are documentation, and the input for new Playwright tests. They do not run:
 
 There is one file per area, and each starts with a `Feature` that says who the journeys are for and why they matter.
 
-| File                     | What it covers                                                                                                                                                             |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sign-in.feature`        | Signing in with Google, the ways sign-in can fail, coming back to the page you started on, and signing out                                                                 |
-| `extension-save.feature` | Saving the current page from the extension's popup in Chrome and Firefox, and the pages it refuses                                                                         |
-| `address-form.feature`   | Saving a link by typing or pasting its address in the "Save a link" form (#97, #105)                                                                                       |
-| `save-form.feature`      | Confirming a link on the save form, its errors, its warning about a link that might be private (#132), describing it once it is saved (#133), and the "already saved" page |
-| `search.feature`         | Searching my saved links from the home page, the results and the count of matches, with the keyboard and a screen reader (#206)                                            |
-| `saved-links.feature`    | The saved links list at /saved-links, and moving through it with a screen reader                                                                                           |
-| `delete.feature`         | Deleting a link, with and without JavaScript                                                                                                                               |
-| `held.feature`           | Reviewing links that Haystack held back or couldn't describe at /held: releasing, retrying and deleting (#129)                                                             |
-| `errors.feature`         | Pages a person can reach by mistake, such as a page that doesn't exist, a form sent after the session ended, or a request from another site                                |
+| File                     | What it covers                                                                                                                                                              |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sign-in.feature`        | Signing in with Google, the ways sign-in can fail, coming back to the page you started on, and signing out                                                                  |
+| `extension-save.feature` | Saving the current page from the extension's popup in Chrome and Firefox, and the pages it refuses                                                                          |
+| `address-form.feature`   | Saving a link by typing or pasting its address in the "Save a link" form (#97, #105)                                                                                        |
+| `save-form.feature`      | Confirming a link on the save form, its errors, its warning about a link that might be private (#132), describing it once it is saved (#133), and the "already saved" page  |
+| `search.feature`         | Searching my saved links from the home page, the results and the count of matches, a slow, incomplete or failed search (#207), with the keyboard and a screen reader (#206) |
+| `saved-links.feature`    | The saved links list at /saved-links, and moving through it with a screen reader                                                                                            |
+| `delete.feature`         | Deleting a link, with and without JavaScript                                                                                                                                |
+| `held.feature`           | Reviewing links that Haystack held back or couldn't describe at /held: releasing, retrying and deleting (#129)                                                              |
+| `errors.feature`         | Pages a person can reach by mistake, such as a page that doesn't exist, a form sent after the session ended, or a request from another site                                 |
 
 Every message, button label, page title and heading in quotation marks is copied from the code that shows it. Where a keyboard or screen reader user's experience differs, the scenario says so, or a separate scenario describes it.
 
@@ -50,7 +50,7 @@ When the code and the plan disagree about a journey, the scenario follows the co
 
 These are the candidates for new tests, most important first.
 
-1. **"Hearing how many links match with a screen reader"** (`search.feature`) is how a screen reader user learns what a search found, and VoiceOver doesn't speak it yet. #237 owns the fix, and blocks the search release (#218). `search.voiceover.ts` has a test of it marked as failing.
+1. **"Hearing how many links match with a screen reader"** and **"Hearing that a search is slow, incomplete or failed with a screen reader"** (`search.feature`) are how a screen reader user learns what a search found, or that it is still running or failed, and VoiceOver doesn't speak any of these messages yet. #237 owns the fix, and blocks the search release (#218). `search.voiceover.ts` has a test of each message marked as failing.
 1. **"Saving a page in Firefox"** (`extension-save.feature`) is the main way to save a link in one of the two browsers Haystack supports. Playwright cannot load an extension in Firefox, so only the manual check under "Firefox manual check" in the plan's "Testing strategy" covers it.
 1. **"The delete fails because Haystack can't be reached"** (`delete.feature`) is the one failure of the delete dialog that no browser test reaches. A Playwright test could fail the request the way `delete-dialog.e2e.ts` already answers it with an error.
 1. **"Deleting every link the list shows, when I have older ones"** (`delete.feature`) shows a message that only a person with more than 50 links can see. The integration test checks only that the message is in the page's markup, hidden, and no browser test deletes every card on a full page.

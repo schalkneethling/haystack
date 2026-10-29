@@ -141,7 +141,7 @@ const FAKE_FLAGSHIP = "fake-flagship";
  * package.json lists. knip.json is Calavera-managed, and Calavera's knip integration has no
  * option for ignoring a dependency.
  */
-// WORKAROUND(knip): knip reads cloudflare:workers as the package "cloudflare", so the fake Flagship Worker's source lives in a string rather than a checked-in file | remove-when: knip treats cloudflare: like node:
+// WORKAROUND(knip): knip reads cloudflare:workers as the package "cloudflare", so the fake Flagship Worker's source lives in a string rather than a checked-in file | upstream: https://github.com/webpro-nl/knip/issues/2244 | remove-when: knip treats cloudflare: like node:
 const FAKE_FLAGSHIP_SOURCE = `import { WorkerEntrypoint } from "cloudflare:workers";
 
 export default class FakeFlagship extends WorkerEntrypoint {

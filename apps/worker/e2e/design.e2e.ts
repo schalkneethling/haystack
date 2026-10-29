@@ -8,7 +8,15 @@ import { INVALID_LINK, openRefusalPage } from "./rejected-save-pages.ts";
 import { saveThroughForm } from "./save-through-form.ts";
 import { ADDRESS_FORM_STATES, bringAddressFormTo, holdLookups } from "./held-lookups.ts";
 import { saveFailed, saveHeld } from "./review-items.ts";
-import { answerSearches, SEARCH_MESSAGES, SEARCH_STATUS } from "./search-answers.ts";
+import {
+  answerSearches,
+  holdSearches,
+  SEARCH_MESSAGES,
+  SEARCH_STATUS,
+  type StubbedAnswer,
+  TRY_AGAIN,
+} from "./search-answers.ts";
+import { browserHtmlProblems } from "../test/html-problems.ts";
 import { openWarnedForm, sendWithoutTheBox } from "./sensitivity-warning.ts";
 
 // One unbroken word, with no hyphen or slash a line could break at, so only `overflow-wrap` can
@@ -47,33 +55,62 @@ async function rejectTitle(page: Page): Promise<void> {
   await page.waitForLoadState("load");
 }
 
-// The states of the search page (#206), with its answers stubbed in the browser.
-const SEARCH_STATES = ["at first load", "with results", "with no results"] as const;
+// The states of the search page (#206, #207), with its answers stubbed in the browser. Each
+// state but the first is a search for the state's name, and the message the page then shows.
+const SEARCH_STATES = [
+  "at first load",
+  "with results",
+  "with no results",
+  "while searching",
+  "with incomplete results",
+  "after a failed search",
+  "signed out",
+] as const;
 
-async function bringSearchPageTo(
-  page: Page,
-  state: (typeof SEARCH_STATES)[number],
-  title: string,
-): Promise<void> {
-  await answerSearches(page, (query) =>
-    query === "nothing"
-      ? []
-      : [
-          { title, description: `A description of ${title}.` },
-          { title: "A second result", description: null },
-        ],
-  );
+type SearchState = (typeof SEARCH_STATES)[number];
+
+const SEARCH_STATE_MESSAGES: Record<Exclude<SearchState, "at first load">, string> = {
+  "with results": "2 saved links match your search.",
+  "with no results": SEARCH_MESSAGES.none,
+  "while searching": SEARCH_MESSAGES.processing,
+  "with incomplete results": `2 saved links match your search. ${SEARCH_MESSAGES.incomplete}`,
+  "after a failed search": `${SEARCH_MESSAGES.failed}${TRY_AGAIN}`,
+  "signed out": SEARCH_MESSAGES.signedOut,
+};
+
+async function bringSearchPageTo(page: Page, state: SearchState, title: string): Promise<void> {
+  const found = [
+    { title, description: `A description of ${title}.` },
+    { title: "A second result", description: null },
+  ];
+  // A search that runs is held, and never answered.
+  if (state === "while searching") {
+    await holdSearches(page);
+  } else {
+    await answerSearches(page, (query): StubbedAnswer => {
+      switch (query) {
+        case "with no results":
+          return [];
+        case "with incomplete results":
+          return { results: found, outcome: "partial" };
+        case "after a failed search":
+          return { status: 503 };
+        case "signed out":
+          return { status: 401 };
+        default:
+          return found;
+      }
+    });
+  }
   await page.goto("/");
   const field = page.getByRole("searchbox", { name: "Search your saved links" });
   await expect(field).toBeVisible();
   if (state === "at first load") {
     return;
   }
-  await field.fill(state === "with results" ? "results" : "nothing");
+  await field.fill(state);
   await field.press("Enter");
-  await expect(page.locator(SEARCH_STATUS)).toHaveText(
-    state === "with results" ? "2 saved links match your search." : SEARCH_MESSAGES.none,
-  );
+  await expect(page.locator(SEARCH_STATUS)).toHaveText(SEARCH_STATE_MESSAGES[state]);
 }
 
 async function openDeleteDialog(page: Page, url: string, title: string): Promise<void> {
@@ -388,6 +425,21 @@ for (const [colorScheme, ground] of [
   });
 }
 
+// The Worker's markup is validated in the integration tests. The search page's states are built
+// by its script, so the page is validated here as the browser holds it, in each state.
+test.describe("html-validate finds no problems on the search page", () => {
+  test.beforeEach(async ({ signIn }) => {
+    await signIn();
+  });
+
+  for (const state of SEARCH_STATES) {
+    test(state, async ({ page }) => {
+      await bringSearchPageTo(page, state, "A guide");
+      expect(await browserHtmlProblems(await page.content())).toEqual([]);
+    });
+  }
+});
+
 test.describe("the stylesheets and fonts load under the CSP", () => {
   test.beforeEach(async ({ page }) => {
     // Registered before any page script runs, so no violation is missed.
@@ -556,6 +608,27 @@ test.describe("in forced colors", () => {
     await field.focus();
     await expect(field).toHaveCSS("outline-style", "solid");
     await expect(field).toHaveCSS("outline-width", "3px");
+  });
+
+  // The incomplete notice's edge, the error state's border and Try again's edge are borders,
+  // which forced colors keep, while their backgrounds are dropped (#207).
+  test("the search's incomplete notice keeps its edge, and the error state its border and button", async ({
+    page,
+  }) => {
+    await bringSearchPageTo(page, "with incomplete results", "A guide");
+    const notice = page.locator(`${SEARCH_STATUS} > p`);
+    await expect(notice).toHaveCSS("border-left-style", "solid");
+    await expect(notice).toHaveCSS("border-left-width", "4px");
+    await page
+      .getByRole("searchbox", { name: "Search your saved links" })
+      .fill("after a failed search");
+    await page.getByRole("button", { name: "Search", exact: true }).click();
+    const alert = page.locator(`${SEARCH_STATUS} > .alert`);
+    await expect(alert).toHaveCSS("border-top-style", "solid");
+    await expect(alert.getByRole("button", { name: TRY_AGAIN })).toHaveCSS(
+      "border-top-style",
+      "solid",
+    );
   });
 
   test("only the current page's link is outlined and underlined", async ({ page }) => {

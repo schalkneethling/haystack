@@ -2,7 +2,7 @@
 // the processing state for as long as it needs, then decide each request's answer: let it through
 // to the Worker, answer it, or fail it. The script sends the form with `fetch`, so the page stays
 // where it is while a request is held, and Playwright's locators work as usual.
-import type { Page, Request, Route } from "@playwright/test";
+import { expect, type Page, type Request, type Route } from "@playwright/test";
 
 /** What address-form.js says in its status region. */
 export const MESSAGES = {
@@ -84,10 +84,7 @@ export async function holdLookups(page: Page): Promise<HeldLookups> {
   return {
     all,
     next: async (count) => {
-      // Up to 5 s, as long as an expectation waits.
-      for (let tries = 0; all.length < count && tries < 250; tries += 1) {
-        await page.waitForTimeout(20);
-      }
+      await expect.poll(() => all.length, `lookup ${count} is sent`).toBeGreaterThanOrEqual(count);
       const lookup = all[count - 1];
       if (lookup === undefined) {
         throw new Error(`There is no lookup ${count}`);

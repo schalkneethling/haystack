@@ -421,6 +421,25 @@ search {
   padding-inline: var(--space-m);
 }
 
+/* Search results that may be incomplete, because some links could not be searched (#207). The
+   count and the notice share the status box, with the straw edge of the save form's warning, so
+   it reads as something to note, and its words say what. The edge is the primary button's, which
+   is ochre in the light scheme, because straw on the light raised box barely shows. */
+.status > .search-incomplete {
+  border-inline-start: 4px solid var(--color-primary-border);
+}
+
+/* A search that failed (#207): the alert's box in the status region, in place of the results,
+   with Try again under the message. Try again is the primary button, because the secondary
+   button's edge is 2.95:1 on the dark alert, under the 3:1 a control's edge needs, while the
+   primary button's straw keeps 8.71:1 there, and its ochre edge 5.74:1 on the light alert. */
+.search-failure-body {
+  align-items: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-s);
+}
+
 /* address-form.js moves focus to its message, so a screen reader reads it (#105). The ring is the
    site's focus ring, drawn whenever the message has focus, also after a click, because the page,
    not the user, put focus there. An outline survives forced colors, which give it a system color. */

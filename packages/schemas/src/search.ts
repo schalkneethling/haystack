@@ -43,13 +43,24 @@ export const SearchResult = v.object({
 });
 
 /**
+ * Whether every bookmark was searched. `ok` when Jev answered for every candidate, and `partial`
+ * when some of the chunks failed, so the results come from the chunks that succeeded, and the
+ * page says they may be incomplete (plan, "When Jev fails"). They are the names of the run's
+ * outcome in the log (#212). A search whose every chunk failed, the `failed` outcome, has no
+ * answer of this shape: `/api/search` answers it with an error status (#214), so the page shows
+ * the error state, and can never show it as an empty list.
+ */
+const SearchOutcome = v.picklist(["ok", "partial"]);
+
+/**
  * The web answer of `/api/search`, in ranked order. It is the search page's own shape, with the
  * IDs the page needs: the bookmark's in each result, and the run's, which recording a followed
- * result uses (#215). The Milestone 4 tool returns a narrower result (title, description, URL
- * and kind), which is a schema of its own.
+ * result uses (#215), and whether the results may be incomplete. The Milestone 4 tool returns a
+ * narrower result (title, description, URL and kind), which is a schema of its own.
  */
 export const SearchAnswer = v.object({
   runId: v.string(),
+  outcome: SearchOutcome,
   results: v.array(SearchResult),
 });
 
