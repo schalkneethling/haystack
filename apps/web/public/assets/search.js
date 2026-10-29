@@ -73,13 +73,13 @@ const MESSAGES = {
   signIn: "Sign in again",
 };
 
-// How long the page waits for an answer. The search route's own time limits come with Phase 11
-// (#211, #212), which decides search's retry budget. The Jev client's worst case for one
-// enrichment question is 25 seconds (plan, "Jev client"), and a search asks its chunks at the
-// same time, so 30 seconds leaves room for a search held to the same limits. If Phase 11 allows
-// a search longer than that, this changes with it. The timer is an ordinary setTimeout that
-// aborts the request, as on the address form, rather than AbortSignal.timeout, so that one
-// AbortController ends the request either way, and a test's clock can reach it.
+// How long the page waits for an answer. It is the ceiling that the search's whole budget must
+// fit under: every chunk, its retries, the waits of the client-side limiter and the halves of a
+// chunk that was split and retried (#212, plan, "Jev model limits" and "Jev client"). If Phase 11
+// lets a search run longer, this changes with it. A search the page abandons here keeps running
+// on the Worker, unless the route passes its request's signal on (#214). The timer is an ordinary
+// setTimeout that aborts the request, as on the address form, rather than AbortSignal.timeout, so
+// that one AbortController ends the request either way, and a test's clock can reach it.
 const TIMEOUT_MS = 30_000;
 
 /**
@@ -143,7 +143,7 @@ function answerIn(body) {
 // address exactly as the URL parser reads it, with an explicit `https://` and no spaces or
 // control characters. Escaping does not make an address safe, so anything else is not a link.
 // oxlint-disable-next-line no-control-regex -- matching control characters is the point.
-const CHARACTERS_THE_PARSER_CHANGES = /[\u0000- \u007f]/;
+const CHARACTERS_THE_PARSER_CHANGES = /[\u0000-\u0020\u007f]/;
 const HTTPS_PREFIX = /^https:\/\//i;
 
 /** @param {string} value */
@@ -305,10 +305,11 @@ function enhance(form, field, button, list, status) {
     retry.addEventListener("click", () => {
       // The query that failed goes back in the field, so the field always holds the query whose
       // results the page shows. Focus moves to the Search button before the search empties the
-      // region, so it does not fall to the page with Try again.
+      // region, so it does not fall to the page with Try again. The form is then submitted, so
+      // the search goes through the submit handler's rules, as a press of Search does.
       field.value = query;
       button.focus();
-      void send(query);
+      form.requestSubmit();
     });
     body.append(paragraphOf(text), retry);
     alert.append(body);
@@ -413,9 +414,16 @@ function enhance(form, field, button, list, status) {
   });
 
   // Following a result and coming back can restore this page from the back-forward cache as it
-  // was left, still searching, so the search is dropped, and the page says nothing.
+  // was left. A message still waiting to be written, such as a count whose results came just
+  // before the person left, belongs to that moment, so it is dropped whether or not a search was
+  // running: written after the restore, it would be announced as if something had just happened.
+  // A search still running is dropped too, with its message, and the page says nothing.
   window.addEventListener("pageshow", (event) => {
-    if (event.persisted && inFlight !== null) {
+    if (!event.persisted) {
+      return;
+    }
+    clearTimeout(announcement);
+    if (inFlight !== null) {
       stop();
       clearMessage();
     }

@@ -8,6 +8,7 @@ import { expect, test } from "./fixtures.ts";
 import { installPausedClock } from "./held-lookups.ts";
 import {
   answerSearches,
+  type HeldSearch,
   holdSearches,
   SEARCH_MESSAGES,
   SEARCH_PROCESSING_LABEL,
@@ -448,6 +449,26 @@ test.describe("while a search runs", () => {
     await expect(status(page)).toBeEmpty();
     await expect.poll(() => search.aborted()).toBe(true);
   });
+
+  // A count still waiting to be written when the page was left belongs to that moment, so a
+  // restore drops it, with no search running. The clock is paused, so the count is still waiting
+  // when the event is dispatched.
+  test("a page restored from the back-forward cache drops a message still waiting to be written", async ({
+    page,
+  }) => {
+    await installPausedClock(page);
+    await answerSearches(page, () => GUIDES);
+    await page.goto("/");
+    await field(page).fill("testing");
+    await field(page).press("Enter");
+    await expect(results(page)).toHaveCount(2);
+    await page.evaluate(() =>
+      window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })),
+    );
+    await page.clock.runFor(500);
+    await expect(status(page)).toBeEmpty();
+    await expect(results(page)).toHaveCount(2);
+  });
 });
 
 // Some of the collection could not be searched (the `partial` outcome, #212), so the results
@@ -501,29 +522,52 @@ test.describe("a failed search", () => {
     await expect(field(page)).toBeFocused();
   });
 
-  test("Try again sends the failed query again, back in the field, from the Search button", async ({
-    page,
-  }) => {
-    const searches = await holdSearches(page);
-    await page.goto("/");
-    await field(page).fill("testing");
-    await field(page).press("Enter");
-    await (await searches.next(1)).answer({ status: 503 });
-    await expectFailure(page, SEARCH_MESSAGES.failed);
-    // A changed query that was not sent goes, because Try again repeats the search that failed.
-    await field(page).fill("something else");
-    await status(page).getByRole("button", { name: TRY_AGAIN }).focus();
-    await page.keyboard.press("Enter");
-    const again = await searches.next(2);
-    expect(again.query).toBe("testing");
-    await expect(field(page)).toHaveValue("testing");
-    // Try again goes with the error state, so focus is on Search, where a search is pressed.
-    await expect(page.getByRole("button", { name: SEARCH_PROCESSING_LABEL })).toBeFocused();
-    await expect(status(page).getByRole("button")).toHaveCount(0);
-    await again.answer(GUIDES);
-    await expect(results(page)).toHaveCount(2);
-    await expect(searchButton(page)).toBeFocused();
-  });
+  // Each way a search can fail, and how the test makes it fail. The timeout needs Playwright's
+  // clock, which runs in real time once installed, and the test moves it on past the limit.
+  const FAILURES: readonly (readonly [
+    kind: string,
+    message: string,
+    fail: (search: HeldSearch, page: Page) => Promise<void>,
+  ])[] = [
+    ["an error status", SEARCH_MESSAGES.failed, (search) => search.answer({ status: 503 })],
+    ["a network error", SEARCH_MESSAGES.network, (search) => search.fail()],
+    ["a timeout", SEARCH_MESSAGES.timeout, (_, page) => page.clock.fastForward(30_200)],
+  ];
+
+  for (const [kind, message, fail] of FAILURES) {
+    test(`after ${kind}, Try again sends the failed query again, back in the field, from the Search button`, async ({
+      page,
+    }) => {
+      if (kind === "a timeout") {
+        await page.clock.install();
+      }
+      const searches = await holdSearches(page);
+      await page.goto("/");
+      await field(page).fill("testing");
+      await field(page).press("Enter");
+      await fail(await searches.next(1), page);
+      await expectFailure(page, message);
+      // A changed query that was not sent goes, because Try again repeats the search that failed.
+      await field(page).fill("something else");
+      await status(page).getByRole("button", { name: TRY_AGAIN }).focus();
+      await page.keyboard.press("Enter");
+      const again = await searches.next(2);
+      expect(again.query).toBe("testing");
+      await expect(field(page)).toHaveValue("testing");
+      // Try again goes with the error state, so focus is on Search, where a search is pressed.
+      await expect(page.getByRole("button", { name: SEARCH_PROCESSING_LABEL })).toBeFocused();
+      await expect(status(page).getByRole("button")).toHaveCount(0);
+      if (kind === "a timeout") {
+        // The search sent again has a time limit of its own, which starts with it.
+        await page.clock.fastForward(29_000);
+        await expect(status(page)).toHaveText(SEARCH_MESSAGES.processing);
+        expect(again.aborted()).toBe(false);
+      }
+      await again.answer(GUIDES);
+      await expect(results(page)).toHaveCount(2);
+      await expect(searchButton(page)).toBeFocused();
+    });
+  }
 
   test("by a network error says so", async ({ page }) => {
     await page.route("**/api/search", (route) => route.abort("failed"));

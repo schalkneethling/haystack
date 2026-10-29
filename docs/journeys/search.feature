@@ -269,7 +269,9 @@ Feature: Searching my saved links
   Scenario: Trying a failed search again
     Try again repeats the search that failed, so it puts that query back in
     the field if I changed it since. Try again goes when the search starts, so
-    focus moves to the button "Search", where I would press it.
+    focus moves to the button "Search", where I would press it. The browser
+    tests try again after an error, a network error and a search that took
+    too long, and the search sent again gets 30 seconds of its own.
 
     Given my search for "testing" failed
     And I have typed something else in the field, without searching for it
