@@ -27,7 +27,9 @@ import {
 import { deleteBookmark, deleteReturnPage, readForm } from "./delete-bookmark.ts";
 import { enrichOnSave } from "./enrichment/enrich-on-save.ts";
 import { errorCode } from "./error-code.ts";
+import { readSearchFlags, type SearchFlags } from "./flags.ts";
 import { readReviewPolicy, releaseBookmark, retryBookmark, showHeld } from "./held.ts";
+import { withoutSearchLink } from "./page.ts";
 import { showRecentSaves } from "./recent-saves.ts";
 import { runScheduled } from "./scheduled.ts";
 import { showSearchPage } from "./search-page.ts";
@@ -39,7 +41,7 @@ import {
   signedOutSubmission,
 } from "./save.ts";
 import { saveAddress, signedOutAddress } from "./save-address.ts";
-import { withSecurityHeaders } from "./security-headers.ts";
+import { kindOf, withSecurityHeaders } from "./security-headers.ts";
 import {
   accountNotAllowedPage,
   notFoundPage,
@@ -215,12 +217,16 @@ async function handleAppRoute(
   ctx: ExecutionContext,
   db: Db,
   session: AuthenticatedSession,
+  search: () => Promise<SearchFlags>,
 ): Promise<Response> {
   const path = new URL(request.url).pathname;
-  // The search page is the home page (#206). /api/search has no route until #214, so a search
-  // gets the 404 that every unknown route gets, and a deploy in between shows no results.
+  // The search page is the home page (#206) once the `search-enabled` flag is on (#218). Until
+  // then, `/` sends the user on to the saved links, because /api/search has no route until #214,
+  // and every search would get the 404 that every unknown route gets. The browser asks for `/`
+  // again each time, because the redirect is a 302, not a 301, which a browser keeps, and like
+  // every redirect it carries `cache-control: no-store` (security-headers.ts).
   if (path === "/" && isReadRequest(request)) {
-    return showSearchPage();
+    return (await search()).enabled ? showSearchPage() : redirect(SAVED_LINKS_PATH, 302);
   }
   if (path === SAVED_LINKS_PATH && isReadRequest(request)) {
     return showRecentSaves(db, session.user.id, env);
@@ -330,7 +336,13 @@ async function answer(request: Request, env: Env, ctx: ExecutionContext): Promis
     return unauthenticated(request, sessionId !== undefined);
   }
 
-  const response = await handleAppRoute(request, env, ctx, db, session);
+  // The search switch is read at most once for the request, and only when the answer needs it:
+  // for `/`, and for a page, whose header has the Search link only while search is on.
+  let searchFlags: Promise<SearchFlags> | undefined;
+  const search = () => (searchFlags ??= readSearchFlags(env.FLAGS));
+  const routed = await handleAppRoute(request, env, ctx, db, session, search);
+  const response =
+    kindOf(routed) === "page" && !(await search()).enabled ? withoutSearchLink(routed) : routed;
   if (!session.extended) {
     return response;
   }

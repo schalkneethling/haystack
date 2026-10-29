@@ -8,15 +8,32 @@ Feature: Searching my saved links
   Searching itself comes with Phase 11 (#214). Until then, the browser tests
   answer every search with a stubbed answer, and Haystack's own search answers
   "not found", so every real search fails, as the scenario "A search that
-  fails" describes. How a slow search looks, and a search whose results may be
+  fails" describes. So the search page is behind a switch, the
+  `search-enabled` flag, which the owner turns on when search is released
+  (#218). Until then the home page is the saved links, and the header has no
+  "Search" link. Every scenario but the first is with the switch on, as the
+  browser tests run. How a slow search looks, and a search whose results may be
   incomplete, come with #207, and deleting a link from the results with #208.
 
   Background:
     Given I am signed in to Haystack
 
+  @integration:apps/worker/test/search-switch.test.ts
+  @integration:apps/worker/test/flags.test.ts
+  Scenario: Before search is switched on
+    The switch is off until the owner turns it on, and it is off too when
+    Haystack can't read it, for example during an outage of the service that
+    holds it. The integration test checks the redirect and the header.
+
+    Given search is switched off
+    When I open Haystack's home page
+    Then I land on my saved links, at /saved-links
+    And the header has the links "Saved links" and "Sign out", but no "Search"
+
   @playwright:apps/worker/e2e/design.e2e.ts
   @integration:apps/worker/test/search-page.test.ts
   Scenario: Opening the search page
+    Given search is switched on
     When I open Haystack's home page
     Then I see the page titled "Search - Haystack", under the heading "Search your saved links"
     And the heading is the label of the search field, with the hint "Describe what you're looking for in your own words."
@@ -102,9 +119,13 @@ Feature: Searching my saved links
 
     When I press Tab six times
     Then the focus moves through the Haystack wordmark, the links "Search" and "Saved links", the button "Sign out", the field and the button "Search"
-    When I type a query in the field and press Enter
+    When I press Shift+Tab
+    Then the field has focus
+    When I type a query and press Enter
     Then the page says how many links match, and the field still has focus
-    When I press Tab twice
+    When I press Tab
+    Then the button "Search" has focus
+    When I press Tab again
     Then the first result's title has focus
 
   @playwright:apps/worker/e2e/search.e2e.ts

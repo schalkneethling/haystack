@@ -241,23 +241,25 @@ const cases: Case[] = [
     status: 303,
     kind: "redirect",
   },
-  // The search page is the home page (#206). Until then, `/` was a redirect to the saved links.
+  // This Worker has no `search-enabled` flag, so search is switched off (#235), and `/` sends a
+  // signed-in user on to the saved links. With the flag on, `/` is a page like any other here
+  // (search-switch.test.ts).
   {
-    name: "the search page",
+    name: "the home page's redirect to the saved links, with search switched off",
     path: "/",
     headers: HTML,
     signedIn: true,
-    status: 200,
-    kind: "page",
+    status: 302,
+    kind: "redirect",
   },
   {
-    name: "the search page, for HEAD",
+    name: "the home page's redirect to the saved links, with search switched off, for HEAD",
     method: "HEAD",
     path: "/",
     headers: HTML,
     signedIn: true,
-    status: 200,
-    kind: "page",
+    status: 302,
+    kind: "redirect",
   },
   {
     name: "the saved links",

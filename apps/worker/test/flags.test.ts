@@ -1,14 +1,19 @@
-// The configuration module (#128), with a fake Flagship binding. The test harness can't set a
-// flag (Q13 in plans/haystack-v1-implementation-plan.md), so these are unit tests. The fake
-// answers as the binding's details getters do: the flag's value when it has one, and otherwise
-// the default it was given, with FLAG_NOT_FOUND, as for a missing flag. scheduled.test.ts shows
-// what the scheduled run does with the values.
+// The configuration module (#128), with a fake Flagship binding. The harness's Flagship simulator
+// holds no flags (Q13 in plans/haystack-v1-implementation-plan.md), so these are unit tests. The
+// fake answers as the binding's details getters do: the flag's value when it has one, and
+// otherwise the default it was given, with FLAG_NOT_FOUND, as for a missing flag.
+// scheduled.test.ts shows what the scheduled run does with the values, and search-switch.test.ts
+// what the Worker does with the search switch, through the fake Flagship Worker that
+// createTestWorker starts (test-worker.ts).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { SWEEP_BATCH_SIZE_LIMIT } from "../src/enrichment/enrich-pending.ts";
 import {
   type FlagDetails,
   type FlagReader,
+  readSearchFlags,
   readSweepFlags,
+  SEARCH_ENABLED_FLAG,
+  SEARCH_FLAG_DEFAULTS,
   SWEEP_BATCH_SIZE_FLAG,
   SWEEP_ENABLED_FLAG,
   SWEEP_FLAG_DEFAULTS,
@@ -159,6 +164,61 @@ describe("readSweepFlags", () => {
     expect((await readSweepFlags(flags)).enabled).toBe(true);
     expect(warn).toHaveBeenCalledWith("Flag ignored, using its default:", {
       flag: SWEEP_ENABLED_FLAG,
+    });
+  });
+});
+
+describe("readSearchFlags", () => {
+  it.each([true, false])("reads the switch's value, %s", async (enabled) => {
+    const flags = fakeFlags({ [SEARCH_ENABLED_FLAG]: enabled });
+
+    expect(await readSearchFlags(flags)).toEqual({ enabled });
+    expect(flags.keys).toEqual(["search-enabled"]);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  // Until #218 creates the flag, its absence is the expected state, and off is the safe one, so
+  // it is not logged on every page load.
+  it("gives search off for a missing flag, without logging it", async () => {
+    expect(await readSearchFlags(fakeFlags({}))).toEqual({ enabled: false });
+    expect(SEARCH_FLAG_DEFAULTS.enabled).toBe(false);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it.each(["TYPE_MISMATCH", "PARSE_ERROR"])("gives search off and logs %s", async (errorCode) => {
+    expect(await readSearchFlags(failingFlags(errorCode))).toEqual({ enabled: false });
+    expect(warn).toHaveBeenCalledWith("Flag not evaluated, using its default:", {
+      flag: SEARCH_ENABLED_FLAG,
+      code: errorCode,
+    });
+  });
+
+  it("gives search off when the binding throws, as during a Flagship outage", async () => {
+    const flags: FlagReader = {
+      getBooleanDetails: async () => {
+        throw Object.assign(new Error("Flagship is unavailable"), { name: "FlagshipError" });
+      },
+      getNumberDetails: async () => ({ value: 0 }),
+    };
+
+    expect(await readSearchFlags(flags)).toEqual({ enabled: false });
+    expect(error).toHaveBeenCalledWith("Flags unavailable, using the defaults:", {
+      code: "FlagshipError",
+    });
+  });
+
+  it("gives search off when the binding is missing", async () => {
+    const missing = undefined as unknown as FlagReader;
+
+    expect(await readSearchFlags(missing)).toEqual({ enabled: false });
+  });
+
+  it.each(["true", 1, null])("replaces a switch that isn't a boolean (%s)", async (value) => {
+    const flags = fakeFlags({ [SEARCH_ENABLED_FLAG]: value });
+
+    expect(await readSearchFlags(flags)).toEqual({ enabled: false });
+    expect(warn).toHaveBeenCalledWith("Flag ignored, using its default:", {
+      flag: SEARCH_ENABLED_FLAG,
     });
   });
 });

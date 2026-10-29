@@ -15,6 +15,7 @@
 // starts with Jev answering DEFAULT_NOUL, far below the threshold, so the save form shows no
 // warning unless a test asks for one with `jev`.
 import { type BrowserContext, expect, type Page, test as base } from "@playwright/test";
+import { SEARCH_ENABLED_FLAG } from "../src/flags.ts";
 import { noul } from "../test/jev-answers.ts";
 import { status, SYSTEM_ONE_URL } from "../test/jev-fixture.ts";
 import { type PageFixture, startPageFixture } from "../test/page-fixture.ts";
@@ -145,9 +146,12 @@ function parseCookieHeader(header: string): SessionCookie {
 export async function startHaystackWorker(): Promise<HaystackWorker> {
   // Before the harness, so that the Worker's first request is already answered here.
   const pages = startPageFixture();
+  // The search page is on in every browser test, as it is in production once #218 switches it on.
+  // search-switch.test.ts covers the switch off.
   const server = createTestWorker({
     vars: { ALLOWED_EMAILS: SIGNED_IN_EMAIL },
     secrets: { TYPESAFE_API_KEY: TYPESAFE_TEST_KEY },
+    flags: { [SEARCH_ENABLED_FLAG]: true },
   });
   jevAnswers(pages).noul(DEFAULT_NOUL);
   const stop = async () => {

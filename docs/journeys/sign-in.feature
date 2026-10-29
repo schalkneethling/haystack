@@ -13,12 +13,13 @@ Feature: Signing in and out
   @integration:apps/worker/test/auth.test.ts
   @integration:apps/worker/test/sign-in.test.ts
   @integration:apps/worker/test/search-page.test.ts
+  @integration:apps/worker/test/search-switch.test.ts
   Scenario: Signing in with an allowed Google account
     Given I am not signed in to Haystack
     When I open Haystack
     Then I am sent to Google to sign in
     When I sign in with a Google account that Haystack allows
-    Then I land on the search page, under the heading "Search your saved links"
+    Then I land on Haystack's home page: the search page, under the heading "Search your saved links", or my saved links while search is switched off
     And I stay signed in on this browser for 30 days
 
   @integration:apps/worker/test/auth.test.ts
@@ -40,14 +41,14 @@ Feature: Signing in and out
       | the "Save a link" page at /save | the "Save a link" address form                         |
 
   @integration:apps/worker/test/sign-in.test.ts
-  Scenario: A sign-in link that points away from Haystack lands on the search page
+  Scenario: A sign-in link that points away from Haystack lands on Haystack's home page
     A sign-in link can name the page to return to. Haystack returns only to its
     own pages, so a link that names another site cannot send me there.
 
     Given I am not signed in to Haystack
     And someone gave me a Haystack sign-in link that names another site as the page to return to
     When I sign in through that link with a Google account that Haystack allows
-    Then I land on the search page, Haystack's home page, not on the other site
+    Then I land on Haystack's home page, not on the other site
 
   @integration:apps/worker/test/save-form.test.ts
   @integration:apps/worker/test/address-form.test.ts

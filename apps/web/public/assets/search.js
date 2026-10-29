@@ -34,9 +34,11 @@ const SEARCH_PATH = "/api/search";
 
 // Each message is written ANNOUNCE_DELAY_MS after the change that comes with it, here the new
 // results, as the site's other scripts do (address-form.js, delete-dialog.js), because VoiceOver
-// has dropped messages written in the same task as a change to the page. The messages are kept
-// here, so they are easy to change.
-const ANNOUNCE_DELAY_MS = 100;
+// has dropped messages written in the same task as a change to the page. At 100 ms, the address
+// form's delay, VoiceOver never spoke the count on CI (run 40849016780, twice). 500 ms is the
+// delete dialog's, the delay at which VoiceOver spoke its message after the page changed (plan,
+// "Deleting bookmarks"). The messages are kept here, so they are easy to change.
+const ANNOUNCE_DELAY_MS = 500;
 const MESSAGES = {
   empty: "Type what you're looking for, then press Search.",
   none: "No saved links match your search.",

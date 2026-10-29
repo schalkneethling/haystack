@@ -57,7 +57,11 @@ export const SECURITY_HEADERS: Readonly<Record<AnswerKind, Readonly<Record<strin
   },
 };
 
-function kindOf(response: Response): AnswerKind {
+/**
+ * Which kind of answer a response is: a redirect by its status, a page by its HTML content type,
+ * and a body otherwise. The entry point also uses it to find the pages whose header it changes.
+ */
+export function kindOf(response: Response): AnswerKind {
   if (response.status >= 300 && response.status < 400) {
     return "redirect";
   }

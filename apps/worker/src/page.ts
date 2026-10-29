@@ -16,6 +16,25 @@ const NAVIGATION: readonly { page: NavigationPage; href: string; label: string }
   { page: "saved-links", href: SAVED_LINKS_PATH, label: "Saved links" },
 ];
 
+// Marks the header's Search link, which withoutSearchLink takes out while search is switched off.
+const SEARCH_LINK = "data-search-link";
+
+/**
+ * The page without the header's Search link, for while the `search-enabled` flag is off (#235,
+ * flags.ts), when `/` sends the user on to the saved links and a link named Search would only
+ * lead there. The entry point applies it to every page it sends a signed-in user, so the pages
+ * themselves don't each read the flag, and the link and its removal stay together here.
+ */
+export function withoutSearchLink(response: Response): Response {
+  return new HTMLRewriter()
+    .on(`a[${SEARCH_LINK}]`, {
+      element(link) {
+        link.remove();
+      },
+    })
+    .transform(response);
+}
+
 export interface PageOptions {
   /**
    * Whether the page is shown to a signed-in user. Their header adds the main navigation and a
@@ -39,10 +58,15 @@ export interface PageOptions {
 
 // Sign out is a form, because it is a POST with the Origin check, and works without JavaScript.
 function siteActions(current: PageOptions["current"]): SafeHtml {
-  const links = NAVIGATION.map(
-    ({ page, href, label }) => html`
-            <a class="nav-link" href="${href}"${page === current ? html` aria-current="page"` : null}>${label}</a>`,
-  );
+  // The first link follows `<nav>` on the same line, and each other one starts a line of its
+  // own, so when withoutSearchLink takes out the first, Search, no line of only spaces is left.
+  const links = NAVIGATION.map(({ page, href, label }, index) => {
+    const link = html`<a class="nav-link" href="${href}"${page === "search" ? html` ${SEARCH_LINK}` : null}${page === current ? html` aria-current="page"` : null}>${label}</a>`;
+    return index === 0
+      ? link
+      : html`
+            ${link}`;
+  });
   return html`
         <div class="site-actions">
           <nav class="site-nav" aria-label="Main">${links}

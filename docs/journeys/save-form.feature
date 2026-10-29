@@ -52,6 +52,9 @@ Feature: Confirming and saving a link
 
   @playwright:apps/worker/e2e/save-form.e2e.ts
   Scenario: Completing the save form with the keyboard alone
+    The header's stops are with search switched on, as the browser tests run.
+    While it is off, the header has no "Search", so there is one stop fewer.
+
     Given the save form is open for a page I have not saved yet
     When I press Tab five times
     Then the focus moves through the Haystack wordmark, the links "Search" and "Saved links" and the button "Sign out"

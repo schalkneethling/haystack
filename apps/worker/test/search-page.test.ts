@@ -1,15 +1,20 @@
-// The search page at `/` (#206). The browser tests answer /api/search with a stub
-// (e2e/search-answers.ts), so these check what the Worker serves itself: the page, and that the
-// real route answers no search until #214.
+// The search page at `/` (#206), with the `search-enabled` flag on (#235). The browser tests
+// answer /api/search with a stub (e2e/search-answers.ts), so these check what the Worker serves
+// itself: the page, and that the real route answers no search until #214. search-switch.test.ts
+// checks the flag off.
 import { SEARCH_QUERY_CAP } from "@haystack/schemas";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
+import { SEARCH_ENABLED_FLAG } from "../src/flags.ts";
 import { SENSITIVE_NOTICE } from "../src/notices.ts";
 import { mainContent } from "./main-content.ts";
 import { seedSignedInUser, type SeededUser } from "./seed.ts";
 import { createTestWorker } from "./test-worker.ts";
 import { expectValidHtml } from "./validate-html.ts";
 
-const server = createTestWorker({ vars: { ALLOWED_EMAILS: "owner@example.com" } });
+const server = createTestWorker({
+  vars: { ALLOWED_EMAILS: "owner@example.com" },
+  flags: { [SEARCH_ENABLED_FLAG]: true },
+});
 let origin: string;
 
 beforeAll(async () => {
@@ -89,7 +94,7 @@ describe("GET /", () => {
 
   it("loads one module script, which imports the delete dialog's", async () => {
     const markup = await searchPage();
-    expect([...markup.matchAll(/<script\b[^>]*>/g)].map((match) => match[0])).toEqual([
+    expect([...markup.matchAll(/<script\b[^>]*>/gi)].map((match) => match[0])).toEqual([
       '<script type="module" src="/assets/search.js">',
     ]);
     const script = await server.fetch("/assets/search.js");
@@ -98,7 +103,9 @@ describe("GET /", () => {
 
   it("marks Search as the current page, and not Saved links", async () => {
     const markup = await searchPage();
-    expect(markup).toContain('<a class="nav-link" href="/" aria-current="page">Search</a>');
+    expect(markup).toContain(
+      '<a class="nav-link" href="/" data-search-link aria-current="page">Search</a>',
+    );
     expect(markup).toContain('<a class="nav-link" href="/saved-links">Saved links</a>');
   });
 

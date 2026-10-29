@@ -3,14 +3,13 @@
 // (search-answers.ts), as in the browser tests. Each check matches one part of a phrase, ignoring
 // case, as in recent-saves.voiceover.ts.
 //
-// It was written without a local run, because the VoiceOver tests change macOS settings, so its
-// first CI run is its first check. It assumes three things:
-// - The count, written to the page's polite status region 100 ms after the results, is spoken
-//   while focus stays in the field. On CI, VoiceOver missed a polite status message after the
-//   address form's Continue was pressed (plan, "The address form (#97)"), but that button's own
-//   label changed at the same moment, and nothing about the focused field changes here. If this
-//   check fails, that is the finding to record in the plan, and the page needs another way to
-//   announce the count.
+// It was written without a local run, because the VoiceOver tests change macOS settings. It
+// assumes three things:
+// - The count, written to the page's polite status region 500 ms after the results, is spoken
+//   while focus stays in the field. Written 100 ms after them, it was never spoken in the first
+//   CI run (40849016780), which heard only the field's label, "browser" and the text field's
+//   hint, so the delay is now the delete dialog's (plan, "Search page"). If it still isn't
+//   spoken, the page needs another way to announce the count.
 // - Playwright's Enter in the focused field submits the form, as a person's does, and VoiceOver
 //   hears what the page does next whichever way the key arrived.
 // - VoiceOver's next heading from the field is the first result's, because the page heading comes
