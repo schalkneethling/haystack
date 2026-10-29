@@ -434,8 +434,8 @@ search {
 }
 
 /* With message-bar.js, which can close it, the bar sticks to the top of the viewport, above the
-   content it scrolls over. */
-.message-bar[data-enhanced] {
+   content it scrolls over, while it is at most a third of the viewport's height. */
+.message-bar[data-stuck] {
   inset-block-start: 0;
   position: sticky;
   z-index: 1;

@@ -141,8 +141,10 @@ function enhance(form, field, button, status) {
   // Safari, which does not focus a clicked button, can always go to it. Otherwise:
   // - The processing message follows a press of Continue, or of Enter in the field, so it may
   //   take focus from anywhere in the form.
-  // - A failure's message may take focus only from Continue or from the message it replaces.
-  //   A user who went back to the field while the lookup ran is typing there, and keeps it.
+  // - A failure's message may take focus only from Continue, from the message it replaces, or
+  //   from the page's heading, where the message bar's Close puts focus after emptying the
+  //   message (message-bar.js). A user who went back to the field while the lookup ran is typing
+  //   there, and keeps it.
   // A user who has moved elsewhere keeps their place, and the message is written without focus.
   /** @param {"processing" | "failure"} kind */
   function mayTakeFocus(kind) {
@@ -152,7 +154,9 @@ function enhance(form, field, button, status) {
     }
     return kind === "processing"
       ? form.contains(active)
-      : active === button || status.contains(active);
+      : active === button ||
+          status.contains(active) ||
+          active === document.querySelector("main h1");
   }
 
   // Writes a message in the status region ANNOUNCE_DELAY_MS from now, replacing the one there,

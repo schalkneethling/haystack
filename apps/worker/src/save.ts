@@ -110,11 +110,13 @@ function invalidPage(invalidFields: readonly CaptureField[], signedIn: boolean):
 function sensitivePage(reason: SensitiveUrlReason): Response {
   return htmlResponse(
     "This link can't be saved",
+    // The reason is the page's content, so it comes first, and the page has no message bar: its
+    // notice explains the reason, and isn't a message about something the person did.
     html`<h1>This link can't be saved</h1>
-      ${messageBar(SENSITIVE_NOTICE)}
-      <p>${SENSITIVE_URL_EXPLANATIONS[reason]}</p>`,
+      <p>${SENSITIVE_URL_EXPLANATIONS[reason]}</p>
+      ${SENSITIVE_NOTICE}`,
     400,
-    SIGNED_IN_WITH_MESSAGES,
+    SIGNED_IN,
   );
 }
 
