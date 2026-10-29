@@ -8,7 +8,8 @@ import * as v from "valibot";
 import { describe, expect, it } from "vite-plus/test";
 import { MessageResponse } from "../apps/worker/src/enrichment/anthropic-messages.ts";
 import { RepositoryResponse } from "../apps/worker/src/enrichment/github-client.ts";
-import { SystemOneResponse } from "../apps/worker/src/enrichment/jev-client.ts";
+import { NoulAnswer, SystemOneResponse } from "../apps/worker/src/enrichment/jev-client.ts";
+import { KindAnswerSchema } from "../apps/worker/src/enrichment/jev-questions.ts";
 import {
   AI_GATEWAY_CHECK,
   ANTHROPIC_CHECK,
@@ -85,12 +86,16 @@ const REPOSITORY = {
   topics: ["bookmarks", "cloudflare-workers"],
 };
 
-/** Each check, with the answer its client accepts, and a field of its client's root schema. */
+/**
+ * Each check, with the answer its client accepts, its client's root schema and a field of it, and
+ * the client's schemas for the parts after the root, in the check's order.
+ */
 const CASES: readonly {
   readonly check: ContractCheck;
   readonly answer: object;
   readonly schema: v.ObjectSchema<v.ObjectEntries, undefined>;
   readonly field: string;
+  readonly partSchemas: readonly v.GenericSchema[];
   // The key the request must carry, in the header the client sends it in.
   readonly keys: readonly (keyof typeof KEYS)[];
 }[] = [
@@ -99,6 +104,7 @@ const CASES: readonly {
     answer: JEV_ANSWER,
     schema: SystemOneResponse,
     field: "usage",
+    partSchemas: [NoulAnswer, KindAnswerSchema],
     keys: ["TYPESAFE_API_KEY"],
   },
   {
@@ -106,6 +112,7 @@ const CASES: readonly {
     answer: MESSAGE,
     schema: MessageResponse,
     field: "stop_reason",
+    partSchemas: [],
     keys: ["ANTHROPIC_API_KEY"],
   },
   {
@@ -113,6 +120,7 @@ const CASES: readonly {
     answer: MESSAGE,
     schema: MessageResponse,
     field: "stop_reason",
+    partSchemas: [],
     keys: ["ANTHROPIC_API_KEY", "AI_GATEWAY_TOKEN"],
   },
   {
@@ -120,6 +128,7 @@ const CASES: readonly {
     answer: REPOSITORY,
     schema: RepositoryResponse,
     field: "private",
+    partSchemas: [],
     keys: ["GITHUB_TOKEN"],
   },
 ];
@@ -176,7 +185,16 @@ function renamed(
 describe("each check", () => {
   it.each(CASES)(
     "$check.name passes an answer its client accepts, with one request",
-    async ({ check, answer, keys }) => {
+    async ({ check, answer, schema, partSchemas, keys }) => {
+      // The check validates with the client's own schema objects, not copies of them. knip can't
+      // show this, because each schema is also used in its own file.
+      expect(check.parts.map(({ schema: partSchema }) => partSchema)).toHaveLength(
+        1 + partSchemas.length,
+      );
+      expect(check.parts[0]?.schema).toBe(schema);
+      partSchemas.forEach((partSchema, index) => {
+        expect(check.parts[index + 1]?.schema).toBe(partSchema);
+      });
       const { fetcher, sent } = fakeFetch(() => Response.json(answer));
       await expect(runContractCheck(check, config, fetcher)).resolves.toEqual({ result: "passed" });
       expect(sent).toHaveLength(1);
@@ -255,6 +273,21 @@ describe("the Jev check", () => {
       result: "invalid",
       field: "answers.kind.probabilities",
     });
+  });
+
+  it("names the probabilities, not a key Jev sent in them", async () => {
+    // A key of `probabilities` comes from the response, so it could be anything, a key included.
+    const probabilities = { ...KIND_PROBABILITIES, [KEYS.TYPESAFE_API_KEY]: 2 };
+    const answer = {
+      ...JEV_ANSWER,
+      answers: { ...JEV_ANSWER.answers, kind: { ...JEV_ANSWER.answers.kind, probabilities } },
+    };
+    const { fetcher } = fakeFetch(() => Response.json(answer));
+    const lines: string[] = [];
+    await runContractChecks([JEV_CHECK], config, fetcher, (line) => lines.push(line));
+    expect(lines).toEqual([
+      `${JEV_CHECK.name}: failed, answers.kind.probabilities didn't validate`,
+    ]);
   });
 });
 
@@ -375,6 +408,35 @@ describe("the report", () => {
     for (const key of Object.values(KEYS)) {
       expect(lines.join("\n")).not.toContain(key);
     }
+  });
+
+  it("names an unexpected error by its name, never its message", async () => {
+    const check: ContractCheck = {
+      ...GITHUB_CHECK,
+      request() {
+        throw new TypeError(`Couldn't build the request with ${KEYS.GITHUB_TOKEN}`);
+      },
+    };
+    const { fetcher, sent } = fakeFetch(passingAnswer);
+    const lines: string[] = [];
+    await runContractChecks([check], config, fetcher, (line) => lines.push(line));
+    expect(lines).toEqual(["GitHub: not sent, UNEXPECTED_ERROR (TypeError)"]);
+    expect(sent).toHaveLength(0);
+  });
+
+  it("leaves out an unexpected error's name when it isn't a plain name", async () => {
+    const check: ContractCheck = {
+      ...GITHUB_CHECK,
+      request() {
+        throw Object.assign(new Error("Couldn't build the request"), {
+          name: `Error ${KEYS.GITHUB_TOKEN}`,
+        });
+      },
+    };
+    const { fetcher } = fakeFetch(passingAnswer);
+    const lines: string[] = [];
+    await runContractChecks([check], config, fetcher, (line) => lines.push(line));
+    expect(lines).toEqual(["GitHub: not sent, UNEXPECTED_ERROR"]);
   });
 
   it("reports a request past its time limit", async () => {

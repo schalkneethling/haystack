@@ -318,9 +318,6 @@ importers:
       valibot:
         specifier: ^1.5.0
         version: 1.5.0(typescript@7.0.2)
-      wrangler:
-        specifier: 4.151.3
-        version: 4.151.3(@types/node@25.9.9)
     devDependencies:
       '@types/node':
         specifier: ^25.9.9
@@ -328,6 +325,9 @@ importers:
       varlock:
         specifier: ^1.23.0
         version: 1.23.0
+      wrangler:
+        specifier: 4.151.3
+        version: 4.151.3(@types/node@25.9.9)
 
   packages/schemas:
     dependencies:
