@@ -145,6 +145,9 @@ if (main !== null && typeof HTMLDialogElement === "function") {
   // look as if it stopped a delete that the server goes on to make. The buttons stay focusable
   // (aria-disabled, not disabled), so focus does not fall back to the page.
   let busy = false;
+  // The timer that writes the last delete's message (see the confirm listener).
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let announcement;
 
   /** @param {boolean} value */
   function setBusy(value) {
@@ -228,8 +231,9 @@ if (main !== null && typeof HTMLDialogElement === "function") {
     // VoiceOver read the heading that took focus and dropped a message written 100 ms after it
     // every time, and spoke one written 500 ms after it every time (plan, "Deleting
     // bookmarks"). If the dialog is opened again within those 500 ms, the page is inert again
-    // before the message is written, so the message is lost. That is accepted because the user
-    // would have to move to another Delete button and press it in that time.
+    // before the message is written, so the message is lost, and a second delete in that time
+    // replaces it. That is accepted because the user would have to move to another Delete
+    // button and press it in that time.
     dialog.close();
     if (removed) {
       removeItem(item);
@@ -239,7 +243,19 @@ if (main !== null && typeof HTMLDialogElement === "function") {
       // bookmark's Delete button in the new results, or to the page heading.
       moveFocus(itemInPage(item)?.querySelector(`${DELETE_FORMS} button`) ?? heading);
     }
-    setTimeout(() => announce(message), ANNOUNCE_DELAY_MS);
+    // A message still waiting from an earlier delete is dropped, so only the newest is written.
+    clearTimeout(announcement);
+    announcement = setTimeout(() => announce(message), ANNOUNCE_DELAY_MS);
+  });
+
+  // Leaving the page and coming back can restore it from the back-forward cache as it was left.
+  // A message still waiting to be written belongs to that moment, so it is dropped: written after
+  // the restore, it would be announced as if the delete had just happened. search.js and
+  // address-form.js drop theirs the same way.
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted) {
+      clearTimeout(announcement);
+    }
   });
 
   // Closing returns focus to the Delete button that opened the dialog (a native <dialog>

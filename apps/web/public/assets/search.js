@@ -322,9 +322,16 @@ function enhance(form, field, button, list, status, emptyState) {
   }
 
   // Every outcome shows its results, or none, so the empty state that the delete dialog showed
-  // after the last result of the search before goes with them.
+  // after the last result of the search before goes with them. Focus can be in the results,
+  // where the delete dialog moves it after a delete (#208), or where a person moved it while the
+  // next search ran. The results are about to be removed, and focus with them would fall to the
+  // page, so it moves to the Search button first, as Try again's does, where a person searches
+  // again.
   /** @param {Result[]} results */
   function show(results) {
+    if (list.contains(document.activeElement)) {
+      button.focus();
+    }
     list.replaceChildren(...results.map(resultItem));
     list.hidden = results.length === 0;
     emptyState?.setAttribute("hidden", "");
@@ -385,9 +392,12 @@ function enhance(form, field, button, list, status, emptyState) {
     // Results from an earlier query would read as this query's, so they go.
     show([]);
     if (outcome.kind === "signedOut") {
-      // Sign-in comes back to this page. Trying again would only be signed out again.
+      // Sign-in comes back to this page, by its own path rather than the address's, because
+      // after a delete without the dialog the page is shown at the delete's address (#208),
+      // which sign-in would ask for with GET and get a 404. Trying again would only be signed out
+      // again.
       const signIn = /** @type {HTMLAnchorElement} */ (element("a", MESSAGES.signIn));
-      signIn.href = `/auth/sign-in?return_to=${encodeURIComponent(window.location.pathname)}`;
+      signIn.href = `/auth/sign-in?return_to=${encodeURIComponent(SEARCH_PAGE)}`;
       announce(paragraphOf(`${MESSAGES.signedOut} `, signIn));
       return;
     }

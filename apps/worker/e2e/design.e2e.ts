@@ -37,6 +37,23 @@ async function expectNoHorizontalScroll(page: Page): Promise<void> {
   expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
 }
 
+// An open modal dialog is in the top layer, which the document's scroll width doesn't measure,
+// so the dialog's own box is checked: inside the viewport, and with nothing in it wider than it.
+async function expectDialogInViewport(page: Page, viewportWidth: number): Promise<void> {
+  const dialog = page.getByRole("dialog");
+  const box = await dialog.boundingBox();
+  if (box === null) {
+    throw new Error("The open dialog has no box");
+  }
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(viewportWidth);
+  const { scrollWidth, clientWidth } = await dialog.evaluate((element) => ({
+    scrollWidth: element.scrollWidth,
+    clientWidth: element.clientWidth,
+  }));
+  expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
+}
+
 // The save links that sign-in returns to after a save whose session had ended (#34): with the
 // values the user entered, and with the note that they did not fit in the link.
 const RETURNED_FORMS = [
@@ -195,6 +212,9 @@ test.describe("at a 320 px viewport, nothing scrolls horizontally", () => {
       test(`the search page ${state}, with a long title in a result`, async ({ page }) => {
         await bringSearchPageTo(page, state, LONG_TITLE);
         await expectNoHorizontalScroll(page);
+        if (state === "with the delete dialog open") {
+          await expectDialogInViewport(page, 320);
+        }
       });
     }
 

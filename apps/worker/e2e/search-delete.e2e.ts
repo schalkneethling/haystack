@@ -11,6 +11,7 @@ import { installPausedClock } from "./held-lookups.ts";
 import {
   answerSearches,
   holdSearches,
+  SEARCH_MESSAGES,
   SEARCH_STATUS,
   type StubbedAnswer,
   type StubbedResult,
@@ -29,6 +30,11 @@ function field(page: Page) {
 
 function status(page: Page) {
   return page.getByRole("status").and(page.locator(SEARCH_STATUS));
+}
+
+/** The Search button with its own label, as it is when no search runs. */
+function searchButton(page: Page) {
+  return page.getByRole("button", { name: "Search", exact: true });
 }
 
 function results(page: Page) {
@@ -289,6 +295,63 @@ test("results that replaced the item while the dialog was open lose the deleted 
   expect(await query("SELECT id FROM bookmarks WHERE id = ?", first.id)).toEqual([]);
 });
 
+// The answer to a search that was running when the dialog closed replaces the results, with the
+// heading the dialog moved focus to. Focus moves to the Search button first, so it never falls to
+// the page. The answer was made before the delete, so it can list the deleted bookmark again,
+// which is accepted (plan, "Search page").
+test("a search answering after a delete moves focus to the Search button, not the page", async ({
+  page,
+  query,
+}) => {
+  const saved = await saveResults(page, query, "search-delete-late", [
+    "First guide",
+    "Second guide",
+  ]);
+  const searches = await holdSearches(page);
+  await page.goto("/");
+  await field(page).fill("guides");
+  await field(page).press("Enter");
+  await (await searches.next(1)).answer(saved);
+  await expect(results(page)).toHaveCount(2);
+
+  await field(page).fill("more guides");
+  await field(page).press("Enter");
+  const late = await searches.next(2);
+  await deleteResult(page, "First guide");
+  await expect(results(page).getByRole("heading", { name: "Second guide" })).toBeFocused();
+
+  await late.answer(saved);
+  await expect(searchButton(page)).toBeFocused();
+  await expect(results(page)).toHaveCount(2);
+  await expect(status(page)).toHaveText(countMessage(2));
+});
+
+// Leaving the page and coming back can restore it from the back-forward cache as it was left. A
+// message still waiting to be written belongs to that moment, so a restore drops it. The clock is
+// paused, so the message is still waiting when the event is dispatched.
+test("a page restored from the back-forward cache drops a deletion message still waiting", async ({
+  page,
+  query,
+}) => {
+  const saved = await saveResults(page, query, "search-delete-restored", ["First guide"]);
+  await installPausedClock(page);
+  await answerSearches(page, () => saved);
+  await page.goto("/");
+  await field(page).fill("guides");
+  await field(page).press("Enter");
+  await expect(results(page)).toHaveCount(1);
+  await page.clock.runFor(500);
+  await expect(status(page)).toHaveText(countMessage(1));
+
+  await deleteResult(page, "First guide");
+  await page.evaluate(() =>
+    window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })),
+  );
+  await page.clock.runFor(1_000);
+  await expect(status(page)).toHaveText(countMessage(1));
+  await expect(page.getByText(EMPTY_STATE)).toBeVisible();
+});
+
 // A browser without the dialog element gets the confirmation page. form.submit() skips the
 // dialog script's submit listener, which is what such a browser does, while search.js, which
 // builds the results, still runs.
@@ -335,5 +398,32 @@ test.describe("without the dialog", () => {
     await expect(page).toHaveTitle("Search - Haystack");
     expect(new URL(page.url()).pathname).toBe("/");
     expect(await query("SELECT id FROM bookmarks WHERE id = ?", saved[0]?.id)).toHaveLength(1);
+  });
+
+  // The page is shown at the delete's own address after confirming, which sign-in would ask for
+  // with GET, and get a 404.
+  test("a later search after the session ended offers sign-in back to the search page", async ({
+    page,
+    query,
+  }) => {
+    const saved = await saveResults(page, query, "search-delete-sign-in", ["First guide"]);
+    await answerSearches(page, (asked): StubbedAnswer =>
+      asked === "guides" ? saved : { status: 401 },
+    );
+    await page.goto("/");
+    await field(page).fill("guides");
+    await field(page).press("Enter");
+    await expect(status(page)).toHaveText(countMessage(1));
+    await openConfirmation(page, "First guide");
+    await page.getByRole("button", { name: "Delete" }).click();
+    await expect(page).toHaveTitle("Deleted “First guide” - Search - Haystack");
+
+    await field(page).fill("more guides");
+    await field(page).press("Enter");
+    await expect(status(page)).toHaveText(SEARCH_MESSAGES.signedOut);
+    await expect(status(page).getByRole("link", { name: "Sign in again" })).toHaveAttribute(
+      "href",
+      "/auth/sign-in?return_to=%2F",
+    );
   });
 });

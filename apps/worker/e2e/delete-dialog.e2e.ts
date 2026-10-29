@@ -3,6 +3,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
+import { installPausedClock } from "./held-lookups.ts";
 import { listStatus } from "./list-status.ts";
 import { saveThroughForm } from "./save-through-form.ts";
 
@@ -240,6 +241,26 @@ test("after a failed delete, the status message is written once focus is back on
     focusedItem: "Middle failed",
   });
   expectDelayed(announcements[0]);
+});
+
+// Leaving the page and coming back can restore it from the back-forward cache as it was left. A
+// message still waiting to be written belongs to that moment, so a restore drops it (#208's
+// review). The clock is paused, so the message is still waiting when the event is dispatched.
+test("a page restored from the back-forward cache drops a message still waiting", async ({
+  page,
+}) => {
+  await saveThree(page, "restored");
+  await installPausedClock(page);
+  await page.goto("/saved-links");
+  await page.getByRole("button", { name: "Delete Middle restored" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByRole("dialog")).toBeHidden();
+  await expect(page.getByRole("button", { name: "Delete Middle restored" })).toHaveCount(0);
+  await page.evaluate(() =>
+    window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })),
+  );
+  await page.clock.runFor(1_000);
+  await expect(listStatus(page)).toBeEmpty();
 });
 
 test("a bookmark already deleted elsewhere is removed and announced", async ({ page, query }) => {

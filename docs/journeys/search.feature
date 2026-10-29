@@ -191,6 +191,21 @@ Feature: Searching my saved links
     And focus moves to the title of the next result, "A third guide"
     And the status message says "Deleted “A guide”."
 
+  @playwright:apps/worker/e2e/search-delete.e2e.ts
+  Scenario: A new search's results arrive after I deleted a result
+    The new results replace the title that focus moved to after the delete,
+    so focus moves to the button "Search" first, and never falls to the page.
+    The new search was answered before the delete, so its results may still
+    show the deleted link. Its Delete button then says that the link was
+    already deleted.
+
+    Given I searched for "guides", which found "A guide" and "Another guide"
+    And I searched again, for "more guides", and Haystack has not answered yet
+    And I deleted "A guide" from the results, and focus moved to the title "Another guide"
+    When the new results arrive
+    Then focus moves to the button "Search"
+    And the page says how many links the new search found, in place of "Deleted “A guide”."
+
   @playwright:apps/worker/e2e/search.e2e.ts
   Scenario: Only a secure address is a link
     Haystack saves only https links, and a result's title links to its address
@@ -323,12 +338,15 @@ Feature: Searching my saved links
     Then the field keeps focus, and what I type goes on into the field
 
   @playwright:apps/worker/e2e/search.e2e.ts
+  @playwright:apps/worker/e2e/search-delete.e2e.ts
   @integration:apps/worker/test/search-page.test.ts
   Scenario: Searching after my session ended
     Trying again would only find me signed out again, so there is no "Try
-    again". The tests check the link's address, and that opening the search
-    page signed out goes through sign-in and names the search page to return
-    to, but no test follows the link through sign-in.
+    again". The link returns to the search page, also when the page is shown
+    at a delete's address, after a delete through the confirmation page. The
+    tests check the link's address, and that opening the search page signed
+    out goes through sign-in and names the search page to return to, but no
+    test follows the link through sign-in.
 
     Given I opened the search page while I was signed in
     And my session has ended since

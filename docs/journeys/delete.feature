@@ -120,6 +120,18 @@ Feature: Deleting a saved link
       Then VoiceOver reads it as dimmed
 
     @playwright:apps/worker/e2e/delete-dialog.e2e.ts
+    @playwright:apps/worker/e2e/search-delete.e2e.ts
+    Scenario: Coming back to the page just after deleting a link
+      A browser can keep a page I leave, and show it again as I left it when
+      I come back. A message still waiting to be written belongs to the moment
+      I left, so it is dropped. The tests send the event a browser sends for a
+      restored page, on the saved links page and on the search page.
+
+      Given I pressed "Delete" in the dialog for "A guide", and the card is gone
+      When I leave the page within half a second, and come back to it as I left it
+      Then the status message "Deleted “A guide”." doesn't appear
+
+    @playwright:apps/worker/e2e/delete-dialog.e2e.ts
     Scenario: A link that was already deleted somewhere else
       Given I opened the dialog for "A guide"
       And I deleted "A guide" in another tab meanwhile
