@@ -207,10 +207,14 @@ describe("readSearchFlags", () => {
     });
   });
 
-  it("gives search off when the binding is missing", async () => {
+  it("gives search off when the binding is missing, and logs it as an outage", async () => {
     const missing = undefined as unknown as FlagReader;
 
     expect(await readSearchFlags(missing)).toEqual({ enabled: false });
+    // Calling a getter on no binding throws a TypeError, which is logged by its name.
+    expect(error).toHaveBeenCalledWith("Flags unavailable, using the defaults:", {
+      code: "TypeError",
+    });
   });
 
   it.each(["true", 1, null])("replaces a switch that isn't a boolean (%s)", async (value) => {

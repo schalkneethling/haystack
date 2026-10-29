@@ -193,6 +193,8 @@ export async function readSearchFlags(flags: FlagReader): Promise<SearchFlags> {
   return {
     enabled: checkedSwitch(
       SEARCH_ENABLED_FLAG,
+      // `true`: a missing flag isn't logged, until #218 creates it. #218 then makes this `false`,
+      // so that a flag deleted or renamed in the Flagship app is logged, as `sweep-enabled` is.
       valueOf(SEARCH_ENABLED_FLAG, enabled, true),
       SEARCH_FLAG_DEFAULTS.enabled,
     ),

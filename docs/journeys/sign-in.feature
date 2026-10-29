@@ -15,6 +15,11 @@ Feature: Signing in and out
   @integration:apps/worker/test/search-page.test.ts
   @integration:apps/worker/test/search-switch.test.ts
   Scenario: Signing in with an allowed Google account
+    The sign-in tests follow the sign-in itself to the home page. Which page
+    the home page is, with search switched on and off, is checked by
+    search-page.test.ts and search-switch.test.ts with a seeded session,
+    without signing in.
+
     Given I am not signed in to Haystack
     When I open Haystack
     Then I am sent to Google to sign in

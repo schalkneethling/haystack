@@ -11,7 +11,7 @@ import { createTestWorker, type TestWorker } from "./test-worker.ts";
 import { expectValidHtml } from "./validate-html.ts";
 
 const ALLOWED = { ALLOWED_EMAILS: "owner@example.com" };
-const SEARCH_LINK = /<a class="nav-link" href="\/" data-search-link[^>]*>Search<\/a>/;
+const SEARCH_LINK = /<a class="nav-link" href="\/"[^>]*>Search<\/a>/;
 // On the saved links page, its own link is marked as the current page.
 const SAVED_LINKS_LINK =
   /<a class="nav-link" href="\/saved-links"( aria-current="page")?>Saved links<\/a>/;
@@ -62,7 +62,8 @@ describe.each([
       const markup = await (await get(path)).text();
       expect(markup).toMatch(SAVED_LINKS_LINK);
       expect(markup).not.toMatch(SEARCH_LINK);
-      expect(markup).not.toContain("data-search-link");
+      // The wordmark links to `/` too, outside the navigation, and stays.
+      expect(markup).toContain('<a class="wordmark" href="/">');
       await expectValidHtml(markup);
     },
   );
@@ -78,8 +79,11 @@ describe("search switched on", () => {
     async (path) => {
       const markup = await (await get(path)).text();
       expect(markup).toMatch(SEARCH_LINK);
+      // The only guard for the navigation's whitespace, which withoutSearchLink depends on:
+      // Search follows `<nav>` on the same line, so taking it out leaves no line of only spaces,
+      // which html-validate rejects in the tests above.
       expect(markup).toContain(
-        '<nav class="site-nav" aria-label="Main"><a class="nav-link" href="/" data-search-link>Search</a>\n            <a class="nav-link" href="/saved-links"',
+        '<nav class="site-nav" aria-label="Main"><a class="nav-link" href="/">Search</a>\n            <a class="nav-link" href="/saved-links"',
       );
     },
   );

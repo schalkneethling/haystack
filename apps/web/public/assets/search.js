@@ -37,7 +37,8 @@ const SEARCH_PATH = "/api/search";
 // has dropped messages written in the same task as a change to the page. At 100 ms, the address
 // form's delay, VoiceOver never spoke the count on CI (run 40849016780, twice). 500 ms is the
 // delete dialog's, the delay at which VoiceOver spoke its message after the page changed (plan,
-// "Deleting bookmarks"). The messages are kept here, so they are easy to change.
+// "Deleting bookmarks"), but it didn't speak the count at 500 ms either (run 40854364804), and
+// making it speak the count is #237. The messages are kept here, so they are easy to change.
 const ANNOUNCE_DELAY_MS = 500;
 const MESSAGES = {
   empty: "Type what you're looking for, then press Search.",

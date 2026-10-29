@@ -103,9 +103,7 @@ describe("GET /", () => {
 
   it("marks Search as the current page, and not Saved links", async () => {
     const markup = await searchPage();
-    expect(markup).toContain(
-      '<a class="nav-link" href="/" data-search-link aria-current="page">Search</a>',
-    );
+    expect(markup).toContain('<a class="nav-link" href="/" aria-current="page">Search</a>');
     expect(markup).toContain('<a class="nav-link" href="/saved-links">Saved links</a>');
   });
 
