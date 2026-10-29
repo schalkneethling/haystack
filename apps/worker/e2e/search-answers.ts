@@ -3,7 +3,8 @@
 // #214, and the stub lives here rather than in the Worker, because a path that only tests use
 // does not belong in production code (plan, "Testing strategy"). Every answer is checked against
 // the web answer's schema first, so the page is tested against the shape the real route will
-// give.
+// give. A result's ID is made up, unless the test saved the bookmark (`saveResults`), which a
+// test that deletes a result needs (#208).
 import { SearchAnswer } from "@haystack/schemas";
 import { expect, type Page, type Request, type Route } from "@playwright/test";
 import * as v from "valibot";
