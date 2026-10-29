@@ -33,36 +33,49 @@ describe("SearchAnswer", () => {
     url: "https://example.com/guide",
   };
 
+  const valid = { runId: "r-1", outcome: "ok", results: [result] };
+
   it("accepts a ranked list with the run's ID", () => {
-    const answer = { runId: "r-1", results: [result, { ...result, id: "b-2", description: null }] };
+    const answer = { ...valid, results: [result, { ...result, id: "b-2", description: null }] };
+    expect(v.parse(SearchAnswer, answer)).toEqual(answer);
+  });
+
+  // Some of Jev's chunks failed, so the results are those of the chunks that succeeded.
+  it.each([
+    ["with results", [result]],
+    ["with none", []],
+  ])("accepts a partial answer %s", (_, results) => {
+    const answer = { ...valid, outcome: "partial", results };
     expect(v.parse(SearchAnswer, answer)).toEqual(answer);
   });
 
   it("accepts an ID as crypto.randomUUID() writes it", () => {
-    const answer = { runId: "r-1", results: [{ ...result, id: crypto.randomUUID() }] };
+    const answer = { ...valid, results: [{ ...result, id: crypto.randomUUID() }] };
     expect(v.safeParse(SearchAnswer, answer).success).toBe(true);
   });
 
   // The page puts the ID into element IDs that an aria-labelledby list refers to, and such a list
   // is split on whitespace.
   it.each(["", "a b", "a\tb", "a\nb", " a", "a<b", 'a"b'])("rejects the result ID %j", (id) => {
-    const answer = { runId: "r-1", results: [{ ...result, id }] };
+    const answer = { ...valid, results: [{ ...result, id }] };
     expect(v.safeParse(SearchAnswer, answer).success).toBe(false);
   });
 
   it("accepts an answer with no results", () => {
-    expect(v.safeParse(SearchAnswer, { runId: "r-1", results: [] }).success).toBe(true);
+    expect(v.safeParse(SearchAnswer, { ...valid, results: [] }).success).toBe(true);
   });
 
+  // A search whose every chunk failed is answered with an error status (#214), never as an
+  // answer with no results, which would read as "nothing matches".
   it.each([
-    ["without the run's ID", { results: [result] }],
-    ["without results", { runId: "r-1" }],
-    ["with a result without an ID", { runId: "r-1", results: [{ ...result, id: undefined }] }],
-    [
-      "with a missing description",
-      { runId: "r-1", results: [{ ...result, description: undefined }] },
-    ],
-    ["with a title that is not a string", { runId: "r-1", results: [{ ...result, title: 1 }] }],
+    ["without the run's ID", { ...valid, runId: undefined }],
+    ["without results", { ...valid, results: undefined }],
+    ["without an outcome", { ...valid, outcome: undefined }],
+    ["with the failed outcome", { ...valid, outcome: "failed", results: [] }],
+    ["with an unknown outcome", { ...valid, outcome: "complete" }],
+    ["with a result without an ID", { ...valid, results: [{ ...result, id: undefined }] }],
+    ["with a missing description", { ...valid, results: [{ ...result, description: undefined }] }],
+    ["with a title that is not a string", { ...valid, results: [{ ...result, title: 1 }] }],
   ])("rejects an answer %s", (_, answer) => {
     expect(v.safeParse(SearchAnswer, answer).success).toBe(false);
   });
