@@ -316,9 +316,8 @@ main > :where(p, ul, div) {
   overflow-wrap: anywhere;
 }
 
-/* The address form (#97) and the search form (#206). The field and the button share a row,
-   capped at the form pages' width, and the button moves under the field when the row has no room
-   for both. */
+/* The address form (#97) and the search form (#206). The field and the button share a row that
+   fills the panel, and the button moves under the field when the row has no room for both. */
 .address-form,
 .search-form {
   gap: var(--space-s);
@@ -336,23 +335,36 @@ main > :where(p, ul, div) {
   font-size: var(--text-small);
 }
 
+/* The gap under the field, when the button wraps, is twice the gap beside it, because the two
+   focus rings, each 3 px out from its control, otherwise nearly meet on a phone. */
 .address-row,
 .search-row {
+  column-gap: var(--space-s);
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-s);
-  max-inline-size: var(--width-narrow);
+  row-gap: calc(2 * var(--space-s));
 }
 
 /* A field's automatic minimum width grows with the text size, so `min-inline-size: 0` lets it
-   shrink to the row at any text size instead of overflowing. */
+   shrink to the row at any text size instead of overflowing.
+
+   The field and the button both grow, so the row is always full. On one row, the field's far
+   larger share of the growth gives it nearly all the room the button doesn't need. When the button
+   wraps, it is alone on its line, so it grows to the line's width, which is the field's. The
+   button doesn't shrink below its label, so when its label becomes "Processing…", the field gives
+   it the room. */
+.address-row > .button,
+.search-row > .button {
+  flex: 1 0 auto;
+}
+
 .address-input,
 .search-input {
   background-color: var(--color-field);
   border: 1px solid var(--color-control-border);
   border-radius: var(--radius-pill);
   color: var(--color-ink);
-  flex: 1 1 18rem;
+  flex: 1000 1 18rem;
   font: inherit;
   min-block-size: var(--target-primary);
   min-inline-size: 0;
