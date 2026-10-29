@@ -241,14 +241,14 @@ _Answered 2026-10-28 (#202)._ Schalk read the limits, and they are far from clos
 | Size of one database | at most 10 GB            | (a hard limit)           |
 | Bound parameters     | at most 100 in one query | (a hard limit)           |
 
-The estimate below counts one `search_runs` row and one `search_answers` row per candidate for each search, and, for reads, one bookmark row per candidate for each search and one per bookmark for each sweep run. The pricing page says an index adds a written row when a write includes the indexed column, and `search_answers`' primary key is an index, so the written figures are given without and with it. They are at least these figures, because `search_runs`' primary key adds one more index row for each search, 1,500 a month at 50 searches a day, which is too few to change them. Phase 12's evaluation runs (`eval` channel) write the same rows as a search: about 30 labeled queries for each mode or `match_text` derivation compared, a few hundred runs in all. That is fewer than the 1,500 searches a month that the estimate already counts, so even a month with both stays within twice the figures below. Reading each candidate's enrichment too would add about as many reads again as the searches make, which changes nothing at these sizes.
+The estimate below counts one `search_runs` row and one `search_answers` row per candidate for each search, and, for reads, one bookmark row per candidate for each search and one per bookmark for each sweep run. The pricing page says an index adds a written row when a write includes the indexed column. `search_answers` has two indexes, its primary key and the index on `bookmark_id` that lets deleting a bookmark find its answers without reading the whole log (#204), and every answer sets both columns, so each answer writes 3 rows: the table's row and one in each index. The written figures count that. They are at least these figures, because `search_runs`' primary key adds one more index row for each search, as before, 1,500 a month at 50 searches a day, which is too few to change them. _Changed 2026-10-29 (#204):_ the figures first counted the primary key as `search_answers`' only index, which gave about 20,000 to 38,000 rows written for today's collection and about 1.5 to 3 million for the example, without and with it. Phase 12's evaluation runs (`eval` channel) write the same rows as a search: about 30 labeled queries for each mode or `match_text` derivation compared, a few hundred runs in all. That is fewer than the 1,500 searches a month that the estimate already counts, so even a month with both stays within twice the figures below. Reading each candidate's enrichment too would add about as many reads again as the searches make, which changes nothing at these sizes.
 
-| A month of 30 days, at 50 searches a day | Rows written           | Rows read                                             | `search_answers` storage, at about 200 bytes a row |
-| ---------------------------------------- | ---------------------- | ----------------------------------------------------- | -------------------------------------------------- |
-| Today's collection, 12 bookmarks         | about 20,000 to 38,000 | about 27,000 (18,000 for search, 8,600 sweep)         | about 3.6 MB                                       |
-| The example above, 1,000 bookmarks       | about 1.5 to 3 million | about 2.2 million (1.5 million search, 720,000 sweep) | about 300 MB                                       |
+| A month of 30 days, at 50 searches a day | Rows written      | Rows read                                             | `search_answers` storage, at about 200 bytes a row |
+| ---------------------------------------- | ----------------- | ----------------------------------------------------- | -------------------------------------------------- |
+| Today's collection, 12 bookmarks         | about 56,000      | about 27,000 (18,000 for search, 8,600 sweep)         | about 3.6 MB                                       |
+| The example above, 1,000 bookmarks       | about 4.5 million | about 2.2 million (1.5 million search, 720,000 sweep) | about 300 MB                                       |
 
-Both are a small part of what is included: 3 million is 6% of the rows written, and 2.2 million is less than a ten-thousandth of the rows read. Storage is the only figure that grows without bound. The 200 bytes a row is an estimate, not a measurement. At 1,000 bookmarks and 50 searches a day, the answers grow by about 3.65 GB a year, so they pass the included 5 GB after about 16 months and the database's 10 GB limit after about 33 months, before anything else in the database is counted. Schalk agrees that this is unlikely to matter, so there is no retention window for now. If it is added later, the rule above still holds: no sampling.
+Both are a small part of what is included: 4.5 million is 9% of the rows written, and 2.2 million is less than a ten-thousandth of the rows read. Storage is the only figure that grows without bound. The 200 bytes a row is an estimate, not a measurement, and it leaves out the index on `bookmark_id`, which also grows by one entry for each answer. At 1,000 bookmarks and 50 searches a day, the answers grow by about 3.65 GB a year, so they pass the included 5 GB after about 16 months and the database's 10 GB limit after about 33 months, before anything else in the database is counted. Schalk agrees that this is unlikely to matter, so there is no retention window for now. If it is added later, the rule above still holds: no sampling.
 
 - **Answer rows are inserted in groups** that fit the 100-parameter limit, through `db.batch()` (#212). A row binds one parameter for each column it sets, so with all 8 of `search_answers`' columns set, one statement holds at most 12 rows.
 - **Past the included amounts, Workers Paid bills rather than blocks,** as the pricing page says. Schalk would rather Haystack fail than pay, so #229 adds guards that stop work before that.
@@ -369,7 +369,7 @@ Rolling back a Worker deployment does not roll back D1. Every migration must the
 
 The bookmarks exist only in the production database, so "Backups and restore" below says how it is protected and how to restore it (#91).
 
-**Conventions.** All timestamps are `INTEGER` Unix epoch milliseconds, and application code sets them. Do not use `datetime('now')` defaults. SQLite's `datetime('now')` gives `2026-10-05 21:14:00`, and JavaScript's `toISOString()` gives `2026-10-05T21:14:00.000Z`. If both formats are compared as text, for example `expires_at < ?` in the session lookup, the comparison is wrong on the same day, because a space sorts before `T`. One numeric representation removes that type of bug. Application code generates IDs with `crypto.randomUUID()`. Cascading deletes need foreign key enforcement. D1 enforces foreign keys by default, equivalent to SQLite's `PRAGMA foreign_keys = on` ([D1 foreign keys](https://developers.cloudflare.com/d1/sql-api/foreign-keys/)). The deletion tests in `apps/worker/test/db.test.ts` prove the schema's delete behavior in the local runtime: deleting a user deletes their sessions, a user who still has bookmarks cannot be deleted, and deleting a bookmark deletes its enrichments and failure records.
+**Conventions.** All timestamps are `INTEGER` Unix epoch milliseconds, and application code sets them. Do not use `datetime('now')` defaults. SQLite's `datetime('now')` gives `2026-10-05 21:14:00`, and JavaScript's `toISOString()` gives `2026-10-05T21:14:00.000Z`. If both formats are compared as text, for example `expires_at < ?` in the session lookup, the comparison is wrong on the same day, because a space sorts before `T`. One numeric representation removes that type of bug. Application code generates IDs with `crypto.randomUUID()`. Cascading deletes need foreign key enforcement. D1 enforces foreign keys by default, equivalent to SQLite's `PRAGMA foreign_keys = on` ([D1 foreign keys](https://developers.cloudflare.com/d1/sql-api/foreign-keys/)). The deletion tests in `apps/worker/test/db.test.ts` prove the schema's delete behavior in the local runtime: deleting a user deletes their sessions, a user who still has bookmarks, search runs or labeled queries cannot be deleted, deleting a bookmark deletes its enrichments, failure records, search answers and evaluation labels, deleting a search run deletes its answers, and deleting a labeled query deletes its labels.
 
 D1 does not support interactive transactions. Where several writes must succeed or fail together, such as inserting an enrichment and clearing its failure record, use Drizzle's `batch`, which D1 executes atomically.
 
@@ -451,10 +451,10 @@ CREATE TABLE search_runs (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id),
   query TEXT NOT NULL,
-  channel TEXT NOT NULL CHECK (channel IN ('web', 'webmcp', 'mcp')),  -- 'eval' is added by #204
+  channel TEXT NOT NULL CHECK (channel IN ('web', 'webmcp', 'mcp', 'eval')),  -- 'eval': Phase 12's evaluation runs (#204)
   input_mode TEXT CHECK (input_mode IN ('typed', 'web-speech', 'whisper')),  -- web channel only; 'whisper' is reserved for the backlog item, so adding it needs no table rebuild
   request_mode TEXT NOT NULL CHECK (request_mode IN ('pair', 'batched')),
-  jev_model TEXT NOT NULL,
+  jev_model TEXT NOT NULL,             -- the model that answered; the configured model when no request got an answer
   questions TEXT NOT NULL CHECK (questions IN ('both', 'noul', 'score')),  -- which Jev questions were asked
   display_signal TEXT NOT NULL CHECK (display_signal IN ('noul', 'score')),
   noul_threshold REAL NOT NULL,
@@ -469,19 +469,52 @@ CREATE TABLE search_runs (
 CREATE TABLE search_answers (
   search_run_id TEXT NOT NULL REFERENCES search_runs(id) ON DELETE CASCADE,
   bookmark_id TEXT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
-  noul REAL NOT NULL,
-  score REAL NOT NULL,
-  score_probabilities TEXT NOT NULL,  -- JSON
-  score_confidence REAL NOT NULL,
+  noul REAL,                          -- NULL when the run did not ask the Noul question
+  score REAL,                         -- this and the next two are NULL when the run did not ask the Score question
+  score_probabilities TEXT,           -- JSON
+  score_confidence REAL,
   shown INTEGER NOT NULL,             -- 0 or 1
-  clicked INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (search_run_id, bookmark_id)
+  clicked INTEGER NOT NULL DEFAULT 0, -- Drizzle writes DEFAULT false, which SQLite 3.23.0 and later stores as 0, so the two are the same
+  PRIMARY KEY (search_run_id, bookmark_id),
+  CHECK ((score IS NULL) = (score_probabilities IS NULL) AND (score IS NULL) = (score_confidence IS NULL))
 );
+
+CREATE INDEX search_answers_bookmark_id_index ON search_answers (bookmark_id);  -- deleting a bookmark finds its answers without reading the whole log
+
+CREATE TABLE eval_queries (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  query TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  UNIQUE (user_id, query)
+);
+
+CREATE TABLE eval_labels (
+  eval_query_id TEXT NOT NULL REFERENCES eval_queries(id) ON DELETE CASCADE,
+  bookmark_id TEXT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
+  relevant INTEGER NOT NULL,          -- 1: should match the query; 0: should not
+  labeled_at INTEGER NOT NULL,        -- when the judgement was last written
+  PRIMARY KEY (eval_query_id, bookmark_id)
+);
+
+CREATE INDEX eval_labels_bookmark_id_index ON eval_labels (bookmark_id);  -- the same, for its labels
 ```
 
 The `search_answers` table stores every answer for every candidate, including those below the threshold. This is what makes offline threshold replay possible without calling Jev again. Clicks are recorded as a weak relevance label. A search that fails, completely or for some chunks, is still logged in `search_runs` with its `outcome` and `error`. Without these rows, the logs show no Jev outages, and failed searches look like searches nobody made.
 
-The table for Phase 12's labeled queries also comes in #204's migration, because the labels are stored in D1 (see "Evaluations").
+**The search and evaluation tables (#204).** `search_runs`, `search_answers`, `eval_queries` and `eval_labels` come in one migration, `0002_search_logs_and_eval_labels.sql`, so that Phase 12 needs no migration after Milestone 3's deploy (see "Evaluations"). The migration only adds tables and changes nothing else, so the Worker version deployed before it keeps working, as the expand-then-contract rule above requires. `db:export:remote` exports every table, because it passes no `--table`, so every export taken after the migration includes the new tables: a local export and a restore into a fresh database kept a row in each of them (#204). The data file of that export began with `PRAGMA defer_foreign_keys=TRUE;`, so a child row that comes before its parent in the file, such as a label before its query, did not fail the import (see "Backups and restore").
+
+The migration also adds an index on `bookmark_id` to `search_answers` and to `eval_labels` (Schalk's decision, 2026-10-29). Without them, `EXPLAIN QUERY PLAN DELETE FROM bookmarks WHERE id = ?` shows `SCAN search_answers` and `SCAN eval_labels`: every bookmark delete would read the whole log to find the rows to delete with it, and D1 bills each as a row read. With them, it shows `SEARCH` through each index, which a test in `apps/worker/test/db.test.ts` checks. The primary keys can't serve that lookup, because they start with the run and the query. The answers' index adds one written row for each answer (see Q12).
+
+The migration differs from the first draft of these tables in three ways:
+
+- **`channel` accepts `eval`.** Phase 12's evaluation runs log to these tables under it, so a replay can include or exclude them (decided 2026-10-28). It is in the first migration because changing a SQLite `CHECK` constraint later means rebuilding the table.
+- **The answer columns can be empty.** A run that asks only one question, which the questions flag allows, has no value for the other. So `noul` is NULL when the run did not ask the Noul question, and `score`, `score_probabilities` and `score_confidence` are NULL when it did not ask the Score question, and a replay skips the signal that a run's `questions` says it did not ask. The `CHECK` constraint keeps the three Score columns together, all set or all NULL, because every Score answer has all three. No constraint requires a row to have at least one signal. #212 already decides that a partial Jev failure logs answers only for the bookmarks Jev answered, so no row is written for a candidate in a failed chunk. The table stays permissive anyway, because that leaves room for a run in which one question failed and the other succeeded, and a replay handles a NULL signal in each answer either way. Adding the constraint later would mean rebuilding the table, while leaving it out costs nothing.
+- **`jev_model` stays `NOT NULL`.** A run that got no answer, because the collection was empty or every request failed, stores the configured model, because a search that fails is still logged.
+
+`search_runs.user_id` has no `ON DELETE` behavior, as for `bookmarks`, so a user who still has search runs cannot be deleted. Account deletion is in the post-v1 backlog.
+
+**The evaluation labels (#204).** A label is a labeled query, a bookmark, and whether the bookmark should match the query, with when that judgement was written. The query's text is stored once in `eval_queries`, and its labels refer to it by ID, so roughly 30 queries with a label for each of N bookmarks do not repeat the text in every label. `UNIQUE (user_id, query)` keeps one row per query text, so an evaluation run in `search_runs` finds its labels by its user and its query. That join compares the text exactly, so the evaluation runner must pass `eval_queries.query` to `searchBookmarks` unchanged, and `searchBookmarks` (#212) must store the query as it was given, without trimming or otherwise normalising it. Otherwise #221's join by user and query text misses the run. The primary key allows one label for each query and bookmark, so a bookmark cannot be both a match and a non-match for one query. A bookmark with no label for a query has not been judged for it. Deleting a bookmark deletes its labels, as it deletes its search answers, so every label names a bookmark that exists, and a replay of an older run, which no longer has the deleted bookmark's answers, does not count it as a missed match either. Deleting a labeled query deletes its labels. `eval_queries.user_id` has no `ON DELETE` behavior, as for `search_runs`. The database does not check that a label's bookmark belongs to the query's user, so the code that writes labels must. `labeled_at` is set by that code whenever it writes the judgement, including when it changes one.
 
 ### Enrichment state is derived, not stored
 
@@ -535,7 +568,7 @@ Two things protect the production database: D1's point-in-time recovery (Time Tr
 
 **Export before each remote migration, and once a week.** Run `vp -C apps/worker run db:export:remote` before every `vp -C apps/worker run db:migrate:remote`, which applies the migrations to the production database. Also run it at least once a week, so that the newest export is never older than the 7 days Time Travel covers. A restore from an export loses every row written after it, so an export taken only before migrations could be months old. It writes two files with the same UTC timestamp to `apps/worker/backups/`: `haystack-<timestamp>-schema.sql` (from `--no-data`) and `haystack-<timestamp>-data.sql` (from `--no-schema`). The files hold every user, session and bookmark row, so `.gitignore` keeps that folder out of the repository. They exist only on the machine that ran the script, so right after each export, copy both files somewhere off that machine that only you can read. Otherwise losing the machine, or the checkout, loses the only copy older than 7 days. #92 decides where that is, and whether the copy can be automated. An export blocks other queries to the database while it runs. Wrangler would ask for confirmation before each export, but the script passes `--skip-confirmation`, because answering no to the first would still run the second and leave a data file without its schema file. Because Time Travel reaches back only 7 days, these files are the only copy of anything older. Wrangler's help for `migrations apply` says a backup is captured after applying, but the 4.149.0 source takes none, so the script is the only backup step.
 
-The export is split in two because a single full export cannot be imported. It lists tables in alphabetical order, so the `bookmarks` rows come before the `users` table they reference, and the import fails with "no such table: main.users". Adding `PRAGMA foreign_keys=OFF` to the top of the file did not help in the local test either. Importing the schema file first and the data file second works.
+The export is split in two because a single full export cannot be imported. It lists tables in alphabetical order, so the `bookmarks` rows come before the `users` table they reference, and the import fails with "no such table: main.users". Adding `PRAGMA foreign_keys=OFF` to the top of the file did not help in the local test either. Importing the schema file first and the data file second works. _Observed with Wrangler 4.151.3 (#204), and not documented:_ the data file begins with `PRAGMA defer_foreign_keys=TRUE;`, which delays foreign key checks to the end of the import. That is why a child row that comes before its parent in the data file, such as a `bookmarks` row before its `users` row or an `eval_labels` row before its `eval_queries` row, does not fail the import.
 
 **Restoring with Time Travel, for a problem less than 7 days old.**
 
@@ -953,7 +986,7 @@ The mode is a configuration value recorded on each `search_runs` row.
 
 Thresholds are configuration, not code constants, and are stored on each run. The default ranking sorts by `score` and filters by `score >= score_threshold`. A parallel list computed from `noul >= noul_threshold` is logged but not shown. Which signal drives the displayed results is a Flagship flag, so the two can be compared in real use without a deploy (decision 20). Which questions are asked is also a flag. It defaults to both. After Phase 12 chooses a signal, it can be set to ask only that question, which gives back the batch capacity the second question uses. A flag change can take up to 30 seconds to reach every Cloudflare location. Every `search_runs` row therefore records the values the search actually used: the questions, the display signal, the thresholds, and the request mode.
 
-If only one question is asked, the other column in `search_answers` has no value. Before Phase 11, decide whether `noul`, `score`, `score_probabilities`, and `score_confidence` become nullable, or whether single-question runs are logged differently. Replay must skip a signal that a run did not ask for.
+If only one question is asked, the other column in `search_answers` has no value. _Decided in #204:_ `noul`, `score`, `score_probabilities` and `score_confidence` are nullable, and the signal a run did not ask for is NULL in each of its answers (see "Data model"). Replay must skip a signal that a run did not ask for.
 
 **When Jev fails.** Search depends entirely on Jev, so a TypeSafe outage is a search outage. If some chunks fail after retries, show the results from the chunks that succeeded, state that the results may be incomplete, and log the run as `partial`. If all chunks fail, show an error state with a retry button and log the run as `failed`. Do not show an empty result list, because it looks like "nothing matches." A keyword fallback is in the backlog.
 
@@ -1374,7 +1407,7 @@ A bookmark can be deleted by its owner from the recent saves list (Milestone 1),
 
 The server looks the bookmark up by ID _and_ the session's user ID in the same query. If there is no match, it returns 404, whether the bookmark does not exist or belongs to someone else, so the response never reveals that another user's bookmark exists. The delete button is only rendered for bookmarks the current user owns; in v1 every bookmark a user can see is their own, but the server check is what enforces it.
 
-Deletion is permanent and removes the bookmark with its enrichments, failure records, and search answers. The URL can be saved again afterward. Search runs themselves are kept, so the evaluation harness must tolerate labeled bookmark IDs that no longer exist.
+Deletion is permanent and removes the bookmark with its enrichments, failure records, search answers, and evaluation labels. The URL can be saved again afterward, as a new bookmark with a new ID and no labels. Search runs themselves are kept, so the evaluation harness must tolerate a run whose answers no longer include every bookmark it was asked about. Labels never name a deleted bookmark, because they are deleted with it (#204).
 
 **Interaction.** Each result card and list item has a real `<button>` inside a small `<form method="post">`, with an accessible name that includes the title (for example, "Delete Vitest browser mode guide"), so a screen reader user hearing a list of delete buttons knows which is which. Without JavaScript, the button leads to a confirmation page with a single confirm button. With JavaScript, confirmation happens in a native `<dialog>` opened with `showModal()`, which makes the rest of the page inert and handles Escape. It does not trap Tab: from the first or last control, Tab and Shift+Tab can move to the browser's own toolbar, and the next Tab returns to the dialog. After deletion, the item is removed, focus moves to the next item (the previous one when the bottom item was deleted, or the list heading when the list is empty), and the live region announces the deletion.
 
@@ -1387,7 +1420,7 @@ Deleting without JavaScript was implemented in #42:
 - Every miss (no such bookmark, already deleted, or another user's) gets the same 404 page, "This link isn't in your saved links", which links to the list.
 - Without JavaScript, focus starts at the top of the page after deleting. Moving focus to the next item is the dialog's job (#43).
 - The confirmation page links back to `/#bookmark-<id>` with "Keep it and go back to your saved links".
-- Deleting a bookmark deletes its enrichments and failure records, because `enrichments` and `enrichment_failures` reference it with `ON DELETE CASCADE` (#120). The only table still to come that references `bookmarks` is `search_answers`, in Milestone 3, and it needs `ON DELETE CASCADE` on its bookmark reference too.
+- Deleting a bookmark deletes its enrichments and failure records, because `enrichments` and `enrichment_failures` reference it with `ON DELETE CASCADE` (#120). Since #204, `search_answers` and `eval_labels` reference it with `ON DELETE CASCADE` too, so deleting it also deletes its search answers and its evaluation labels, and keeps the search runs and the labeled queries.
 
 The dialog was implemented in #43:
 
@@ -1803,7 +1836,7 @@ The script should work where nothing blocks that access, for example with Full D
 
 _Answered 2026-10-28 (#202)._ Schalk decided two things about the labels.
 
-- **The labeled queries are stored in D1, not committed.** The repository is public, and the labels would publish Schalk's queries and the links they saved. So the labels live in the production database, next to the bookmarks and search runs they refer to, and the export backups (see "Backups and restore") include them. The labels table comes in #204's migration, with the search tables, so Phase 12 needs no migration after the deploy, and the export taken before it includes the table. `evals/` keeps only the scripts and the made-up test page that tries to manipulate search, the injection fixture that "Untrusted content" asks for (#220).
+- **The labeled queries are stored in D1, not committed.** The repository is public, and the labels would publish Schalk's queries and the links they saved. So the labels live in the production database, next to the bookmarks and search runs they refer to, and the export backups (see "Backups and restore") include them. The labels tables, `eval_queries` and `eval_labels`, come in #204's migration, with the search tables, so Phase 12 needs no migration after the deploy, and the exports from then on include them. Each labeled query is a row in `eval_queries`, and each label is a row in `eval_labels`: the query, a bookmark, and whether the bookmark should match the query, with when that was written. "Data model" gives the columns, and what deleting a bookmark or a query does to its labels. A bookmark is deleted with its labels, so the harness never sees a labeled ID that no longer exists. `evals/` keeps only the scripts and the made-up test page that tries to manipulate search, the injection fixture that "Untrusted content" asks for (#220).
 - **Labeling starts once production holds at least 50 bookmarks.** On 2026-10-28 it held 12, so #220 can build the format, the loader and the listing first, but the real set waits for 50.
 
 ## Milestones and phases
@@ -1932,7 +1965,7 @@ Phase 13 (#216–#217) ─┘                                                   
 
 #### Phase 10: Search page shell
 
-Add the `search_runs` and `search_answers` tables through a reviewed migration. Build the search page with the search form, the results list with a delete control on each result, and the live region, with typed search only. Use a stub API.
+Add the `search_runs` and `search_answers` tables, and Phase 12's `eval_queries` and `eval_labels`, through one reviewed migration (#204). Build the search page with the search form, the results list with a delete control on each result, and the live region, with typed search only. Use a stub API.
 
 Tests: Playwright tests for keyboard operation, focus management after search and after deleting a result, the result count being announced, and an axe scan with no violations.
 Acceptance: the page is usable with a keyboard and a screen reader against the stub.

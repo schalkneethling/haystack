@@ -1,5 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
-import { seedBookmark, seedEnrichment, seedEnrichmentFailure } from "./seed.ts";
+import {
+  seedBookmark,
+  seedEnrichment,
+  seedEnrichmentFailure,
+  seedEvalLabel,
+  seedEvalQuery,
+  seedSearchAnswer,
+  seedSearchRun,
+  seedUser,
+} from "./seed.ts";
 import { createTestWorker } from "./test-worker.ts";
 
 const server = createTestWorker();
@@ -13,20 +22,11 @@ afterAll(async () => {
   await server.close();
 });
 
-async function insertUser(): Promise<string> {
-  const { DB } = await server.getWorker().getEnv();
-  const userId = crypto.randomUUID();
-  await DB.prepare("INSERT INTO users (id, google_sub, email, created_at) VALUES (?, ?, ?, ?)")
-    .bind(userId, `sub-${userId}`, "user@example.com", Date.now())
-    .run();
-  return userId;
-}
-
 describe("migrated database", () => {
-  it("contains the Milestone 1 and enrichment tables", async () => {
+  it("contains the Milestone 1, enrichment, search and evaluation tables", async () => {
     const { DB } = await server.getWorker().getEnv();
     const { results } = await DB.prepare(
-      "SELECT name FROM sqlite_schema WHERE type = 'table' AND name IN ('users', 'sessions', 'auth_flows', 'bookmarks', 'enrichments', 'enrichment_failures') ORDER BY name",
+      "SELECT name FROM sqlite_schema WHERE type = 'table' AND name IN ('users', 'sessions', 'auth_flows', 'bookmarks', 'enrichments', 'enrichment_failures', 'search_runs', 'search_answers', 'eval_queries', 'eval_labels') ORDER BY name",
     ).all();
 
     expect(results.map((row: { name: string }) => row.name)).toEqual([
@@ -34,6 +34,10 @@ describe("migrated database", () => {
       "bookmarks",
       "enrichment_failures",
       "enrichments",
+      "eval_labels",
+      "eval_queries",
+      "search_answers",
+      "search_runs",
       "sessions",
       "users",
     ]);
@@ -41,7 +45,7 @@ describe("migrated database", () => {
 
   it("deletes a user's sessions when the user is deleted", async () => {
     const { DB } = await server.getWorker().getEnv();
-    const userId = await insertUser();
+    const userId = await seedUser(DB);
     const now = Date.now();
     const selectSessions = DB.prepare("SELECT id_hash FROM sessions WHERE user_id = ?").bind(
       userId,
@@ -61,7 +65,7 @@ describe("migrated database", () => {
 
   it("refuses to delete a user who still has bookmarks", async () => {
     const { DB } = await server.getWorker().getEnv();
-    const userId = await insertUser();
+    const userId = await seedUser(DB);
 
     await DB.prepare(
       "INSERT INTO bookmarks (id, user_id, url, normalized_url, title, created_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -88,7 +92,7 @@ describe("migrated database", () => {
 
   it("deletes a bookmark's enrichments and failure records when the bookmark is deleted", async () => {
     const { DB } = await server.getWorker().getEnv();
-    const userId = await insertUser();
+    const userId = await seedUser(DB);
     const url = "https://example.com/enriched";
     const bookmarkId = await seedBookmark(DB, userId, url, url);
     const otherUrl = "https://example.com/kept";
@@ -113,5 +117,137 @@ describe("migrated database", () => {
 
     expect(await rowsOf(bookmarkId)).toEqual({ enrichments: 0, failures: 0 });
     expect(await rowsOf(otherId)).toEqual({ enrichments: 1, failures: 1 });
+  });
+
+  it("deletes a bookmark's search answers and keeps the run when the bookmark is deleted", async () => {
+    const { DB } = await server.getWorker().getEnv();
+    const userId = await seedUser(DB);
+    const deletedUrl = "https://example.com/answered";
+    const deletedId = await seedBookmark(DB, userId, deletedUrl, deletedUrl);
+    const keptUrl = "https://example.com/also-answered";
+    const keptId = await seedBookmark(DB, userId, keptUrl, keptUrl);
+    const runId = await seedSearchRun(DB, userId);
+    await seedSearchAnswer(DB, runId, deletedId);
+    await seedSearchAnswer(DB, runId, keptId);
+
+    await DB.prepare("DELETE FROM bookmarks WHERE id = ?").bind(deletedId).run();
+
+    const answers = await DB.prepare(
+      "SELECT bookmark_id FROM search_answers WHERE search_run_id = ?",
+    )
+      .bind(runId)
+      .all();
+    expect(answers.results).toEqual([{ bookmark_id: keptId }]);
+    const runs = await DB.prepare("SELECT id FROM search_runs WHERE id = ?").bind(runId).all();
+    expect(runs.results).toHaveLength(1);
+  });
+
+  // Without an index on bookmark_id, the delete would read every answer and every label to find
+  // the bookmark's, and D1 bills each as a row read. The plan reads SCAN for a whole table and
+  // SEARCH for a lookup through an index.
+  it("finds a deleted bookmark's search answers and labels through an index", async () => {
+    const { DB } = await server.getWorker().getEnv();
+    const { results } = await DB.prepare("EXPLAIN QUERY PLAN DELETE FROM bookmarks WHERE id = ?")
+      .bind("any")
+      .all();
+    const steps: string[] = results.map((row: { detail: string }) => row.detail);
+
+    // No table the delete touches is read whole, including the enrichment tables.
+    expect(steps.filter((step) => step.startsWith("SCAN "))).toEqual([]);
+    for (const table of ["search_answers", "eval_labels"]) {
+      expect(steps).toContainEqual(
+        expect.stringMatching(
+          new RegExp(`^SEARCH ${table} USING (COVERING )?INDEX ${table}_bookmark_id_index \\(`),
+        ),
+      );
+    }
+  });
+
+  it("deletes a run's answers when the run is deleted", async () => {
+    const { DB } = await server.getWorker().getEnv();
+    const userId = await seedUser(DB);
+    const url = "https://example.com/answered";
+    const bookmarkId = await seedBookmark(DB, userId, url, url);
+    const deletedRunId = await seedSearchRun(DB, userId);
+    const keptRunId = await seedSearchRun(DB, userId);
+    for (const runId of [deletedRunId, keptRunId]) {
+      await seedSearchAnswer(DB, runId, bookmarkId);
+    }
+
+    await DB.prepare("DELETE FROM search_runs WHERE id = ?").bind(deletedRunId).run();
+
+    const answers = await DB.prepare(
+      "SELECT search_run_id FROM search_answers WHERE bookmark_id = ?",
+    )
+      .bind(bookmarkId)
+      .all();
+    expect(answers.results).toEqual([{ search_run_id: keptRunId }]);
+  });
+
+  it("refuses to delete a user who still has search runs", async () => {
+    const { DB } = await server.getWorker().getEnv();
+    const userId = await seedUser(DB);
+    await seedSearchRun(DB, userId);
+
+    await expect(DB.prepare("DELETE FROM users WHERE id = ?").bind(userId).run()).rejects.toThrow(
+      /FOREIGN KEY constraint failed/,
+    );
+
+    const runs = await DB.prepare("SELECT id FROM search_runs WHERE user_id = ?")
+      .bind(userId)
+      .all();
+    expect(runs.results).toHaveLength(1);
+  });
+
+  it("refuses to delete a user who still has labeled queries", async () => {
+    const { DB } = await server.getWorker().getEnv();
+    const userId = await seedUser(DB);
+    await seedEvalQuery(DB, userId, "a query");
+
+    await expect(DB.prepare("DELETE FROM users WHERE id = ?").bind(userId).run()).rejects.toThrow(
+      /FOREIGN KEY constraint failed/,
+    );
+  });
+
+  it("deletes a bookmark's labels and keeps the query when the bookmark is deleted", async () => {
+    const { DB } = await server.getWorker().getEnv();
+    const userId = await seedUser(DB);
+    const deletedUrl = "https://example.com/labeled";
+    const deletedId = await seedBookmark(DB, userId, deletedUrl, deletedUrl);
+    const keptUrl = "https://example.com/also-labeled";
+    const keptId = await seedBookmark(DB, userId, keptUrl, keptUrl);
+    const queryId = await seedEvalQuery(DB, userId, "a query");
+    await seedEvalLabel(DB, queryId, deletedId, true);
+    await seedEvalLabel(DB, queryId, keptId, false);
+
+    await DB.prepare("DELETE FROM bookmarks WHERE id = ?").bind(deletedId).run();
+
+    const labels = await DB.prepare("SELECT bookmark_id FROM eval_labels WHERE eval_query_id = ?")
+      .bind(queryId)
+      .all();
+    expect(labels.results).toEqual([{ bookmark_id: keptId }]);
+    const queries = await DB.prepare("SELECT id FROM eval_queries WHERE id = ?")
+      .bind(queryId)
+      .all();
+    expect(queries.results).toHaveLength(1);
+  });
+
+  it("deletes a labeled query's labels when the query is deleted", async () => {
+    const { DB } = await server.getWorker().getEnv();
+    const userId = await seedUser(DB);
+    const url = "https://example.com/labeled";
+    const bookmarkId = await seedBookmark(DB, userId, url, url);
+    const deletedQueryId = await seedEvalQuery(DB, userId, "a deleted query");
+    const keptQueryId = await seedEvalQuery(DB, userId, "a kept query");
+    for (const queryId of [deletedQueryId, keptQueryId]) {
+      await seedEvalLabel(DB, queryId, bookmarkId, true);
+    }
+
+    await DB.prepare("DELETE FROM eval_queries WHERE id = ?").bind(deletedQueryId).run();
+
+    const labels = await DB.prepare("SELECT eval_query_id FROM eval_labels WHERE bookmark_id = ?")
+      .bind(bookmarkId)
+      .all();
+    expect(labels.results).toEqual([{ eval_query_id: keptQueryId }]);
   });
 });
