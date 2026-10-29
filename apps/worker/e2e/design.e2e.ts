@@ -603,18 +603,14 @@ for (const [width, beside] of [
         const button = await page.getByRole("button", { name: form.button }).boundingBox();
         // The row's box, inside the panel's padding, is the room the two have.
         const row = await fieldLocator.locator("xpath=..").boundingBox();
-        const panel = await page
-          .locator("form.panel")
-          .first()
-          .evaluate((element) => {
-            const style = getComputedStyle(element);
-            const box = element.getBoundingClientRect();
-            return {
-              left: box.left + parseFloat(style.paddingLeft) + parseFloat(style.borderLeftWidth),
-              right:
-                box.right - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth),
-            };
-          });
+        const panel = await fieldLocator.locator("xpath=ancestor::form[1]").evaluate((element) => {
+          const style = getComputedStyle(element);
+          const box = element.getBoundingClientRect();
+          return {
+            left: box.left + parseFloat(style.paddingLeft) + parseFloat(style.borderLeftWidth),
+            right: box.right - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth),
+          };
+        });
         if (field === null || button === null || row === null) {
           throw new Error(`${form.name} is not drawn`);
         }
@@ -625,6 +621,23 @@ for (const [width, beside] of [
         if (beside) {
           expect(button.y).toBeCloseTo(field.y, 0);
           expect(button.x).toBeGreaterThan(field.x + field.width);
+          // The field takes the spare room, so the button is as wide as its label, within the
+          // fraction of a pixel its own share of the growth gives it.
+          const labelWidth = await page
+            .getByRole("button", { name: form.button })
+            .evaluate((element) => {
+              const style = getComputedStyle(element);
+              const range = document.createRange();
+              range.selectNodeContents(element);
+              return (
+                range.getBoundingClientRect().width +
+                parseFloat(style.paddingLeft) +
+                parseFloat(style.paddingRight) +
+                parseFloat(style.borderLeftWidth) +
+                parseFloat(style.borderRightWidth)
+              );
+            });
+          expect(button.width).toBeLessThan(labelWidth + 2);
         } else {
           expect(button.y - (field.y + field.height)).toBeCloseTo(24, 0);
           expect(button.x).toBeCloseTo(field.x, 0);
@@ -636,8 +649,9 @@ for (const [width, beside] of [
 }
 
 // While a search runs, the button's label is "Processing…" (#207). The field gives the longer
-// label its room, so the label is never wider than the button, and the row still ends at the
-// panel's edge.
+// label its room, so the label is never wider than the button. The button could already not
+// shrink below its label before the rows filled their panel, so this guards that rule rather
+// than proving the change.
 test.describe("at 1280 px wide, while a search runs", () => {
   test.use({ viewport: { width: 1280, height: 800 } });
 

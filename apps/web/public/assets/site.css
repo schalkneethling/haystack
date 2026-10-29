@@ -335,8 +335,9 @@ main > :where(p, ul, div) {
   font-size: var(--text-small);
 }
 
-/* The gap under the field, when the button wraps, is twice the gap beside it, because the two
-   focus rings, each 3 px out from its control, otherwise nearly meet on a phone. */
+/* The gap under the field, when the button wraps, is twice the gap beside it (design review).
+   A focused control's ring reaches 6 px out, its 3 px offset and 3 px width, so in a 12 px gap it
+   filled half the space between the two on a phone. */
 .address-row,
 .search-row {
   display: flex;
@@ -344,10 +345,7 @@ main > :where(p, ul, div) {
   gap: calc(2 * var(--space-s)) var(--space-s);
 }
 
-/* A field's automatic minimum width grows with the text size, so `min-inline-size: 0` lets it
-   shrink to the row at any text size instead of overflowing.
-
-   The field and the button both grow, so the row is always full. On one row, the field's far
+/* The field and the button both grow, so the row is always full. On one row, the field's far
    larger share of the growth gives it nearly all the room the button doesn't need. When the button
    wraps, it is alone on its line, so it grows to the line's width, which is the field's. The
    button doesn't shrink below its label, so when its label becomes "Processing…", the field gives
@@ -357,6 +355,8 @@ main > :where(p, ul, div) {
   flex: 1 0 auto;
 }
 
+/* A field's automatic minimum width grows with the text size, so `min-inline-size: 0` lets it
+   shrink to the row at any text size instead of overflowing. */
 .address-input,
 .search-input {
   background-color: var(--color-field);
