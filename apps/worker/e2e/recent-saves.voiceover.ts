@@ -9,7 +9,7 @@ test.beforeEach(async ({ signIn }) => {
   await signIn();
 });
 
-test("moving by heading reads the page heading, then each saved link's title", async ({
+test("moving by heading reads the page heading, the address form's heading, then each saved link's title", async ({
   page,
   voiceOver,
 }) => {
@@ -24,6 +24,12 @@ test("moving by heading reads the page heading, then each saved link's title", a
   expect(pageHeading).toMatch(/\bheading\b/i);
   expect(pageHeading).toMatch(/\blevel 1\b/i);
   expect(pageHeading).toContain("Saved links");
+
+  // The address form's heading, under the page's (design review).
+  await voiceOver.nextHeading();
+  const formHeading = await voiceOver.lastSpokenPhrase();
+  expect(formHeading).toMatch(/\blevel 2\b/i);
+  expect(formHeading).toContain("Save a link");
 
   // Newest first, and each title is a link.
   for (const title of ["Newer guide", "Older guide"]) {

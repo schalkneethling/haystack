@@ -20,7 +20,7 @@ Feature: The saved links list
     When I open my saved links
     Then I see the page titled "Saved links - Haystack", under the heading "Saved links"
     And it says "You haven't saved any links yet. Links you save appear here, newest first."
-    And the "Save a link" form is at the top of the page
+    And the "Save a link" form is under the heading "Saved links"
 
   @integration:apps/worker/test/recent-saves.test.ts
   Scenario: The notice about private links

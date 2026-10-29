@@ -5,7 +5,7 @@ Feature: Saving a link by typing or pasting its address
   Haystack then looks the page up and opens the save form, filled in with the
   page's title and description, so they only have to confirm it.
 
-  The form is at the top of the saved links page, and it is also a page of its
+  The form is on the saved links page, under its heading, and it is also a page of its
   own at /save. Looking a page up can take a few seconds, so with JavaScript
   the form stays where it is while it waits, says that it is working, and
   handles every outcome in place. Without JavaScript the browser sends the form
@@ -21,12 +21,12 @@ Feature: Saving a link by typing or pasting its address
   @playwright:apps/worker/e2e/address-form.e2e.ts
   @integration:apps/worker/test/address-form.test.ts
   Scenario: Finding the form on the saved links page
-    The form comes before the page's heading, so it is named as a form
-    landmark. A screen reader user who moves by heading would pass it, but can
-    move to it by landmark.
+    The page's heading comes first, then the form under a heading of its own
+    that is also its field's label, as on the search page. The form is named
+    after that heading, so it is also a form landmark.
 
     When I open my saved links
-    Then the form "Save a link" is at the top of the page, before the heading "Saved links"
+    Then the heading "Saved links" comes first, followed by the heading "Save a link" above the form
     And its field is labelled "Save a link"
     And the hint under the label says "Paste the address of a page. You confirm its title on the next step."
     And a screen reader can reach the form as the form landmark "Save a link"

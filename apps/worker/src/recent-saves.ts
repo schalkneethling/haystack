@@ -157,9 +157,10 @@ export async function showRecentSaves(
   const message = outcome === null ? null : html`<p>${outcome.message}</p>`;
   return htmlResponse(
     outcome === null ? "Saved links" : `${outcome.title} - Saved links`,
-    // The address form comes first, above the heading, as the design shows it.
-    html`${addressFormCard()}
-      <h1 id="list-heading">Saved links</h1>
+    // The page's heading comes first, then the address form under its own heading, as the search
+    // page puts its heading above its form (design review).
+    html`<h1 id="list-heading">Saved links</h1>
+      ${addressFormCard()}
       <div id="list-status" class="status" role="status">${message}</div>${reviewLink(reviewCount)}
       ${SENSITIVE_NOTICE}
       ${list(saves, rows.length > RECENT_SAVES_LIMIT)}`,

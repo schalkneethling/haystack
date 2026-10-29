@@ -127,17 +127,18 @@ describe("the address form", () => {
     const markup = await response.text();
     expectAddressForm(markup);
     expectNoError(markup);
-    // The form is named by its label, so it is a form landmark, "Save a link", which a screen
-    // reader user can reach although it comes before the heading.
+    // The label is an h2 above the panel, and the form is named by it, so it is a form landmark,
+    // "Save a link".
     expect(markup).toContain(
-      '<form class="panel address-form" method="post" action="/save/address" novalidate aria-labelledby="save-url-label" data-address-form="card">',
+      '<h2 id="save-url-label" class="address-form-title"><label for="save-url">Save a link</label></h2>',
     );
     expect(markup).toContain(
-      '<label id="save-url-label" class="address-form-title" for="save-url">Save a link</label>',
+      '<form class="panel address-form" method="post" action="/save/address" novalidate aria-labelledby="save-url-label">',
     );
-    // Before the page heading.
+    // After the page heading, as the search page puts its heading above its form.
     const main = mainContent(markup);
-    expect(main.indexOf("<form")).toBeLessThan(main.indexOf("<h1"));
+    expect(main.indexOf("<h1")).toBeLessThan(main.indexOf("<h2"));
+    expect(main.indexOf("<h2")).toBeLessThan(main.indexOf("<form"));
     await expectValidHtml(markup);
   });
 
@@ -154,7 +155,7 @@ describe("the address form", () => {
     expect(markup).toContain('<h1><label for="save-url">Save a link</label></h1>');
     // Not a landmark: the heading before it already names it (address-form.ts says why).
     expect(markup).toContain(
-      '<form class="panel address-form" method="post" action="/save/address" novalidate data-address-form="page" data-idle-title="Save a link - Haystack">',
+      '<form class="panel address-form" method="post" action="/save/address" novalidate data-idle-title="Save a link - Haystack">',
     );
     expect(markup).toContain("Do not save links that contain access tokens");
     expect(markup).not.toContain("can&#39;t be saved");
