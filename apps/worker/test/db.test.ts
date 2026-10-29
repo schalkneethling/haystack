@@ -7,6 +7,7 @@ import {
   seedEvalQuery,
   seedSearchAnswer,
   seedSearchRun,
+  seedUser,
 } from "./seed.ts";
 import { createTestWorker } from "./test-worker.ts";
 
@@ -20,15 +21,6 @@ beforeAll(async () => {
 afterAll(async () => {
   await server.close();
 });
-
-async function insertUser(): Promise<string> {
-  const { DB } = await server.getWorker().getEnv();
-  const userId = crypto.randomUUID();
-  await DB.prepare("INSERT INTO users (id, google_sub, email, created_at) VALUES (?, ?, ?, ?)")
-    .bind(userId, `sub-${userId}`, "user@example.com", Date.now())
-    .run();
-  return userId;
-}
 
 describe("migrated database", () => {
   it("contains the Milestone 1, enrichment, search and evaluation tables", async () => {
@@ -53,7 +45,7 @@ describe("migrated database", () => {
 
   it("deletes a user's sessions when the user is deleted", async () => {
     const { DB } = await server.getWorker().getEnv();
-    const userId = await insertUser();
+    const userId = await seedUser(DB);
     const now = Date.now();
     const selectSessions = DB.prepare("SELECT id_hash FROM sessions WHERE user_id = ?").bind(
       userId,
@@ -73,7 +65,7 @@ describe("migrated database", () => {
 
   it("refuses to delete a user who still has bookmarks", async () => {
     const { DB } = await server.getWorker().getEnv();
-    const userId = await insertUser();
+    const userId = await seedUser(DB);
 
     await DB.prepare(
       "INSERT INTO bookmarks (id, user_id, url, normalized_url, title, created_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -100,7 +92,7 @@ describe("migrated database", () => {
 
   it("deletes a bookmark's enrichments and failure records when the bookmark is deleted", async () => {
     const { DB } = await server.getWorker().getEnv();
-    const userId = await insertUser();
+    const userId = await seedUser(DB);
     const url = "https://example.com/enriched";
     const bookmarkId = await seedBookmark(DB, userId, url, url);
     const otherUrl = "https://example.com/kept";
@@ -129,7 +121,7 @@ describe("migrated database", () => {
 
   it("deletes a bookmark's search answers and keeps the run when the bookmark is deleted", async () => {
     const { DB } = await server.getWorker().getEnv();
-    const userId = await insertUser();
+    const userId = await seedUser(DB);
     const deletedUrl = "https://example.com/answered";
     const deletedId = await seedBookmark(DB, userId, deletedUrl, deletedUrl);
     const keptUrl = "https://example.com/also-answered";
@@ -150,9 +142,30 @@ describe("migrated database", () => {
     expect(runs.results).toHaveLength(1);
   });
 
+  // Without an index on bookmark_id, the delete would read every answer and every label to find
+  // the bookmark's, and D1 bills each as a row read. The plan reads SCAN for a whole table and
+  // SEARCH for a lookup through an index.
+  it("finds a deleted bookmark's search answers and labels through an index", async () => {
+    const { DB } = await server.getWorker().getEnv();
+    const { results } = await DB.prepare("EXPLAIN QUERY PLAN DELETE FROM bookmarks WHERE id = ?")
+      .bind("any")
+      .all();
+    const steps: string[] = results.map((row: { detail: string }) => row.detail);
+
+    // No table the delete touches is read whole, including the enrichment tables.
+    expect(steps.filter((step) => step.startsWith("SCAN "))).toEqual([]);
+    for (const table of ["search_answers", "eval_labels"]) {
+      expect(steps).toContainEqual(
+        expect.stringMatching(
+          new RegExp(`^SEARCH ${table} USING (COVERING )?INDEX ${table}_bookmark_id_index \\(`),
+        ),
+      );
+    }
+  });
+
   it("deletes a run's answers when the run is deleted", async () => {
     const { DB } = await server.getWorker().getEnv();
-    const userId = await insertUser();
+    const userId = await seedUser(DB);
     const url = "https://example.com/answered";
     const bookmarkId = await seedBookmark(DB, userId, url, url);
     const deletedRunId = await seedSearchRun(DB, userId);
@@ -173,7 +186,7 @@ describe("migrated database", () => {
 
   it("refuses to delete a user who still has search runs", async () => {
     const { DB } = await server.getWorker().getEnv();
-    const userId = await insertUser();
+    const userId = await seedUser(DB);
     await seedSearchRun(DB, userId);
 
     await expect(DB.prepare("DELETE FROM users WHERE id = ?").bind(userId).run()).rejects.toThrow(
@@ -188,7 +201,7 @@ describe("migrated database", () => {
 
   it("refuses to delete a user who still has labeled queries", async () => {
     const { DB } = await server.getWorker().getEnv();
-    const userId = await insertUser();
+    const userId = await seedUser(DB);
     await seedEvalQuery(DB, userId, "a query");
 
     await expect(DB.prepare("DELETE FROM users WHERE id = ?").bind(userId).run()).rejects.toThrow(
@@ -198,7 +211,7 @@ describe("migrated database", () => {
 
   it("deletes a bookmark's labels and keeps the query when the bookmark is deleted", async () => {
     const { DB } = await server.getWorker().getEnv();
-    const userId = await insertUser();
+    const userId = await seedUser(DB);
     const deletedUrl = "https://example.com/labeled";
     const deletedId = await seedBookmark(DB, userId, deletedUrl, deletedUrl);
     const keptUrl = "https://example.com/also-labeled";
@@ -221,7 +234,7 @@ describe("migrated database", () => {
 
   it("deletes a labeled query's labels when the query is deleted", async () => {
     const { DB } = await server.getWorker().getEnv();
-    const userId = await insertUser();
+    const userId = await seedUser(DB);
     const url = "https://example.com/labeled";
     const bookmarkId = await seedBookmark(DB, userId, url, url);
     const deletedQueryId = await seedEvalQuery(DB, userId, "a deleted query");

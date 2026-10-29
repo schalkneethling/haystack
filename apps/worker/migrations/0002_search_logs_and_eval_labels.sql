@@ -8,6 +8,7 @@ CREATE TABLE `eval_labels` (
 	FOREIGN KEY (`bookmark_id`) REFERENCES `bookmarks`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
+CREATE INDEX `eval_labels_bookmark_id_index` ON `eval_labels` (`bookmark_id`);--> statement-breakpoint
 CREATE TABLE `eval_queries` (
 	`id` text PRIMARY KEY NOT NULL,
 	`user_id` text NOT NULL,
@@ -32,6 +33,7 @@ CREATE TABLE `search_answers` (
 	CONSTRAINT "search_answers_score_complete" CHECK(("search_answers"."score" IS NULL) = ("search_answers"."score_probabilities" IS NULL) AND ("search_answers"."score" IS NULL) = ("search_answers"."score_confidence" IS NULL))
 );
 --> statement-breakpoint
+CREATE INDEX `search_answers_bookmark_id_index` ON `search_answers` (`bookmark_id`);--> statement-breakpoint
 CREATE TABLE `search_runs` (
 	`id` text PRIMARY KEY NOT NULL,
 	`user_id` text NOT NULL,

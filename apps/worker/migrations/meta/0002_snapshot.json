@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "849c79f7-724f-41d2-95b2-ae5c56e15109",
+  "id": "e7896b95-b170-4810-89bd-1fdcaf99acb3",
   "prevId": "53b87aff-cec3-4ed2-89f9-b6f8fa79abd5",
   "tables": {
     "auth_flows": {
@@ -417,7 +417,15 @@
           "autoincrement": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "eval_labels_bookmark_id_index": {
+          "name": "eval_labels_bookmark_id_index",
+          "columns": [
+            "bookmark_id"
+          ],
+          "isUnique": false
+        }
+      },
       "foreignKeys": {
         "eval_labels_eval_query_id_eval_queries_id_fk": {
           "name": "eval_labels_eval_query_id_eval_queries_id_fk",
@@ -580,7 +588,15 @@
           "default": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "search_answers_bookmark_id_index": {
+          "name": "search_answers_bookmark_id_index",
+          "columns": [
+            "bookmark_id"
+          ],
+          "isUnique": false
+        }
+      },
       "foreignKeys": {
         "search_answers_search_run_id_search_runs_id_fk": {
           "name": "search_answers_search_run_id_search_runs_id_fk",

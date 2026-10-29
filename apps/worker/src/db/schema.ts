@@ -4,6 +4,7 @@
 import { type SQL, sql } from "drizzle-orm";
 import {
   check,
+  index,
   integer,
   primaryKey,
   real,
@@ -233,6 +234,10 @@ export const searchAnswers = sqliteTable(
   },
   (table) => [
     primaryKey({ columns: [table.searchRunId, table.bookmarkId] }),
+    // Deleting a bookmark finds its answers through this index, rather than reading every
+    // answer in the log, which D1 bills as rows read. The primary key starts with the run, so it
+    // can't serve that lookup.
+    index("search_answers_bookmark_id_index").on(table.bookmarkId),
     // A Score answer always has all three, so a row has all three or none of them.
     check(
       "search_answers_score_complete",
@@ -283,5 +288,9 @@ export const evalLabels = sqliteTable(
       .notNull()
       .$defaultFn(() => Date.now()),
   },
-  (table) => [primaryKey({ columns: [table.evalQueryId, table.bookmarkId] })],
+  (table) => [
+    primaryKey({ columns: [table.evalQueryId, table.bookmarkId] }),
+    // Deleting a bookmark finds its labels through this index, as for its search answers.
+    index("eval_labels_bookmark_id_index").on(table.bookmarkId),
+  ],
 );

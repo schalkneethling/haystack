@@ -8,6 +8,7 @@ import {
   seedEvalQuery,
   seedSearchAnswer,
   seedSearchRun,
+  seedUser,
   type SeededSearchRunFields,
 } from "./seed.ts";
 import { createTestWorker } from "./test-worker.ts";
@@ -25,15 +26,6 @@ afterAll(async () => {
 
 async function d1() {
   return (await server.getWorker().getEnv()).DB;
-}
-
-async function insertUser(): Promise<string> {
-  const DB = await d1();
-  const userId = crypto.randomUUID();
-  await DB.prepare("INSERT INTO users (id, google_sub, email, created_at) VALUES (?, ?, ?, ?)")
-    .bind(userId, `sub-${userId}`, "user@example.com", Date.now())
-    .run();
-  return userId;
 }
 
 async function insertBookmark(userId: string): Promise<string> {
@@ -127,7 +119,7 @@ describe("search_runs", () => {
 
   it.each(constrained)("accepts every allowed $field", async ({ field, accepted }) => {
     const DB = await d1();
-    const userId = await insertUser();
+    const userId = await seedUser(DB);
     for (const value of accepted) {
       await seedSearchRun(DB, userId, { [field]: value });
     }
@@ -139,7 +131,7 @@ describe("search_runs", () => {
 
   it.each(constrained)("refuses a $field of $refused", async ({ field, refused }) => {
     const DB = await d1();
-    const userId = await insertUser();
+    const userId = await seedUser(DB);
     await expect(seedSearchRun(DB, userId, { [field]: refused })).rejects.toThrow(
       /CHECK constraint failed/,
     );
@@ -166,7 +158,7 @@ describe("search_answers", () => {
 
   it("stores an answer with only a Noul and one with only a Score, not yet clicked", async () => {
     const DB = await d1();
-    const userId = await insertUser();
+    const userId = await seedUser(DB);
     const noulOnly = await insertBookmark(userId);
     const scoreOnly = await insertBookmark(userId);
     const runId = await seedSearchRun(DB, userId);
@@ -207,7 +199,7 @@ describe("search_answers", () => {
     { missing: "score_confidence", fields: { scoreConfidence: null } },
   ])("refuses a Score answer without its $missing", async ({ fields }) => {
     const DB = await d1();
-    const userId = await insertUser();
+    const userId = await seedUser(DB);
     const bookmarkId = await insertBookmark(userId);
     const runId = await seedSearchRun(DB, userId);
 
@@ -218,7 +210,7 @@ describe("search_answers", () => {
 
   it("refuses a second answer from one run for the same bookmark", async () => {
     const DB = await d1();
-    const userId = await insertUser();
+    const userId = await seedUser(DB);
     const bookmarkId = await insertBookmark(userId);
     const runId = await seedSearchRun(DB, userId);
     await seedSearchAnswer(DB, runId, bookmarkId);
@@ -254,20 +246,20 @@ describe("eval_queries and eval_labels", () => {
 
   it("refuse the same query twice for one user, and allow it for another", async () => {
     const DB = await d1();
-    const userId = await insertUser();
+    const userId = await seedUser(DB);
     await seedEvalQuery(DB, userId, "css grid layout");
 
     await expect(seedEvalQuery(DB, userId, "css grid layout")).rejects.toThrow(
       /UNIQUE constraint failed/,
     );
-    await expect(seedEvalQuery(DB, await insertUser(), "css grid layout")).resolves.toBeTypeOf(
+    await expect(seedEvalQuery(DB, await seedUser(DB), "css grid layout")).resolves.toBeTypeOf(
       "string",
     );
   });
 
   it("refuse a second label for the same query and bookmark", async () => {
     const DB = await d1();
-    const userId = await insertUser();
+    const userId = await seedUser(DB);
     const bookmarkId = await insertBookmark(userId);
     const queryId = await seedEvalQuery(DB, userId, "a query");
     await seedEvalLabel(DB, queryId, bookmarkId, true);
@@ -280,7 +272,7 @@ describe("eval_queries and eval_labels", () => {
 
   it("refuse a label for a bookmark that doesn't exist", async () => {
     const DB = await d1();
-    const queryId = await seedEvalQuery(DB, await insertUser(), "a query");
+    const queryId = await seedEvalQuery(DB, await seedUser(DB), "a query");
 
     await expect(seedEvalLabel(DB, queryId, crypto.randomUUID(), true)).rejects.toThrow(
       /FOREIGN KEY constraint failed/,

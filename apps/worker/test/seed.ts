@@ -17,14 +17,24 @@ export interface SeededUser {
   cookie: string;
 }
 
-export async function seedSignedInUser(db: D1Like, email: string): Promise<SeededUser> {
+/** A user with no session, and a Google account ID made from their own ID. */
+export async function seedUser(
+  db: D1Like,
+  email = "user@example.com",
+  createdAt = Date.now(),
+): Promise<string> {
   const userId = crypto.randomUUID();
-  const sessionId = generateSessionId();
-  const now = Date.now();
   await db
     .prepare("INSERT INTO users (id, google_sub, email, created_at) VALUES (?, ?, ?, ?)")
-    .bind(userId, `sub-${userId}`, email, now)
+    .bind(userId, `sub-${userId}`, email, createdAt)
     .run();
+  return userId;
+}
+
+export async function seedSignedInUser(db: D1Like, email: string): Promise<SeededUser> {
+  const sessionId = generateSessionId();
+  const now = Date.now();
+  const userId = await seedUser(db, email, now);
   await db
     .prepare("INSERT INTO sessions (id_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)")
     .bind(await hashSessionId(sessionId), userId, now + SESSION_LIFETIME_MS - 1000, now)
