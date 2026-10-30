@@ -286,9 +286,10 @@ test("a message that arrives while the bar is stuck doesn't move the page", asyn
   await expect(bar(page)).toHaveAttribute("data-stuck");
   await page.evaluate(() => window.scrollTo(0, 600));
   // The browser may move the scroll position to keep the content still while the bar grows above
-  // it, so what is checked is where a card on screen is drawn.
+  // it, so what is checked is where a card on screen is drawn. That move can be rounded to a whole
+  // pixel, so the card may be drawn up to 1 px from where it was.
   const card = page.locator("#search-results > li").nth(12);
-  const before = (await card.boundingBox())?.y;
+  const before = (await card.boundingBox())?.y ?? 0;
   // Written by script, as a delete does, so that focus and the field stay where they are.
   await page.locator(SEARCH_STATUS).evaluate((status) => {
     const message = document.createElement("p");
@@ -297,7 +298,7 @@ test("a message that arrives while the bar is stuck doesn't move the page", asyn
   });
   await page.waitForTimeout(400);
   await expect(bar(page)).toHaveAttribute("data-stuck");
-  expect((await card.boundingBox())?.y).toBeCloseTo(before ?? 0, 0);
+  expect(Math.abs(((await card.boundingBox())?.y ?? 0) - before)).toBeLessThanOrEqual(1);
 });
 
 // Close moves focus to the heading without scrolling to it, so a person who closed the bar while
