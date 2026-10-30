@@ -313,8 +313,6 @@ test("bookmark text is shown as text, and never parsed as markup", async ({ page
   await expect(page).toHaveTitle("Search - Haystack");
 });
 
-// The page's rule is isHttpsUrl's, which the saved links page links by, so each address becomes
-// a link exactly when isHttpsUrl passes it.
 // The results have their own heading (#245), which each result's h3 title is under. It is shown
 // with the list, so a search that finds nothing or fails has no heading over nothing.
 test("the results' heading is shown only with results", async ({ page }) => {
@@ -329,6 +327,10 @@ test("the results' heading is shown only with results", async ({ page }) => {
   await expect(heading).toBeVisible();
   await expect(page.getByRole("list", { name: "Results" })).toBeVisible();
   for (const query of ["nothing", "failing"]) {
+    // Results first, so each query is what hides the heading.
+    await field(page).fill(`guides before ${query}`);
+    await field(page).press("Enter");
+    await expect(heading).toBeVisible();
     await field(page).fill(query);
     await field(page).press("Enter");
     await expect(status(page)).not.toBeEmpty();
@@ -336,6 +338,8 @@ test("the results' heading is shown only with results", async ({ page }) => {
   }
 });
 
+// The page's rule is isHttpsUrl's, which the saved links page links by, so each address becomes
+// a link exactly when isHttpsUrl passes it.
 test("only an https address becomes a link", async ({ page }) => {
   const addresses = [
     "https://example.com/ok",

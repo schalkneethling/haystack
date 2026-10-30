@@ -103,7 +103,7 @@ describe("GET /", () => {
     const main = mainContent(await searchPage());
     expect(main).toContain('<div id="list-status" class="status" role="status"></div>');
     expect(main).toContain(
-      '<h2 id="results-heading" class="list-heading" hidden>Results</h2>\n      <ol id="search-results" class="cards" aria-labelledby="results-heading" hidden></ol>',
+      '<h2 id="results-heading" class="cards-heading" hidden>Results</h2>\n      <ol id="search-results" class="cards" aria-labelledby="results-heading" hidden></ol>',
     );
     expect(main).toContain(
       '<p id="empty-state" class="empty-state" hidden>You deleted every link this search found. Search again to find others.</p>',
@@ -221,7 +221,7 @@ describe("POST /bookmarks/:id/delete from a search result", () => {
     // No results, because showing them again would mean searching again, and the empty state
     // stays hidden, because it is for a search whose results were all deleted in the page.
     expect(main).toContain(
-      '<h2 id="results-heading" class="list-heading" hidden>Results</h2>\n      <ol id="search-results" class="cards" aria-labelledby="results-heading" hidden></ol>',
+      '<h2 id="results-heading" class="cards-heading" hidden>Results</h2>\n      <ol id="search-results" class="cards" aria-labelledby="results-heading" hidden></ol>',
     );
     expect(main).toContain('<p id="empty-state" class="empty-state" hidden>');
     await expectValidHtml(markup);

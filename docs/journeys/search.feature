@@ -267,8 +267,9 @@ Feature: Searching my saved links
     Then VoiceOver reads its label, "Search your saved links"
     When I type a query and press Enter
     And I move by heading
-    Then VoiceOver reads "Vitest browser mode guide", a link, at level 2
-    And the heading after that is "Playwright locators", a link, at level 2
+    Then VoiceOver reads "Results" as a heading at level 2
+    And the heading after that is "Vitest browser mode guide", a link, at level 3
+    And the heading after that is "Playwright locators", a link, at level 3
 
   @untested
   Scenario: Hearing how many links match with a screen reader

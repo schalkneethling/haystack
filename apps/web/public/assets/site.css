@@ -333,7 +333,7 @@ main > :where(p, ul, div) {
 /* The saved links' and the search results' list headings (#245) look like the address form's
    heading, the other h2 on the saved links page, so the page's h2s match. */
 .address-form-title,
-.list-heading {
+.cards-heading {
   font-size: var(--text-form-title);
   font-weight: 700;
   letter-spacing: -0.01em;

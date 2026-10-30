@@ -175,6 +175,9 @@ test("deleting the only result moves focus to the page heading and shows the emp
   ).toBeFocused();
   await expect(page.getByText(EMPTY_STATE)).toBeVisible();
   await expect(page.locator("#search-results")).toBeHidden();
+  // The results' heading stays over the empty state, as "Recently saved" does on the saved links
+  // page (#245).
+  await expect(page.getByRole("heading", { level: 2, name: "Results" })).toBeVisible();
   await expect(status(page)).toHaveText("Deleted “Only guide”.");
 });
 
