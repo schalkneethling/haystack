@@ -741,6 +741,7 @@ test.describe("in forced colors", () => {
       .getByRole("link", { name: "Saved links" });
     await page.goto("/saved-links");
     await expect(savedLinks).toHaveCSS("border-bottom-style", "solid");
+    await expect(savedLinks).toHaveCSS("border-bottom-width", "3px");
     await expect(savedLinks).toHaveCSS("text-decoration-line", "none");
     await page.goto(saveUrl({ url: "https://example.com/forced-colors" }));
     await expect(savedLinks).toHaveCSS("border-bottom-style", "none");
