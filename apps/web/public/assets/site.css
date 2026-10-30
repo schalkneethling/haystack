@@ -234,11 +234,17 @@ main > :where(p, ul, div) {
 
 @media (prefers-reduced-motion: no-preference) {
   a,
-  .button,
-  .nav-link {
+  .button {
     transition:
       background-color 120ms ease,
       color 120ms ease;
+  }
+
+  /* The header's items change only their color. Sign out is a button, which the browser first
+     draws with its own fill, so a transition of its background would fade that fill out over
+     each page load, with the text on it below 4.5:1 until it ends. */
+  .nav-link {
+    transition: color 120ms ease;
   }
 }
 
