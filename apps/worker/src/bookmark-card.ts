@@ -83,9 +83,10 @@ function withLineBreaks(text: string): SafeHtml {
 }
 
 /**
- * A bookmark's card: the date it was saved, the title as a heading that wraps the link, the
+ * A bookmark's card: the date it was saved, the title as an `h3` that wraps the link, the
  * address, the description, and Delete. The date comes first, as the card shows it, so the
- * reading order matches what is seen. An optional part starts with its own line break and sits at
+ * reading order matches what is seen. The title is an `h3`, under the `h2` that each page gives
+ * its list (#245), as on /held. An optional part starts with its own line break and sits at
  * the end of the line before it, so leaving it out leaves no blank line in the page.
  *
  * The search page has the same card in a template (`bookmarkCardTemplate`), which search.js fills
@@ -103,7 +104,7 @@ export function bookmarkCard(
         <p class="card-description">${withLineBreaks(bookmark.description)}</p>`;
   return html`<li id="bookmark-${bookmark.id}">
         <p class="card-date">${savedDate(bookmark.createdAt)}</p>
-        <h2 id="title-${bookmark.id}">${savedLink(bookmark.url, bookmark.title)}</h2>
+        <h3 id="title-${bookmark.id}">${savedLink(bookmark.url, bookmark.title)}</h3>
         <p class="address">${bookmark.url}</p>${description}
         ${deleteForm(bookmark.id, returnTo)}
       </li>`;

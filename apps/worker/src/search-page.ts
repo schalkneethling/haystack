@@ -36,7 +36,9 @@ const NEEDS_SCRIPT_ID = "search-needs-script";
  * shows the empty state, which search.js hides again with the next search's outcome. The live
  * region is in the page from the start, because a screen reader announces a change to a live
  * region that already exists. It is empty, or holds the result of a delete that returned here
- * (`outcome`). The results list is hidden until a search finds something. Each result is a
+ * (`outcome`). The results list is hidden until a search finds something, and so is its `h2`
+ * (#245), which each result's `h3` title sits under. Once the delete dialog removes the last
+ * result, the heading stays over the empty state, as on the saved links page. Each result is a
  * saved link's card, which search.js clones from the template at the end of the page (design
  * review).
  */
@@ -59,7 +61,8 @@ export function showSearchPage(outcome: Outcome | null = null): Response {
           </div>
         </form>
       </search>
-      <ol id="search-results" class="cards" hidden></ol>
+      <h2 id="results-heading" class="cards-heading" hidden>Results</h2>
+      <ol id="search-results" class="cards" aria-labelledby="results-heading" hidden></ol>
       <p id="empty-state" class="empty-state" hidden>You deleted every link this search found. Search again to find others.</p>
       ${bookmarkCardTemplate()}`,
     200,

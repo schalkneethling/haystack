@@ -161,7 +161,7 @@ Feature: Searching my saved links
     Given my search finds "A guide", saved on 1 October 2026, with the description "First line" and "Second line" on two lines
     When I search
     Then its card shows "Saved October 1, 2026"
-    And then the title "A guide" as a heading, which links to the saved page
+    And then the title "A guide" as a heading at level 3, under the heading "Results", which links to the saved page
     And then the address
     And then the description, on two lines
     And at the bottom of the card, the button "Delete"
@@ -267,8 +267,9 @@ Feature: Searching my saved links
     Then VoiceOver reads its label, "Search your saved links"
     When I type a query and press Enter
     And I move by heading
-    Then VoiceOver reads "Vitest browser mode guide", a link, at level 2
-    And the heading after that is "Playwright locators", a link, at level 2
+    Then VoiceOver reads "Results" as a heading at level 2
+    And the heading after that is "Vitest browser mode guide", a link, at level 3
+    And the heading after that is "Playwright locators", a link, at level 3
 
   @untested
   Scenario: Hearing how many links match with a screen reader

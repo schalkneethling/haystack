@@ -44,7 +44,7 @@ function results(page: Page) {
 
 /** Each result's title, without the Delete button that follows it in the card (#208). */
 function resultTitles(page: Page) {
-  return results(page).getByRole("heading", { level: 2 });
+  return results(page).getByRole("heading", { level: 3 });
 }
 
 /** The Search button with its own label, as it is when no search runs. */
@@ -211,7 +211,7 @@ test("a result shows the saved link's card: the date, the title as a link, the a
   const time = first.locator("p.card-date time");
   await expect(first.locator("p.card-date")).toHaveText("Saved October 1, 2026");
   await expect(time).toHaveAttribute("datetime", "2026-10-01T23:30:00.000Z");
-  const heading = first.getByRole("heading", { level: 2, name: "A guide" });
+  const heading = first.getByRole("heading", { level: 3, name: "A guide" });
   const link = heading.getByRole("link", { name: "A guide" });
   await expect(link).toHaveAttribute("href", "https://example.com/guide?page=2");
   await expect(link).toHaveAttribute("rel", "noreferrer");
@@ -224,7 +224,7 @@ test("a result shows the saved link's card: the date, the title as a link, the a
   // A result without a description has no description paragraph, as on the saved links page.
   await expect(results(page).nth(1).locator("p.card-description")).toHaveCount(0);
   // The IDs the Delete control (#208) and the dialog need.
-  const [id, titleId] = await first.evaluate((item) => [item.id, item.querySelector("h2")?.id]);
+  const [id, titleId] = await first.evaluate((item) => [item.id, item.querySelector("h3")?.id]);
   expect(id).toMatch(/^bookmark-/);
   expect(titleId).toBe(`title-${id?.slice("bookmark-".length)}`);
 });
@@ -307,10 +307,35 @@ test("bookmark text is shown as text, and never parsed as markup", async ({ page
   await field(page).fill("markup");
   await field(page).press("Enter");
   const item = results(page).first();
-  await expect(item.getByRole("heading", { level: 2 })).toHaveText(`Title ${markup}`);
+  await expect(item.getByRole("heading", { level: 3 })).toHaveText(`Title ${markup}`);
   await expect(item.locator("p.card-description")).toHaveText(`Description ${markup}`);
   await expect(page.locator("#search-results img")).toHaveCount(0);
   await expect(page).toHaveTitle("Search - Haystack");
+});
+
+// The results have their own heading (#245), which each result's h3 title is under. It is shown
+// with the list, so a search that finds nothing or fails has no heading over nothing.
+test("the results' heading is shown only with results", async ({ page }) => {
+  await answerSearches(page, (query) =>
+    query === "nothing" ? [] : query === "failing" ? { status: 503 } : [{ title: "A guide" }],
+  );
+  await page.goto("/");
+  const heading = page.getByRole("heading", { level: 2, name: "Results" });
+  await expect(heading).toBeHidden();
+  await field(page).fill("guides");
+  await field(page).press("Enter");
+  await expect(heading).toBeVisible();
+  await expect(page.getByRole("list", { name: "Results" })).toBeVisible();
+  for (const query of ["nothing", "failing"]) {
+    // Results first, so each query is what hides the heading.
+    await field(page).fill(`guides before ${query}`);
+    await field(page).press("Enter");
+    await expect(heading).toBeVisible();
+    await field(page).fill(query);
+    await field(page).press("Enter");
+    await expect(status(page)).not.toBeEmpty();
+    await expect(heading).toBeHidden();
+  }
 });
 
 // The page's rule is isHttpsUrl's, which the saved links page links by, so each address becomes
@@ -334,7 +359,7 @@ test("only an https address becomes a link", async ({ page }) => {
   await field(page).press("Enter");
   await expect(results(page)).toHaveCount(addresses.length);
   for (const [index, url] of addresses.entries()) {
-    const heading = results(page).nth(index).getByRole("heading", { level: 2 });
+    const heading = results(page).nth(index).getByRole("heading", { level: 3 });
     await expect(heading).toHaveText(`Result ${index}`);
     await expect(heading.getByRole("link"), url).toHaveCount(isHttpsUrl(url) ? 1 : 0);
   }

@@ -102,7 +102,9 @@ describe("GET /", () => {
   it("has an empty live region, an empty, hidden results list and a hidden empty state", async () => {
     const main = mainContent(await searchPage());
     expect(main).toContain('<div id="list-status" class="status" role="status"></div>');
-    expect(main).toContain('<ol id="search-results" class="cards" hidden></ol>');
+    expect(main).toContain(
+      '<h2 id="results-heading" class="cards-heading" hidden>Results</h2>\n      <ol id="search-results" class="cards" aria-labelledby="results-heading" hidden></ol>',
+    );
     expect(main).toContain(
       '<p id="empty-state" class="empty-state" hidden>You deleted every link this search found. Search again to find others.</p>',
     );
@@ -116,7 +118,7 @@ describe("GET /", () => {
     expect(template).toBeDefined();
     expect(template).toContain('<p class="card-date">Saved <time datetime=');
     expect(template).toContain(
-      '<h2 id="title-template"><a href="https://example.com/" rel="noreferrer">Title</a></h2>',
+      '<h3 id="title-template"><a href="https://example.com/" rel="noreferrer">Title</a></h3>',
     );
     expect(template).toContain('<p class="address">https://example.com/</p>');
     expect(template).toContain('<p class="card-description">Description</p>');
@@ -218,7 +220,9 @@ describe("POST /bookmarks/:id/delete from a search result", () => {
     );
     // No results, because showing them again would mean searching again, and the empty state
     // stays hidden, because it is for a search whose results were all deleted in the page.
-    expect(main).toContain('<ol id="search-results" class="cards" hidden></ol>');
+    expect(main).toContain(
+      '<h2 id="results-heading" class="cards-heading" hidden>Results</h2>\n      <ol id="search-results" class="cards" aria-labelledby="results-heading" hidden></ol>',
+    );
     expect(main).toContain('<p id="empty-state" class="empty-state" hidden>');
     await expectValidHtml(markup);
     expect(await bookmarkIds()).toEqual([]);

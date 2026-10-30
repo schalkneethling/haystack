@@ -38,6 +38,10 @@ import "./message-bar.js";
 const FORM = "form[data-search-form]";
 const FIELD_ID = "search-query";
 const RESULTS_ID = "search-results";
+// The results' heading, shown with the list, so a result's `h3` title is under an `h2` (#245).
+// Each outcome shows it with its results, or hides it with none. The delete dialog leaves it over
+// the empty state after the last result, as the saved links page's list heading is.
+const RESULTS_HEADING_ID = "results-heading";
 const NEEDS_SCRIPT_ID = "search-needs-script";
 // The template of a saved link's card: CARD_TEMPLATE_ID in apps/worker/src/bookmark-card.ts.
 const CARD_TEMPLATE_ID = "bookmark-card-template";
@@ -246,7 +250,7 @@ function resultItem(template, { id, title, description, url, createdAt }) {
   const time = part(item, ".card-date time", HTMLTimeElement);
   time.dateTime = saved.toISOString();
   time.textContent = SAVED_DATE.format(saved);
-  const heading = part(item, "h2", HTMLHeadingElement);
+  const heading = part(item, "h3", HTMLHeadingElement);
   heading.id = `title-${id}`;
   const link = part(heading, "a", HTMLAnchorElement);
   if (isHttpsAddress(url)) {
@@ -352,6 +356,7 @@ function enhance(form, field, button, list, template, status, emptyState) {
     }
     list.replaceChildren(...results.map((result) => resultItem(template, result)));
     list.hidden = results.length === 0;
+    document.getElementById(RESULTS_HEADING_ID)?.toggleAttribute("hidden", list.hidden);
     emptyState?.setAttribute("hidden", "");
   }
 

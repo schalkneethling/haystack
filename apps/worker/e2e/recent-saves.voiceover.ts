@@ -9,7 +9,7 @@ test.beforeEach(async ({ signIn }) => {
   await signIn();
 });
 
-test("moving by heading reads the page heading, the address form's heading, then each saved link's title", async ({
+test("moving by heading reads the page heading, the address form's heading, the list's heading, then each saved link's title", async ({
   page,
   voiceOver,
 }) => {
@@ -32,12 +32,19 @@ test("moving by heading reads the page heading, the address form's heading, then
   expect(formHeading).toMatch(/\blevel 2\b/i);
   expect(formHeading).toContain("Save a link");
 
+  // The list's own heading (#245), which the cards' titles are under.
+  await voiceOver.nextHeading();
+  const listHeading = await voiceOver.lastSpokenPhrase();
+  expect(listHeading).toMatch(/\bheading\b/i);
+  expect(listHeading).toMatch(/\blevel 2\b/i);
+  expect(listHeading).toContain("Recently saved");
+
   // Newest first, and each title is a link.
   for (const title of ["Newer guide", "Older guide"]) {
     await voiceOver.nextHeading();
     const item = await voiceOver.lastSpokenPhrase();
     expect(item).toMatch(/\bheading\b/i);
-    expect(item).toMatch(/\blevel 2\b/i);
+    expect(item).toMatch(/\blevel 3\b/i);
     expect(item).toMatch(/\blink\b/i);
     expect(item).toContain(title);
   }

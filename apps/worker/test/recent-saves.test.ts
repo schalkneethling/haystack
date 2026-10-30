@@ -8,6 +8,7 @@ import {
   seedSignedInUser,
   type SeededUser,
 } from "./seed.ts";
+import { mainContent } from "./main-content.ts";
 import { expectValidHtml } from "./validate-html.ts";
 import { createTestWorker } from "./test-worker.ts";
 
@@ -82,6 +83,22 @@ describe("GET /saved-links", () => {
     expect(response.headers.get("location")).toBe("/auth/sign-in?return_to=%2Fsaved-links");
   });
 
+  // The list has its own heading (#245), after the address form, so the empty state and the cards,
+  // whose titles are h3s, are under it rather than under "Save a link".
+  it("gives the list its own h2, before the empty state, and the cards h3 titles", async () => {
+    const heading = '<h2 id="saved-list-heading" class="cards-heading">Recently saved</h2>';
+    const empty = mainContent(await listMarkup());
+    expect(empty.indexOf("</form>")).toBeLessThan(empty.indexOf(heading));
+    expect(empty.indexOf(heading)).toBeLessThan(empty.indexOf('id="empty-state"'));
+    await save("https://example.com/list-heading");
+    const listed = mainContent(await listMarkup());
+    expect(listed).toContain(
+      '<ol id="recent-saves" class="cards" aria-labelledby="saved-list-heading">',
+    );
+    expect(listed.indexOf(heading)).toBeLessThan(listed.indexOf("<ol"));
+    expect(listed).toMatch(/<h3 id="title-[^"]+">/);
+  });
+
   it("shows the empty state when nothing is saved", async () => {
     const markup = await listMarkup();
     expect(markup).toContain('<h1 id="list-heading">Saved links</h1>');
@@ -113,7 +130,7 @@ describe("GET /saved-links", () => {
     const markup = await listMarkup();
     expect(markup).toContain(`<li id="bookmark-${id}">`);
     expect(markup).toContain(
-      `<h2 id="title-${id}"><a href="https://example.com/guide?page=2" rel="noreferrer">A guide</a></h2>`,
+      `<h3 id="title-${id}"><a href="https://example.com/guide?page=2" rel="noreferrer">A guide</a></h3>`,
     );
     expect(markup).toContain('<p class="address">https://example.com/guide?page=2</p>');
     expect(markup).toContain('<p class="card-description">How to do the thing.</p>');
@@ -150,7 +167,7 @@ describe("GET /saved-links", () => {
   it("does not link a stored address that is not https", async () => {
     await save("http://example.com/old", { title: "Saved before https only" });
     const markup = await listMarkup();
-    expect(markup).toMatch(/<h2 id="title-[^"]+">Saved before https only<\/h2>/);
+    expect(markup).toMatch(/<h3 id="title-[^"]+">Saved before https only<\/h3>/);
     expect(markup).not.toContain('href="http://example.com/old"');
     expect(markup).toContain('<p class="address">http://example.com/old</p>');
   });
