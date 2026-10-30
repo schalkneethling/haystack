@@ -23,7 +23,8 @@
 // - Results that may be incomplete, because some of the collection could not be searched, are
 //   shown with a notice that says so. A search that failed shows an error state with Try again in
 //   place of the results, never an empty list, which would read as "nothing matches".
-// - Each result has a Delete control (#208), the saved links' Delete form, which the delete
+// - Each result is a saved link's card (design review), cloned from the template that the Worker
+//   renders from the saved links page's card, with its Delete control (#208), which the delete
 //   dialog handles: it finds the form when it is used, because the results come after the page
 //   loaded. After a delete, the dialog moves focus and writes "Deleted …" to the one live region,
 //   in place of the count, and shows the empty state when no result is left. The next search's
@@ -37,16 +38,24 @@ const FORM = "form[data-search-form]";
 const FIELD_ID = "search-query";
 const RESULTS_ID = "search-results";
 const NEEDS_SCRIPT_ID = "search-needs-script";
+// The template of a saved link's card: CARD_TEMPLATE_ID in apps/worker/src/bookmark-card.ts.
+const CARD_TEMPLATE_ID = "bookmark-card-template";
 // The page's one live region, which the delete dialog finds by the same ID (#208).
 const STATUS_ID = "list-status";
 // What the delete dialog shows when the last result is deleted (#208).
 const EMPTY_STATE_ID = "empty-state";
 
-// The Delete form's field that names the page a delete returns to, and this page's path: the
-// Worker's RETURN_FIELD and SEARCH_PATH (apps/worker/src/bookmark-paths.ts), which the assets,
-// with no build step, can't import.
-const RETURN_FIELD = "return_to";
+// This page's path: the Worker's SEARCH_PATH (apps/worker/src/bookmark-paths.ts), which the
+// assets, with no build step, can't import. Sign-in returns here.
 const SEARCH_PAGE = "/";
+
+// The card's date, as the saved links page formats it: SAVED_DATE in
+// apps/worker/src/bookmark-card.ts. Dates are shown in UTC, as there.
+const SAVED_DATE = new Intl.DateTimeFormat("en", { dateStyle: "long", timeZone: "UTC" });
+
+// The latest time a Date can hold, which `SearchResult.createdAt` is capped at
+// (packages/schemas/src/search.ts), because a later one can't be formatted.
+const LATEST_DATE = 8.64e15;
 
 /** The route that searches (#214). It answers 404 until then, which the page calls a failure. */
 const SEARCH_PATH = "/api/search";
@@ -95,7 +104,7 @@ const MESSAGES = {
 const TIMEOUT_MS = 30_000;
 
 /**
- * @typedef {{ id: string, title: string, description: string | null, url: string }} Result
+ * @typedef {{ id: string, title: string, description: string | null, url: string, createdAt: number }} Result
  * @typedef {{ kind: "found", results: Result[], complete: boolean }
  *   | { kind: "timeout" | "network" | "failed" | "signedOut" }} Outcome
  */
@@ -141,12 +150,16 @@ function answerIn(body) {
       !RESULT_ID.test(result.id) ||
       typeof result.title !== "string" ||
       typeof result.url !== "string" ||
-      !(result.description === null || typeof result.description === "string")
+      !(result.description === null || typeof result.description === "string") ||
+      typeof result.createdAt !== "number" ||
+      !Number.isInteger(result.createdAt) ||
+      result.createdAt < 0 ||
+      result.createdAt > LATEST_DATE
     ) {
       return null;
     }
-    const { id, title, description, url } = result;
-    results.push({ id, title, description, url });
+    const { id, title, description, url, createdAt } = result;
+    results.push({ id, title, description, url, createdAt });
   }
   return { results, complete: body.outcome === "ok" };
 }
@@ -195,67 +208,70 @@ function paragraphOf(...content) {
 }
 
 /**
- * A result's Delete control (#208): the form that `deleteForm` in apps/worker/src/bookmark-card.ts
- * renders on the saved links page, built here because the results are, with this page as the
- * page to return to. So without the dialog, the button leads to the confirmation page, and
- * confirming there returns to this page. The button is named "Delete" followed by the title,
- * through its own ID and the title heading's.
- * @param {string} id A result ID, which matches RESULT_ID.
+ * The element in `root` that `selector` finds, which must be an instance of `type`. The template
+ * is the Worker's card, so a part that is missing means the two have drifted apart, which is
+ * thrown, rather than shown as a card with a part left blank.
+ * @template {Element} T
+ * @param {ParentNode} root
+ * @param {string} selector
+ * @param {{ new (): T }} type
+ * @returns {T}
  */
-function deleteForm(id) {
-  const form = /** @type {HTMLFormElement} */ (element("form"));
-  form.method = "post";
-  form.action = `/bookmarks/${encodeURIComponent(id)}/delete`;
-  form.dataset.deleteForm = "";
-  const returnTo = /** @type {HTMLInputElement} */ (element("input"));
-  returnTo.type = "hidden";
-  returnTo.name = RETURN_FIELD;
-  returnTo.value = SEARCH_PAGE;
-  const button = /** @type {HTMLButtonElement} */ (element("button", "Delete"));
-  button.className = "button button-small button-danger-outline";
-  button.type = "submit";
-  button.id = `delete-${id}`;
-  button.setAttribute("aria-labelledby", `${button.id} title-${id}`);
-  form.append(returnTo, button);
-  return form;
+function part(root, selector, type) {
+  const found = root.querySelector(selector);
+  if (!(found instanceof type)) {
+    throw new Error(`The card template has no ${selector}`);
+  }
+  return found;
 }
 
 /**
- * A result's card: the title as a heading that wraps the link, then the description, with its
- * line breaks kept, as the saved links page shows them, then the Delete control. The IDs are the
- * saved links page's, so the Delete control is named by the title and the dialog finds the item.
+ * A result's card: a clone of the saved links page's card, from the template, with each part
+ * filled from the result with `textContent` and attributes. The IDs are the saved links page's,
+ * so the Delete control is named by the title and the dialog finds the item. The template has a
+ * link and a description, which go when the result has none, as the saved links page leaves them
+ * out. Its Delete form returns to this page (#208), so without the dialog, confirming the delete
+ * returns here.
+ * @param {HTMLTemplateElement} template
  * @param {Result} result
  */
-function resultItem({ id, title, description, url }) {
-  const item = element("li");
+function resultItem(template, { id, title, description, url, createdAt }) {
+  const item = part(template.content, "li", HTMLLIElement).cloneNode(true);
+  if (!(item instanceof HTMLLIElement)) {
+    throw new Error("The card template's item did not clone");
+  }
   item.id = `bookmark-${id}`;
-  const article = element("article");
-  article.className = "result";
-  const heading = element("h2");
+  const saved = new Date(createdAt);
+  const time = part(item, ".card-date time", HTMLTimeElement);
+  time.dateTime = saved.toISOString();
+  time.textContent = SAVED_DATE.format(saved);
+  const heading = part(item, "h2", HTMLHeadingElement);
   heading.id = `title-${id}`;
+  const link = part(heading, "a", HTMLAnchorElement);
   if (isHttpsAddress(url)) {
-    const link = /** @type {HTMLAnchorElement} */ (element("a", title));
     link.href = url;
-    // The saved site isn't told that the visit came from Haystack.
-    link.rel = "noreferrer";
-    heading.append(link);
+    link.textContent = title;
   } else {
     heading.textContent = title;
   }
-  article.append(heading);
-  if (description !== null && description !== "") {
-    const paragraph = element("p");
-    paragraph.className = "card-description";
+  part(item, ".address", HTMLParagraphElement).textContent = url;
+  const paragraph = part(item, ".card-description", HTMLParagraphElement);
+  if (description === null) {
+    paragraph.remove();
+  } else {
+    paragraph.replaceChildren();
     for (const [index, line] of description.split("\n").entries()) {
       if (index > 0) {
         paragraph.append(element("br"));
       }
       paragraph.append(line);
     }
-    article.append(paragraph);
   }
-  article.append(deleteForm(id));
-  item.append(article);
+  const form = part(item, "form[data-delete-form]", HTMLFormElement);
+  form.action = `/bookmarks/${encodeURIComponent(id)}/delete`;
+  const button = part(form, "button", HTMLButtonElement);
+  button.id = `delete-${id}`;
+  button.setAttribute("aria-labelledby", `${button.id} title-${id}`);
   return item;
 }
 
@@ -289,10 +305,11 @@ async function outcomeOf(response, signal) {
  * @param {HTMLInputElement} field
  * @param {HTMLButtonElement} button
  * @param {HTMLOListElement} list
+ * @param {HTMLTemplateElement} template
  * @param {HTMLElement} status
  * @param {HTMLElement | null} emptyState
  */
-function enhance(form, field, button, list, status, emptyState) {
+function enhance(form, field, button, list, template, status, emptyState) {
   const idleLabel = button.textContent ?? "";
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let announcement;
@@ -332,7 +349,7 @@ function enhance(form, field, button, list, status, emptyState) {
     if (list.contains(document.activeElement)) {
       button.focus();
     }
-    list.replaceChildren(...results.map(resultItem));
+    list.replaceChildren(...results.map((result) => resultItem(template, result)));
     list.hidden = results.length === 0;
     emptyState?.setAttribute("hidden", "");
   }
@@ -483,18 +500,45 @@ function enhance(form, field, button, list, status, emptyState) {
   });
 }
 
+/**
+ * Whether a result's card can be built from the template: a sample card is built once, before
+ * the page is enhanced. A template that has drifted from what `resultItem` expects would
+ * otherwise throw in the middle of a search, after the button's label was reset and before the
+ * results were replaced, which would leave the last query's results under the new one. Without
+ * enhancing, the page keeps saying that searching needs JavaScript, and links to the saved links.
+ * @param {HTMLTemplateElement} template
+ */
+function fillsTheTemplate(template) {
+  try {
+    resultItem(template, {
+      id: "sample",
+      title: "Sample",
+      description: "Sample",
+      url: "https://example.com/",
+      createdAt: 0,
+    });
+    return true;
+  } catch (error) {
+    console.error(error);
+    return false;
+  }
+}
+
 const form = document.querySelector(FORM);
 const field = document.getElementById(FIELD_ID);
 const button = form?.querySelector('button[type="submit"]');
 const list = document.getElementById(RESULTS_ID);
+const template = document.getElementById(CARD_TEMPLATE_ID);
 const status = document.getElementById(STATUS_ID);
 if (
   form instanceof HTMLFormElement &&
   field instanceof HTMLInputElement &&
   button instanceof HTMLButtonElement &&
   list instanceof HTMLOListElement &&
-  status !== null
+  template instanceof HTMLTemplateElement &&
+  status !== null &&
+  fillsTheTemplate(template)
 ) {
-  enhance(form, field, button, list, status, document.getElementById(EMPTY_STATE_ID));
+  enhance(form, field, button, list, template, status, document.getElementById(EMPTY_STATE_ID));
   document.getElementById(NEEDS_SCRIPT_ID)?.setAttribute("hidden", "");
 }

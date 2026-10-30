@@ -79,7 +79,10 @@ describe("GET /", () => {
       `<input id="search-query" class="search-input" type="search" maxlength="${SEARCH_QUERY_CAP}" aria-describedby="search-hint">`,
     );
     expect(SEARCH_QUERY_CAP).toBe(500);
-    expect(main).not.toMatch(/placeholder|name="/);
+    expect(main).not.toContain("placeholder");
+    // The search landmark only: the card template's Delete form has a named field (#208).
+    const search = main.slice(main.indexOf("<search>"), main.indexOf("</search>"));
+    expect(search).not.toContain('name="');
   });
 
   // The script hides it, so it is shown without JavaScript, and when the script fails to load.
@@ -102,6 +105,26 @@ describe("GET /", () => {
     expect(main).toContain('<ol id="search-results" class="cards" hidden></ol>');
     expect(main).toContain(
       '<p id="empty-state" class="empty-state" hidden>You deleted every link this search found. Search again to find others.</p>',
+    );
+  });
+
+  // search.js builds each result from the saved links page's card (design review), so the card's
+  // markup has one source, with a Delete form that returns to the search page.
+  it("has the saved links page's card as a template for the results", async () => {
+    const main = mainContent(await searchPage());
+    const template = /<template id="bookmark-card-template">([\s\S]*?)<\/template>/.exec(main)?.[1];
+    expect(template).toBeDefined();
+    expect(template).toContain('<p class="card-date">Saved <time datetime=');
+    expect(template).toContain(
+      '<h2 id="title-template"><a href="https://example.com/" rel="noreferrer">Title</a></h2>',
+    );
+    expect(template).toContain('<p class="address">https://example.com/</p>');
+    expect(template).toContain('<p class="card-description">Description</p>');
+    expect(template).toContain('<input type="hidden" name="return_to" value="/">');
+    // search.js finds the Delete form and its button by these.
+    expect(template).toContain("data-delete-form>");
+    expect(template).toContain(
+      '<button class="button button-small button-danger-outline" type="submit" id="delete-template"',
     );
   });
 

@@ -31,6 +31,7 @@ describe("SearchAnswer", () => {
     title: "A guide",
     description: "How to do the thing.",
     url: "https://example.com/guide",
+    createdAt: Date.UTC(2026, 9, 1),
   };
 
   const valid = { runId: "r-1", outcome: "ok", results: [result] };
@@ -76,7 +77,29 @@ describe("SearchAnswer", () => {
     ["with a result without an ID", { ...valid, results: [{ ...result, id: undefined }] }],
     ["with a missing description", { ...valid, results: [{ ...result, description: undefined }] }],
     ["with a title that is not a string", { ...valid, results: [{ ...result, title: 1 }] }],
+    [
+      "with a result without its saved time",
+      { ...valid, results: [{ ...result, createdAt: undefined }] },
+    ],
   ])("rejects an answer %s", (_, answer) => {
     expect(v.safeParse(SearchAnswer, answer).success).toBe(false);
+  });
+
+  // The page formats the saved time as a date, and a Date outside its range is invalid, so
+  // formatting it would throw.
+  it.each([
+    ["a string", "1790000000000"],
+    ["a fraction", 1.5],
+    ["negative", -1],
+    ["past the latest Date", 8.64e15 + 1],
+    ["not a number", Number.NaN],
+  ])("rejects a saved time that is %s", (_, createdAt) => {
+    const answer = { ...valid, results: [{ ...result, createdAt }] };
+    expect(v.safeParse(SearchAnswer, answer).success).toBe(false);
+  });
+
+  it("accepts the latest saved time a Date can hold", () => {
+    const answer = { ...valid, results: [{ ...result, createdAt: 8.64e15 }] };
+    expect(v.safeParse(SearchAnswer, answer).success).toBe(true);
   });
 });

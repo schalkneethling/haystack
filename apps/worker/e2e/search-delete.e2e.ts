@@ -94,7 +94,7 @@ test("each result has a Delete button named by its title, in a form that returns
         action: parent?.getAttribute("action"),
         marked: parent?.hasAttribute("data-delete-form"),
         fields: [...new FormData(parent ?? undefined)].map(([name, value]) => [name, value]),
-        inArticle: parent?.parentElement?.matches("article.result"),
+        inCard: parent?.parentElement?.matches("#search-results > li"),
       };
     });
     const id = await results(page).nth(index).getAttribute("id");
@@ -103,7 +103,7 @@ test("each result has a Delete button named by its title, in a form that returns
       action: `/bookmarks/${String(id?.replace(/^bookmark-/, ""))}/delete`,
       marked: true,
       fields: [["return_to", "/"]],
-      inArticle: true,
+      inCard: true,
     });
   }
 });
