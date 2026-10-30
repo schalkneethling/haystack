@@ -39,6 +39,8 @@ const FORM = "form[data-search-form]";
 const FIELD_ID = "search-query";
 const RESULTS_ID = "search-results";
 // The results' heading, shown with the list, so a result's `h3` title is under an `h2` (#245).
+// Each outcome shows it with its results, or hides it with none. The delete dialog leaves it over
+// the empty state after the last result, as the saved links page's list heading is.
 const RESULTS_HEADING_ID = "results-heading";
 const NEEDS_SCRIPT_ID = "search-needs-script";
 // The template of a saved link's card: CARD_TEMPLATE_ID in apps/worker/src/bookmark-card.ts.

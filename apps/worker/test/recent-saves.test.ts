@@ -86,7 +86,7 @@ describe("GET /saved-links", () => {
   // The list has its own heading (#245), after the address form, so the empty state and the cards,
   // whose titles are h3s, are under it rather than under "Save a link".
   it("gives the list its own h2, before the empty state, and the cards h3 titles", async () => {
-    const heading = '<h2 id="saved-list-heading" class="list-heading">Recently saved</h2>';
+    const heading = '<h2 id="saved-list-heading" class="cards-heading">Recently saved</h2>';
     const empty = mainContent(await listMarkup());
     expect(empty.indexOf("</form>")).toBeLessThan(empty.indexOf(heading));
     expect(empty.indexOf(heading)).toBeLessThan(empty.indexOf('id="empty-state"'));

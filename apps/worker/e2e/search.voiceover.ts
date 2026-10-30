@@ -114,6 +114,7 @@ test("the field reads its label, and moving by heading after a search reads the 
   // The results' own heading (#245), which each result's title is under.
   await voiceOver.nextHeading();
   const results = await voiceOver.lastSpokenPhrase();
+  expect(results).toMatch(/\bheading\b/i);
   expect(results).toMatch(/\blevel 2\b/i);
   expect(results).toContain("Results");
 

@@ -15,7 +15,7 @@ import { htmlResponse } from "./page.ts";
 // The list's heading (#245), which names the list, so that the link to /held, the note about the
 // limit, the cards and the empty state are under it rather than under "Save a link", and each
 // card's `h3` title is under an `h2`.
-const LIST_HEADING_ID = "saved-list-heading";
+const SAVED_LIST_HEADING_ID = "saved-list-heading";
 
 // The list shows the newest links only. It kept the limit when it moved to its own page (#205).
 export const RECENT_SAVES_LIMIT = 50;
@@ -36,7 +36,7 @@ function list(saves: readonly CardBookmark[], more: boolean): SafeHtml {
     ? html`<p>This list shows only your ${RECENT_SAVES_LIMIT} most recent links.</p>
       `
     : null;
-  return html`${limitNote}<ol id="recent-saves" class="cards" aria-labelledby="${LIST_HEADING_ID}">
+  return html`${limitNote}<ol id="recent-saves" class="cards" aria-labelledby="${SAVED_LIST_HEADING_ID}">
         ${saves.map((save) => bookmarkCard(save))}
       </ol>
       ${emptyState}`;
@@ -125,7 +125,7 @@ export async function showRecentSaves(
     html`<h1 id="list-heading">Saved links</h1>
       ${messageBar(html`<div id="list-status" class="status" role="status">${message}</div>`, addressFormStatus(), SENSITIVE_NOTICE)}
       ${addressFormCard()}
-      <h2 id="${LIST_HEADING_ID}" class="list-heading">Recently saved</h2>${reviewLink(reviewCount)}
+      <h2 id="${SAVED_LIST_HEADING_ID}" class="cards-heading">Recently saved</h2>${reviewLink(reviewCount)}
       ${list(saves, rows.length > RECENT_SAVES_LIMIT)}`,
     200,
     {
