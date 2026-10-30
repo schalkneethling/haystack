@@ -58,6 +58,7 @@ export interface PageOptions {
 }
 
 // Sign out is a form, because it is a POST with the Origin check, and works without JavaScript.
+// Its button has the navigation links' class, so the header's three items look alike.
 function siteActions(current: PageOptions["current"]): SafeHtml {
   // The first link follows `<nav>` on the same line, and each other one starts a line of its
   // own, so when withoutSearchLink takes out the first, Search, no line of only spaces is left.
@@ -73,7 +74,7 @@ function siteActions(current: PageOptions["current"]): SafeHtml {
           <nav class="site-nav" aria-label="Main">${links}
           </nav>
           <form method="post" action="/auth/sign-out">
-            <button class="button button-small" type="submit">Sign out</button>
+            <button class="nav-link" type="submit">Sign out</button>
           </form>
         </div>`;
 }

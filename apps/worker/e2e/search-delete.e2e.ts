@@ -417,6 +417,10 @@ test.describe("without the dialog", () => {
     await openConfirmation(page, "First guide");
     await page.getByRole("button", { name: "Delete" }).click();
     await expect(page).toHaveTitle("Deleted “First guide” - Search - Haystack");
+    // The title matches before the page's module script runs, and Enter before it runs would send
+    // the form without it, which only loads the page again. The script hides this message once it
+    // runs.
+    await expect(page.locator("#search-needs-script")).toBeHidden();
 
     await field(page).fill("more guides");
     await field(page).press("Enter");

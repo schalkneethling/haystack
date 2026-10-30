@@ -731,15 +731,21 @@ test.describe("in forced colors", () => {
     await expect(page.locator("#empty-state")).toHaveCSS("border-top-style", "dashed");
   });
 
-  test("only the current page's link is outlined and underlined", async ({ page }) => {
+  // The bar is a border, which forced colors keep, so the current page still differs from the
+  // other items by its bar and its weight, and not by color.
+  test("only the current page's link has the bar, and the others are underlined", async ({
+    page,
+  }) => {
     const savedLinks = page
       .getByRole("navigation", { name: "Main" })
       .getByRole("link", { name: "Saved links" });
     await page.goto("/saved-links");
-    await expect(savedLinks).toHaveCSS("border-top-style", "solid");
-    await expect(savedLinks).toHaveCSS("text-decoration-line", "underline");
+    await expect(savedLinks).toHaveCSS("border-bottom-style", "solid");
+    await expect(savedLinks).toHaveCSS("border-bottom-width", "3px");
+    await expect(savedLinks).toHaveCSS("text-decoration-line", "none");
     await page.goto(saveUrl({ url: "https://example.com/forced-colors" }));
-    await expect(savedLinks).toHaveCSS("border-top-style", "none");
+    await expect(savedLinks).toHaveCSS("border-bottom-style", "none");
+    await expect(savedLinks).toHaveCSS("text-decoration-line", "underline");
   });
 
   test("the alert's icon keeps its glyph and circle, and adds nothing to what is read", async ({
@@ -792,6 +798,43 @@ test.describe("the header", () => {
     await page.goto(saveUrl({ url: "https://example.com/current" }));
     await expect(savedLinks).not.toHaveAttribute("aria-current");
     await expect(search).not.toHaveAttribute("aria-current");
+  });
+
+  // The three items are plain text (design review): none has a pill's fill or border, Sign out
+  // looks like the links, and each keeps the header's 40 px target.
+  test("shows the navigation and Sign out as plain text of one size", async ({ page }) => {
+    await page.goto("/");
+    const nav = page.getByRole("navigation", { name: "Main" });
+    const search = nav.getByRole("link", { name: "Search" });
+    const savedLinks = nav.getByRole("link", { name: "Saved links" });
+    const signOut = page.getByRole("button", { name: "Sign out" });
+    for (const item of [search, savedLinks, signOut]) {
+      await expect(item).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      await expect(item).toHaveCSS("border-top-style", "none");
+      await expect(item).toHaveCSS("font-size", "16px");
+      const box = await item.boundingBox();
+      expect(box?.height).toBeGreaterThanOrEqual(40);
+    }
+    // Search is the current page, so Saved links and Sign out are the plain, underlined items, and
+    // Sign out, a button, looks exactly like the link.
+    for (const property of [
+      "text-decoration-line",
+      "text-underline-offset",
+      "font-weight",
+      "color",
+    ]) {
+      const link = await savedLinks.evaluate(
+        (element, name) => getComputedStyle(element).getPropertyValue(name),
+        property,
+      );
+      await expect(signOut).toHaveCSS(property, link);
+    }
+    await expect(savedLinks).toHaveCSS("text-decoration-line", "underline");
+    await expect(savedLinks).toHaveCSS("font-weight", "400");
+    // The current page is bold, with the bar and without the underline.
+    await expect(search).toHaveCSS("font-weight", "700");
+    await expect(search).toHaveCSS("border-bottom-style", "solid");
+    await expect(search).toHaveCSS("text-decoration-line", "none");
   });
 
   test.describe("without JavaScript", () => {

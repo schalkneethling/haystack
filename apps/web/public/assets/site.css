@@ -112,6 +112,8 @@ main > :where(p, ul, div) {
   color: var(--color-ink);
 }
 
+/* Forced colors drop the dot's background color, so it disappears there. It is decorative, so the
+   wordmark loses nothing a reader needs. */
 .wordmark-dot {
   background-color: var(--color-primary);
   block-size: 0.75rem;
@@ -126,34 +128,40 @@ main > :where(p, ul, div) {
   gap: var(--space-xs);
 }
 
+/* The navigation links and Sign out are plain underlined text, so the three weigh the same next
+   to the wordmark. Sign out is a button, so the browser's own button fill and border are reset,
+   and it takes the links' underline offset and color transition, which are set for `a`. */
 .nav-link {
   align-items: center;
-  border: 1px solid transparent;
-  border-radius: var(--radius-pill);
+  background-color: transparent;
+  border: 0;
   color: var(--color-ink);
+  cursor: pointer;
   display: inline-flex;
+  font: inherit;
   font-size: 1rem;
   min-block-size: var(--target-small);
-  padding-inline: 0.875rem;
+  padding-inline: var(--space-xs);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
 }
 
 .nav-link:hover {
   color: var(--color-accent);
 }
 
+/* The current page is told apart by more than color: it is bold, has no underline, and has a
+   straw bar along its bottom edge, the primary button's edge, which is ochre in the light scheme.
+   The bar is a border, which forced colors, such as Windows' contrast themes, keep in a system
+   color. The padding at the top matches it, so the text stays in line with the other items. */
 .nav-link[aria-current="page"] {
-  background-color: var(--color-primary);
-  border-color: var(--color-primary-border);
-  color: var(--color-on-primary);
-  font-weight: 600;
+  border-block-end: 3px solid var(--color-primary-border);
+  font-weight: 700;
+  padding-block-start: 3px;
   text-decoration: none;
 }
 
-.nav-link[aria-current="page"]:hover {
-  background-color: var(--color-primary-hover);
-}
-
-/* Buttons. Every button is a pill. The plain one is secondary. */
+/* Buttons. Every `.button` is a pill. The plain one is secondary. */
 
 .button {
   align-items: center;
@@ -230,6 +238,13 @@ main > :where(p, ul, div) {
     transition:
       background-color 120ms ease,
       color 120ms ease;
+  }
+
+  /* The header's items change only their color. Sign out is a button, which the browser first
+     draws with its own fill, so a transition of its background would fade that fill out over
+     each page load, with the text on it below 4.5:1 until it ends. */
+  .nav-link {
+    transition: color 120ms ease;
   }
 }
 
@@ -758,19 +773,4 @@ search {
 
 .delete-dialog::backdrop {
   background-color: var(--color-backdrop);
-}
-
-/* Forced colors, such as Windows' contrast themes, replace the palette with system colors. */
-@media (forced-colors: active) {
-  /* A transparent border would be drawn in the system's text color, so the links have none, and
-     only the current page is outlined and underlined. */
-  .nav-link {
-    border-style: none;
-  }
-
-  .nav-link[aria-current="page"] {
-    border-style: solid;
-    text-decoration: underline;
-    text-decoration-thickness: 0.125em;
-  }
 }
