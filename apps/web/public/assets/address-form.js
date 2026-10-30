@@ -190,16 +190,11 @@ function enhance(form, field, button, status) {
     document.getElementById(ERROR_ID) === null
       ? document.title
       : (form.dataset.idleTitle ?? document.title);
-  // Where a new error goes: after the heading, before the form, on the form's own page, as the
-  // server renders it there, and before the hint in the saved links page's card, which has no
-  // heading of its own. The server says which form this is.
-  const inCard = form.dataset.addressForm === "card";
-
   // The rejected address's error, in the markup the server renders: an alert holding the
-  // paragraph that the field's description points at, error first, then the hint. On its own
-  // page the alert follows the heading, before the form; in the saved links page's card it comes
-  // before the hint. The page's title changes with it, to the title the server gives the
-  // address form with an error, which the answer carries, and back when the error is cleared.
+  // paragraph that the field's description points at, error first, then the hint. On both pages
+  // the alert follows the form's heading, before the form, as the server renders it. The page's
+  // title changes with it, to the title the server gives the address form with an error, which
+  // the answer carries, and back when the error is cleared.
   /** @param {{ text: string, title: string } | null} error */
   function showError(error) {
     const existing = document.getElementById(ERROR_ID);
@@ -220,12 +215,7 @@ function enhance(form, field, button, status) {
       paragraph.id = ERROR_ID;
       paragraph.textContent = text;
       alert.append(paragraph);
-      const hint = document.getElementById(HINT_ID);
-      if (inCard && hint !== null) {
-        hint.before(alert);
-      } else {
-        form.before(alert);
-      }
+      form.before(alert);
     } else {
       existing.textContent = text;
     }

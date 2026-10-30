@@ -83,7 +83,7 @@ const SECRET_REASON =
   "This link contains an access token, key, or password, so it could let anyone who has it act as you.";
 const HINT = "Paste the address of a page. You confirm its title on the next step.";
 
-// On the saved links page the form comes before the heading, so it is a named form landmark. On
+// On the saved links page the form is a named form landmark, under its own heading. On
 // its own page the heading is its label, so the form is not named again.
 test("the form is a landmark named Save a link on the saved links page only", async ({ page }) => {
   await page.goto("/saved-links");
@@ -659,13 +659,13 @@ test.describe("review of #105", () => {
     await expectSaveFormFor(page, address, "No URL.parse");
   });
 
-  test("7. the error goes where the server puts it: before the hint in the card, before the form on its own page", async ({
+  test("7. the error goes where the server puts it: after the form's heading, before the form, on both pages", async ({
     page,
   }) => {
     await page.goto("/saved-links");
     await field(page).fill("pages.test/in-card");
     await field(page).press("Enter");
-    await expect(page.locator("form.address-form .alert + #save-url-hint")).toHaveCount(1);
+    await expect(page.locator("h2#save-url-label + .alert + form.address-form")).toHaveCount(1);
     await page.goto("/save");
     await field(page).fill("pages.test/on-its-page");
     await field(page).press("Enter");
