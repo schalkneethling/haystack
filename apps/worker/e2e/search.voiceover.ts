@@ -104,18 +104,24 @@ async function expectSpoken(voiceOver: VoiceOverPlaywright, pattern: RegExp): Pr
   }
 }
 
-test("the field reads its label, and moving by heading after a search reads each result's title", async ({
+test("the field reads its label, and moving by heading after a search reads the results' heading, then each result's title", async ({
   page,
   voiceOver,
 }) => {
   await searchWith(page, voiceOver, FOUND, "2 saved links match your search.");
   await expect(page.locator("#search-results > li")).toHaveCount(2);
 
+  // The results' own heading (#245), which each result's title is under.
+  await voiceOver.nextHeading();
+  const results = await voiceOver.lastSpokenPhrase();
+  expect(results).toMatch(/\blevel 2\b/i);
+  expect(results).toContain("Results");
+
   for (const title of TITLES) {
     await voiceOver.nextHeading();
     const heading = await voiceOver.lastSpokenPhrase();
     expect(heading).toMatch(/\bheading\b/i);
-    expect(heading).toMatch(/\blevel 2\b/i);
+    expect(heading).toMatch(/\blevel 3\b/i);
     expect(heading).toMatch(/\blink\b/i);
     expect(heading).toContain(title);
   }

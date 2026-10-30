@@ -247,6 +247,6 @@ describe("the list's delete buttons", () => {
     expect(markup).toContain(
       `<button class="button button-small button-danger-outline" type="submit" id="delete-${bookmarkId}" aria-labelledby="delete-${bookmarkId} title-${bookmarkId}">Delete</button>`,
     );
-    expect(markup).toContain(`<h2 id="title-${bookmarkId}">`);
+    expect(markup).toContain(`<h3 id="title-${bookmarkId}">`);
   });
 });

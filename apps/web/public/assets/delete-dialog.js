@@ -74,12 +74,12 @@ function announce(message) {
 }
 
 /**
- * The item's title heading: an `h2` on the saved links page and the search page, and an `h3` on
- * /held, whose sections have the `h2`s.
+ * The item's title heading: an `h3` on every page, under the `h2` of its list or, on /held, of
+ * its section (#245).
  * @param {Element | null | undefined} item
  */
 function titleHeading(item) {
-  return item?.querySelector("h2, h3") ?? null;
+  return item?.querySelector("h3") ?? null;
 }
 
 /**

@@ -43,7 +43,7 @@ test("the dialog confirms, deletes, moves focus to the next item, and announces 
   const items = page.getByRole("listitem");
   await expect(items).toHaveCount(2);
   // The next item down the list, which is the older one.
-  await expect(items.nth(1).getByRole("heading", { level: 2 })).toBeFocused();
+  await expect(items.nth(1).getByRole("heading", { level: 3 })).toBeFocused();
   await expect(items.nth(1)).toContainText("Oldest confirm");
   // No page load: the list stayed on the saved links page.
   expect(new URL(page.url()).pathname).toBe("/saved-links");
@@ -184,7 +184,7 @@ async function recordAnnouncements(page: Page): Promise<Announcement[]> {
         text: nodes.map((node) => (typeof node === "string" ? node : node.textContent)).join(""),
         dialogOpen: dialog.open,
         focusedTag: focused?.localName ?? "",
-        focusedItem: focused?.closest("li")?.querySelector("h2")?.textContent?.trim() ?? "",
+        focusedItem: focused?.closest("li")?.querySelector("h3")?.textContent?.trim() ?? "",
         msSinceClose,
       });
       write(...nodes);
@@ -216,7 +216,7 @@ test("the status message is written after the dialog closes and focus moves to t
   expect(announcements).toHaveLength(1);
   expect(announcements[0]).toMatchObject({
     dialogOpen: false,
-    focusedTag: "h2",
+    focusedTag: "h3",
     focusedItem: "Oldest order",
   });
   expectDelayed(announcements[0]);
