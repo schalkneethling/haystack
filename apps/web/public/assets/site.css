@@ -9,25 +9,19 @@
   box-sizing: border-box;
 }
 
-/* The ground is the root's background, which always fills the whole canvas. The body's would
-   only reach past the content by propagating to the canvas, which the body's containment below
-   stops. The message bar's height, which message-bar.js keeps up to date, is the scroll padding,
-   so a control that Tab moves to is scrolled into view below the bar, never under it
-   (WCAG 2.4.11). */
+/* The ground is the root's background, which always fills the whole canvas. The message bar's
+   height, which message-bar.js keeps up to date, is the scroll padding, so a control that Tab
+   moves to is scrolled into view below the bar, never under it (WCAG 2.4.11). */
 html {
   background-color: var(--color-ground);
   scroll-padding-block-start: var(--message-bar-height, 0);
 }
 
-/* The body is a size container, so the message bar can reach the viewport's edges with `cqi`,
-   which, unlike `vw`, leaves out a classic scrollbar, so the bar never makes the page scroll
-   sideways. */
 body {
   --gutter: clamp(var(--space-m), 5vi, var(--space-l));
   --page-width: var(--width-narrow);
 
   color: var(--color-ink);
-  container-type: inline-size;
   font-family: var(--font-sans);
   font-size: var(--text-body);
   line-height: var(--leading-body);
@@ -406,15 +400,32 @@ search {
    here too. Continue keeps its usual style: only its label changes, because it is never
    disabled. */
 .message-bar {
-  margin-inline: calc(50% - 50cqi);
   max-inline-size: none;
-  padding-inline: calc(50cqi - 50%);
 }
 
+/* The box stays as wide as the content, and its fill and borders are drawn out to the viewport's
+   edges: the fill as a shadow, and the borders as a border image set out past the box. Neither
+   counts as overflow, so the bar never makes the page scroll sideways, as `vw` would with a
+   classic scrollbar, and the clip keeps the shadow off the content above and below the bar. A
+   size container on the body would give the viewport's width as `cqi` instead, but Chromium then
+   sometimes runs every button's and link's transition from the browser's own style on load. */
 .message-bar:has(> :not(:empty, [hidden])) {
   background-color: var(--color-surface);
   border-block: 1px solid var(--color-border);
+  border-image: linear-gradient(var(--color-border) 0 0) 1 / 1px 0 / 0 100vmax;
+  box-shadow: 0 0 0 100vmax var(--color-surface);
+  clip-path: inset(0 -100vmax);
   padding-block: var(--space-m);
+}
+
+/* Forced colors keep the gradient's own color, which would draw the borders in the palette's
+   faint border color, so the box's own borders, which they replace with a system color, draw
+   them instead. The shadow is dropped there too, and the canvas is one color, so nothing is
+   lost by the bar no longer reaching the viewport's edges. */
+@media (forced-colors: active) {
+  .message-bar:has(> :not(:empty, [hidden])) {
+    border-image: none;
+  }
 }
 
 .message-bar > * {

@@ -736,6 +736,17 @@ test.describe("in forced colors", () => {
     await expect(message).toHaveCSS("outline-width", "3px");
   });
 
+  // The message bar's borders are a border image out to the viewport's edges, whose gradient
+  // forced colors would leave in the palette's faint border color, so there they are the box's own
+  // borders, in a system color.
+  test("the message bar keeps its borders in a system color", async ({ page }) => {
+    await page.goto("/");
+    const bar = page.locator("#messages");
+    await expect(bar).toHaveCSS("border-image-source", "none");
+    await expect(bar).toHaveCSS("border-top-style", "solid");
+    await expect(bar).toHaveCSS("border-bottom-style", "solid");
+  });
+
   // The checkbox is drawn in site.css, and its tick is a border, which forced colors keep.
   test("Release's ticked checkbox keeps its tick", async ({ page, run }) => {
     await saveHeld(page, run, "https://example.com/forced-colors-checkbox", "Held guide");

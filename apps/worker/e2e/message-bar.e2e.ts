@@ -38,6 +38,11 @@ async function search(page: Page, query: string): Promise<void> {
 
 const NOTICE = "Do not save links that contain access tokens";
 
+// A viewport the bar sticks in. With a search's message and the notice, the bar is about 200 px
+// tall, a third of a 600 px viewport, so a third of 800 px leaves room for the fonts to draw a
+// little taller on another system. The tests that need a stuck bar check that it is.
+const STUCK_VIEWPORT = { width: 1280, height: 800 };
+
 // Every page with a message has one bar, a direct child of <main>, right after the heading.
 for (const [name, path] of [
   ["the search page", "/"],
@@ -56,21 +61,61 @@ for (const [name, path] of [
 test("the bar sticks to the top of the viewport and spans it once the page is scrolled", async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 1280, height: 600 });
+  await page.setViewportSize(STUCK_VIEWPORT);
   await answerSearches(page, () =>
     Array.from({ length: 12 }, (_, index) => ({ title: `Result ${index}` })),
   );
   await page.goto("/");
   await search(page, "many");
   await expect(page.locator("#search-results > li")).toHaveCount(12);
+  await expect(bar(page)).toHaveAttribute("data-stuck");
+  // The bar's box is as wide as the content, and its fill and borders are drawn out to the
+  // viewport's edges (site.css says how), so what is checked is the pixels drawn at both edges.
+  const [width, surface, border] = await bar(page).evaluate((element) => [
+    document.documentElement.clientWidth,
+    getComputedStyle(element).backgroundColor,
+    getComputedStyle(element).borderTopColor,
+  ]);
+  const edges = async (): Promise<string[]> => {
+    const box = await bar(page).boundingBox();
+    if (box === null) {
+      throw new Error("The bar is not drawn");
+    }
+    const top = Math.round(box.y);
+    const middle = Math.round(box.y + box.height / 2);
+    return pixels(page, [0, top], [width - 1, top], [0, middle], [width - 1, middle]);
+  };
+  // The top border is checked before the page scrolls, because a scroll by the wheel can stop
+  // between pixels, and the 1 px border of the bar stuck at the top is then not drawn on a whole
+  // row.
+  expect(await edges()).toEqual([border, border, surface, surface]);
   await page.mouse.wheel(0, 2000);
   await expect.poll(async () => (await bar(page).boundingBox())?.y).toBeCloseTo(0, 0);
-  const box = await bar(page).boundingBox();
-  const width = await page.evaluate(() => document.documentElement.clientWidth);
-  expect(box?.x).toBeCloseTo(0, 0);
-  expect(box?.width).toBeCloseTo(width, 0);
+  expect((await edges()).slice(2)).toEqual([surface, surface]);
   await expect(bar(page)).toContainText("12 saved links match your search.");
 });
+
+// The colors drawn at points in the viewport, as `rgb(r, g, b)`. The screenshot is decoded in the
+// page, from a blob, which the page's Content Security Policy doesn't limit as it does images.
+async function pixels(page: Page, ...points: [number, number][]): Promise<string[]> {
+  const png = (await page.screenshot()).toString("base64");
+  return page.evaluate(
+    async ({ png, points }) => {
+      const bytes = Uint8Array.from(atob(png), (character) => character.charCodeAt(0));
+      const image = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+      const context = new OffscreenCanvas(image.width, image.height).getContext("2d");
+      if (context === null) {
+        throw new Error("No 2D canvas");
+      }
+      context.drawImage(image, 0, 0);
+      return points.map(([x, y]) => {
+        const [red, green, blue] = context.getImageData(x, y, 1, 1).data;
+        return `rgb(${red}, ${green}, ${blue})`;
+      });
+    },
+    { png, points },
+  );
+}
 
 test.describe("without JavaScript", () => {
   test.use({ javaScriptEnabled: false });
@@ -176,13 +221,14 @@ for (const [preference, behavior] of [
 // A control that Shift+Tab moves to above the viewport is scrolled into view below the stuck bar,
 // never under it (WCAG 2.4.11), because the bar's height is the root's scroll padding.
 test("Shift+Tab never leaves a focused control under the bar", async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 500 });
+  await page.setViewportSize(STUCK_VIEWPORT);
   await answerSearches(page, () =>
     Array.from({ length: 12 }, (_, index) => ({ title: `Result ${index}` })),
   );
   await page.goto("/");
   await search(page, "many");
   await expect(page.locator("#search-results > li")).toHaveCount(12);
+  await expect(bar(page)).toHaveAttribute("data-stuck");
   // To the last result's Delete button, past the bottom of the viewport.
   await page.getByRole("button", { name: "Delete Result 11" }).focus();
   for (let step = 0; step < 10; step += 1) {
@@ -230,7 +276,7 @@ test("a bar too tall for the viewport doesn't stick, and Shift+Tab never lands u
 // A stuck bar is already in view, so a new message doesn't scroll the page. The scroll padding
 // would otherwise count the stuck bar as out of view, and move the page up by its height.
 test("a message that arrives while the bar is stuck doesn't move the page", async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 600 });
+  await page.setViewportSize(STUCK_VIEWPORT);
   await answerSearches(page, () =>
     Array.from({ length: 30 }, (_, index) => ({ title: `Result ${index}` })),
   );
@@ -250,19 +296,21 @@ test("a message that arrives while the bar is stuck doesn't move the page", asyn
     status.replaceChildren(message);
   });
   await page.waitForTimeout(400);
+  await expect(bar(page)).toHaveAttribute("data-stuck");
   expect((await card.boundingBox())?.y).toBeCloseTo(before ?? 0, 0);
 });
 
 // Close moves focus to the heading without scrolling to it, so a person who closed the bar while
 // reading further down stays where they were.
 test("Close doesn't scroll the page back to the top", async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 600 });
+  await page.setViewportSize(STUCK_VIEWPORT);
   await answerSearches(page, () =>
     Array.from({ length: 30 }, (_, index) => ({ title: `Result ${index}` })),
   );
   await page.goto("/");
   await search(page, "many");
   await expect(page.locator("#search-results > li")).toHaveCount(30);
+  await expect(bar(page)).toHaveAttribute("data-stuck");
   await page.evaluate(() => window.scrollTo(0, 1200));
   // A card on screen stays where it is drawn.
   const card = page.locator("#search-results > li").nth(18);
@@ -286,7 +334,7 @@ test("a message that grows the bar doesn't cover the element that has focus", as
   page,
   query,
 }) => {
-  await page.setViewportSize({ width: 1280, height: 600 });
+  await page.setViewportSize(STUCK_VIEWPORT);
   const saved = await saveResults(
     page,
     query,
@@ -305,6 +353,7 @@ test("a message that grows the bar doesn't cover the element that has focus", as
   await button.click();
   await page.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
   await expect(page.locator(SEARCH_STATUS)).toContainText("Deleted");
+  await expect(bar(page)).toHaveAttribute("data-stuck");
   await page.waitForTimeout(400);
   const covered = await page.evaluate(() => {
     const box = document.activeElement?.getBoundingClientRect();
