@@ -161,7 +161,7 @@ Feature: Searching my saved links
     Given my search finds "A guide", saved on 1 October 2026, with the description "First line" and "Second line" on two lines
     When I search
     Then its card shows "Saved October 1, 2026"
-    And then the title "A guide" as a heading, which links to the saved page
+    And then the title "A guide" as a heading at level 3, under the heading "Results", which links to the saved page
     And then the address
     And then the description, on two lines
     And at the bottom of the card, the button "Delete"
