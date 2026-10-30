@@ -564,7 +564,26 @@ for (const viewport of [
   });
 }
 
-// The design puts Continue next to the field, and under it when the row has no room for both.
+// The forms whose field and button share a row: the address form on the saved links page, and the
+// search form.
+const FORM_ROWS = [
+  {
+    name: "the address form",
+    path: "/saved-links",
+    field: { role: "textbox", name: "Save a link" },
+    button: "Continue",
+  },
+  {
+    name: "the search form",
+    path: "/",
+    field: { role: "searchbox", name: "Search your saved links" },
+    button: "Search",
+  },
+] as const;
+
+// The design puts the button next to the field, and under it when the row has no room for both.
+// The row fills the panel either way, and a wrapped button is as wide as the field, with twice the
+// row's 12 px gap above it (design review).
 for (const [width, beside] of [
   [1280, true],
   [320, false],
@@ -572,26 +591,89 @@ for (const [width, beside] of [
   test.describe(`at ${width} px wide`, () => {
     test.use({ viewport: { width, height: 800 } });
 
-    test(`Continue is ${beside ? "next to" : "under"} the address field`, async ({
-      page,
-      signIn,
-    }) => {
-      await signIn();
-      await page.goto("/saved-links");
-      const field = await page.getByRole("textbox", { name: "Save a link" }).boundingBox();
-      const button = await page.getByRole("button", { name: "Continue" }).boundingBox();
-      if (field === null || button === null) {
-        throw new Error("The address form is not drawn");
-      }
-      if (beside) {
-        expect(button.y).toBeCloseTo(field.y, 0);
-        expect(button.x).toBeGreaterThan(field.x + field.width);
-      } else {
-        expect(button.y).toBeGreaterThanOrEqual(field.y + field.height);
-      }
-    });
+    for (const form of FORM_ROWS) {
+      test(`${form.name}'s button is ${beside ? "next to" : "under"} its field, and the row fills the panel`, async ({
+        page,
+        signIn,
+      }) => {
+        await signIn();
+        await page.goto(form.path);
+        const fieldLocator = page.getByRole(form.field.role, { name: form.field.name });
+        const field = await fieldLocator.boundingBox();
+        const button = await page.getByRole("button", { name: form.button }).boundingBox();
+        // The row's box, inside the panel's padding, is the room the two have.
+        const row = await fieldLocator.locator("xpath=..").boundingBox();
+        const panel = await fieldLocator.locator("xpath=ancestor::form[1]").evaluate((element) => {
+          const style = getComputedStyle(element);
+          const box = element.getBoundingClientRect();
+          return {
+            left: box.left + parseFloat(style.paddingLeft) + parseFloat(style.borderLeftWidth),
+            right: box.right - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth),
+          };
+        });
+        if (field === null || button === null || row === null) {
+          throw new Error(`${form.name} is not drawn`);
+        }
+        expect(row.x).toBeCloseTo(panel.left, 0);
+        expect(row.x + row.width).toBeCloseTo(panel.right, 0);
+        expect(field.x).toBeCloseTo(row.x, 0);
+        expect(button.x + button.width).toBeCloseTo(row.x + row.width, 0);
+        if (beside) {
+          expect(button.y).toBeCloseTo(field.y, 0);
+          expect(button.x).toBeGreaterThan(field.x + field.width);
+          // The field takes the spare room, so the button is as wide as its label, within the
+          // fraction of a pixel its own share of the growth gives it.
+          const labelWidth = await page
+            .getByRole("button", { name: form.button })
+            .evaluate((element) => {
+              const style = getComputedStyle(element);
+              const range = document.createRange();
+              range.selectNodeContents(element);
+              return (
+                range.getBoundingClientRect().width +
+                parseFloat(style.paddingLeft) +
+                parseFloat(style.paddingRight) +
+                parseFloat(style.borderLeftWidth) +
+                parseFloat(style.borderRightWidth)
+              );
+            });
+          expect(button.width).toBeLessThan(labelWidth + 2);
+        } else {
+          expect(button.y - (field.y + field.height)).toBeCloseTo(24, 0);
+          expect(button.x).toBeCloseTo(field.x, 0);
+          expect(button.width).toBeCloseTo(field.width, 0);
+        }
+      });
+    }
   });
 }
+
+// While a search runs, the button's label is "Processing…" (#207). The field gives the longer
+// label its room, so the label is never wider than the button. The button could already not
+// shrink below its label before the rows filled their panel, so this guards that rule rather
+// than proving the change.
+test.describe("at 1280 px wide, while a search runs", () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  test("the field makes room for the button's longer label", async ({ page, signIn }) => {
+    await signIn();
+    await holdSearches(page);
+    await page.goto("/");
+    const field = page.getByRole("searchbox", { name: "Search your saved links" });
+    const before = await field.boundingBox();
+    await field.fill("a slow search");
+    await field.press("Enter");
+    const button = page.getByRole("button", { name: "Processing…" });
+    await expect(button).toBeVisible();
+    const after = await field.boundingBox();
+    if (before === null || after === null) {
+      throw new Error("The search field is not drawn");
+    }
+    expect(after.width).toBeLessThan(before.width);
+    const fits = await button.evaluate((element) => element.scrollWidth <= element.clientWidth);
+    expect(fits).toBe(true);
+  });
+});
 
 // A result's Delete button is pinned to the bottom of its card, as on the saved links cards, so
 // the buttons of a row line up when one card's description is longer (#208).
