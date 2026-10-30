@@ -554,7 +554,7 @@ describe("GET /save after a submission without a session", () => {
     const markup = await response.text();
     expect(markup).toContain("<title>Not saved yet - Haystack</title>");
     expect(markup).toContain(
-      `<h1>Save a link</h1><div class="status" role="status"><p>${KEPT_MESSAGE}</p></div>`,
+      `<h1>Save a link</h1>\n      <div id="messages" class="message-bar">\n        <div class="status" role="status"><p>${KEPT_MESSAGE}</p></div>`,
     );
     expect(formValue(markup, "confirmed_title")).toBe("My own title");
     expect(formValue(markup, "confirmed_description")).toBe("My notes\non two lines");
@@ -582,7 +582,7 @@ describe("GET /save after a submission without a session", () => {
     const markup = await response.text();
     expect(markup).toContain("<title>Check the form - Haystack</title>");
     expect(markup).toContain(
-      '<h1>Save a link</h1><div class="alert" role="alert"><p id="save-error">Enter a title of up to 200 characters.</p></div><div class="status" role="status">',
+      '<h1>Save a link</h1>\n      <div id="messages" class="message-bar">\n        <div class="alert" role="alert"><p id="save-error">Enter a title of up to 200 characters.</p></div>\n        <div class="status" role="status">',
     );
     expect(markup).toMatch(
       /id="confirmed-title"[^>]*aria-invalid="true" aria-describedby="save-error"/,

@@ -67,13 +67,15 @@ async function expectFailure(page: Page, message: string): Promise<void> {
 test("the page works with the keyboard alone, and focus stays in the field", async ({ page }) => {
   await answerSearches(page, () => GUIDES);
   await page.goto("/");
-  // The header's four stops come first, then the field and the button.
+  // The header's four stops come first, then the message bar's Close, which is shown because the
+  // notice about private links is (design review), then the field and the button.
   const nav = page.getByRole("navigation", { name: "Main" });
   for (const control of [
     page.getByRole("link", { name: "Haystack", exact: true }),
     nav.getByRole("link", { name: "Search" }),
     nav.getByRole("link", { name: "Saved links" }),
     page.getByRole("button", { name: "Sign out" }),
+    page.getByRole("button", { name: "Close messages" }),
     field(page),
     page.getByRole("button", { name: "Search", exact: true }),
   ]) {

@@ -23,10 +23,16 @@ Feature: The saved links list
     And the "Save a link" form is under the heading "Saved links"
 
   @integration:apps/worker/test/recent-saves.test.ts
+  @playwright:apps/worker/e2e/message-bar.e2e.ts
   Scenario: The notice about private links
+    The notice is in the page's message bar, which stays at the top of the
+    window while I scroll, so I can close it once I have read it.
+
     When I open my saved links
     Then the page shows the notice "Do not save links that contain access tokens, private shares, or sign-in and password reset links. Saved links are sent to the services that describe them, so a private link would no longer be private."
-    And the notice is part of the page, with nothing to dismiss
+    And the notice is in the message bar, right after the heading "Saved links"
+    When I press "Close" in the message bar
+    Then the notice is hidden, and focus moves to the heading "Saved links"
 
   @playwright:apps/worker/e2e/recent-saves.e2e.ts
   @integration:apps/worker/test/recent-saves.test.ts

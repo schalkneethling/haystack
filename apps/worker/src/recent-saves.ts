@@ -1,7 +1,7 @@
 // The recent saves list at SAVED_LINKS_PATH (plan, Phase 4). It was the home page until #205
 // moved it, so that the search page (#206) could take `/`.
 import { and, count, desc, eq, gt, or } from "drizzle-orm";
-import { ADDRESS_FORM_SCRIPT, addressFormCard } from "./address-form.ts";
+import { ADDRESS_FORM_SCRIPT, addressFormCard, addressFormStatus } from "./address-form.ts";
 import { bookmarkCard, type CardBookmark, DELETE_DIALOG_SCRIPT } from "./bookmark-card.ts";
 import { HELD_PATH } from "./bookmark-paths.ts";
 import type { Db } from "./db/client.ts";
@@ -9,7 +9,7 @@ import { bookmarks } from "./db/schema.ts";
 import { errorCode } from "./error-code.ts";
 import { countBookmarksToReview, readReviewPolicy, type ReviewConfig } from "./held.ts";
 import { html, type SafeHtml } from "./html.ts";
-import { type Outcome, SENSITIVE_NOTICE } from "./notices.ts";
+import { MESSAGE_BAR_SCRIPT, messageBar, type Outcome, SENSITIVE_NOTICE } from "./notices.ts";
 import { htmlResponse } from "./page.ts";
 
 // The list shows the newest links only. It kept the limit when it moved to its own page (#205).
@@ -115,19 +115,18 @@ export async function showRecentSaves(
   const message = outcome === null ? null : html`<p>${outcome.message}</p>`;
   return htmlResponse(
     outcome === null ? "Saved links" : `${outcome.title} - Saved links`,
-    // The page's heading comes first, then the address form under its own heading, as the search
-    // page puts its heading above its form (design review).
+    // The page's heading comes first, then its messages, then the address form under its own
+    // heading, as the search page puts its heading above its form (design review).
     html`<h1 id="list-heading">Saved links</h1>
-      ${addressFormCard()}
-      <div id="list-status" class="status" role="status">${message}</div>${reviewLink(reviewCount)}
-      ${SENSITIVE_NOTICE}
+      ${messageBar(html`<div id="list-status" class="status" role="status">${message}</div>`, addressFormStatus(), SENSITIVE_NOTICE)}
+      ${addressFormCard()}${reviewLink(reviewCount)}
       ${list(saves, rows.length > RECENT_SAVES_LIMIT)}`,
     200,
     {
       signedIn: true,
       width: "wide",
       current: "saved-links",
-      scripts: [DELETE_DIALOG_SCRIPT, ADDRESS_FORM_SCRIPT],
+      scripts: [DELETE_DIALOG_SCRIPT, ADDRESS_FORM_SCRIPT, MESSAGE_BAR_SCRIPT],
     },
   );
 }

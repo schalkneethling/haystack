@@ -16,7 +16,7 @@
 // error. Every error comes from the server instead, tied to the field. The field keeps
 // `type="url"` for the keyboard and the autofill it offers.
 import { html, type SafeHtml } from "./html.ts";
-import { fieldError, SENSITIVE_NOTICE } from "./notices.ts";
+import { fieldError, MESSAGE_BAR_SCRIPT, messageBar, SENSITIVE_NOTICE } from "./notices.ts";
 import { htmlResponse, pageTitle } from "./page.ts";
 
 /** What the form shows. */
@@ -46,23 +46,28 @@ const TITLE_ID = "save-url-label";
 // change to a live region that already exists, as on the saved links page.
 const STATUS_ID = "save-url-status";
 
+/**
+ * The address form's status region, which each page with the form puts in its message bar
+ * (`messageBar` in notices.ts), with the page's other messages.
+ */
+export function addressFormStatus(): SafeHtml {
+  return html`<div id="${STATUS_ID}" class="status address-status" role="status"></div>`;
+}
+
 /** The script that sends the form with `fetch`, which every page with the posting form loads. */
 export const ADDRESS_FORM_SCRIPT = "/assets/address-form.js";
 
-// The hint, the field, the button and the status, which both forms share. The field is described
-// by the error first, then the hint, so the reason is heard first. The row and the status share a
-// wrapper, so the empty status adds no gap to the form.
+// The hint, the field and the button, which both forms share. The field is described by the error
+// first, then the hint, so the reason is heard first. The status and the error are in the page's
+// message bar.
 function controls({ value, error }: AddressFormState): SafeHtml {
   const describedBy = error === undefined ? HINT_ID : `${ERROR_ID} ${HINT_ID}`;
   const invalid = error === undefined ? null : html` aria-invalid="true"`;
   const typed = value === "" ? null : html` value="${value}"`;
   return html`<p id="${HINT_ID}" class="hint">Paste the address of a page. You confirm its title on the next step.</p>
-        <div class="address-controls">
-          <div class="address-row">
-            <input id="${FIELD_ID}" class="address-input" name="url" type="url" autocomplete="url"${typed} aria-describedby="${describedBy}"${invalid}>
-            <button class="button button-primary" type="submit">Continue</button>
-          </div>
-          <div id="${STATUS_ID}" class="status address-status" role="status"></div>
+        <div class="address-row">
+          <input id="${FIELD_ID}" class="address-input" name="url" type="url" autocomplete="url"${typed} aria-describedby="${describedBy}"${invalid}>
+          <button class="button button-primary" type="submit">Continue</button>
         </div>`;
 }
 
@@ -77,9 +82,8 @@ function formTarget(signedIn: boolean): SafeHtml {
  * The form on the saved links page, under the page's heading. Its label is an `h2` above the
  * panel, as the search page's label is its heading above its panel (design review), so moving by
  * heading reaches it. The form is named after the label too, which makes it a form landmark,
- * "Save a link", on a page where the list is the main content. A new error goes after the
- * heading, before the form, as on the form's own page. Only a signed-in user sees the saved links
- * page.
+ * "Save a link", on a page where the list is the main content. Its status and a new error go in
+ * the page's message bar (design review). Only a signed-in user sees the saved links page.
  */
 export function addressFormCard(): SafeHtml {
   return html`<h2 id="${TITLE_ID}" class="address-form-title"><label for="${FIELD_ID}">${LABEL}</label></h2>
@@ -91,8 +95,9 @@ export function addressFormCard(): SafeHtml {
 /**
  * The form as a page of its own. The page asks one question, so its heading is the field's
  * label, as in the GOV.UK Design System's question pages, and the page reads like the save form
- * that follows it. An error is shown as the save form shows its own: in an alert after the
- * heading, with the field pointing at it. Focus is not moved, as on the save form.
+ * that follows it. An error is shown as the save form shows its own: in an alert in the message
+ * bar after the heading, with the field pointing at it. Focus is not moved, as on the save form.
+ * The bar also holds the form's status and the notice about private links.
  *
  * This form is not named, so it is not a landmark. The heading comes first in `<main>` and is
  * the field's label, so moving by heading or to the main landmark reaches the form, and a form
@@ -105,13 +110,16 @@ export function addressFormPage(state: AddressFormState, signedIn: boolean): Res
   const error = state.error === undefined ? null : fieldError(ERROR_ID, state.error);
   return htmlResponse(
     state.error === undefined ? LABEL : ADDRESS_ERROR_TITLE,
-    html`<h1><label for="${FIELD_ID}">${LABEL}</label></h1>${error}
+    html`<h1><label for="${FIELD_ID}">${LABEL}</label></h1>
+      ${messageBar(error, addressFormStatus(), SENSITIVE_NOTICE)}
       <form class="panel address-form" ${formTarget(signedIn)} novalidate data-idle-title="${pageTitle(LABEL)}">
         ${controls(state)}
-        ${SENSITIVE_NOTICE}
       </form>`,
     state.error === undefined ? 200 : 400,
-    // Only the form that posts looks a page up, so only its page loads the script.
-    { signedIn, scripts: signedIn ? [ADDRESS_FORM_SCRIPT] : [] },
+    // Only the form that posts looks a page up, so only its page loads that script.
+    {
+      signedIn,
+      scripts: signedIn ? [ADDRESS_FORM_SCRIPT, MESSAGE_BAR_SCRIPT] : [MESSAGE_BAR_SCRIPT],
+    },
   );
 }

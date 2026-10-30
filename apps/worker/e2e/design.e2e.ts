@@ -284,7 +284,8 @@ for (const [colorScheme, ground] of [
     test.use({ colorScheme });
 
     async function expectNoViolations(page: Page): Promise<void> {
-      await expect(page.locator("body")).toHaveCSS("background-color", ground);
+      // The ground is the root's background, which fills the canvas (site.css says why).
+      await expect(page.locator("html")).toHaveCSS("background-color", ground);
       expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
     }
 
@@ -519,7 +520,7 @@ test.describe("the stylesheets and fonts load under the CSP", () => {
 
       // The browser default is a serif font on a white or transparent background.
       await expect(page.locator("body")).toHaveCSS("font-family", /^"Space Grotesk"/);
-      await expect(page.locator("body")).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      await expect(page.locator("html")).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       const loaded = await page.evaluate(async () => {
         await document.fonts.ready;
         return [...document.fonts]
@@ -733,6 +734,17 @@ test.describe("in forced colors", () => {
     await expect(message).toBeFocused();
     await expect(message).toHaveCSS("outline-style", "solid");
     await expect(message).toHaveCSS("outline-width", "3px");
+  });
+
+  // The message bar's borders are a border image out to the viewport's edges, whose gradient
+  // forced colors would leave in the palette's faint border color, so there they are the box's own
+  // borders, in a system color.
+  test("the message bar keeps its borders in a system color", async ({ page }) => {
+    await page.goto("/");
+    const bar = page.locator("#messages");
+    await expect(bar).toHaveCSS("border-image-source", "none");
+    await expect(bar).toHaveCSS("border-top-style", "solid");
+    await expect(bar).toHaveCSS("border-bottom-style", "solid");
   });
 
   // The checkbox is drawn in site.css, and its tick is a border, which forced colors keep.

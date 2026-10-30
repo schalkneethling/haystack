@@ -119,7 +119,7 @@ Feature: Searching my saved links
 
     Given I searched, and Haystack has not answered after 30 seconds
     Then the page stops waiting
-    And it shows the error "Searching your saved links took too long." with the button "Try again", in place of the results
+    And it shows the error "Searching your saved links took too long." with the button "Try again", in the message bar above the form, in place of the results
     And the button reads "Search" again, and the field still has focus
     When I press Enter in the field
     Then the same query is searched again
@@ -312,7 +312,7 @@ Feature: Searching my saved links
 
     Given I searched, and the page shows what it found
     When my next search fails because <the reason>
-    Then the page shows the error "<message>" with the button "Try again", in place of the results
+    Then the page shows the error "<message>" with the button "Try again", in the message bar above the form, in place of the results
     And the results of the search before are gone, and the page doesn't say that nothing matched
     And the field still has focus
 

@@ -14,18 +14,30 @@ test.beforeEach(async ({ signIn }) => {
 });
 
 // The header's four stops come first: the wordmark, the navigation's two links and Sign out.
-// The field is next, because the page heading on a bare /save is its label, which takes no focus.
+// Then the message bar's Close, which is shown because the notice about private links is, and
+// then the field (design review). The page heading takes no focus.
 async function tabToField(page: Page): Promise<void> {
   for (const control of [
     page.getByRole("link", { name: "Haystack", exact: true }),
     page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Search" }),
     page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Saved links" }),
     page.getByRole("button", { name: "Sign out" }),
+    page.getByRole("button", { name: "Close messages" }),
     page.getByRole("textbox", { name: "Save a link" }),
   ]) {
     await page.keyboard.press("Tab");
     await expect(control).toBeFocused();
   }
+}
+
+// The message the script focuses is in the page's message bar, before the form (design review),
+// so the field is forward from it: Tab passes the bar's Close, then reaches the field. Before the
+// bar, the message was under the row, and the field was two Shift+Tabs back.
+async function tabFromMessageToField(page: Page): Promise<void> {
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "Close messages" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("textbox", { name: "Save a link" })).toBeFocused();
 }
 
 /** A fixture page with a title and a description, served at `path`. Returns its address. */
@@ -234,10 +246,8 @@ test.describe("while a lookup runs", () => {
     await field(page).press("Enter");
     await lookups.next(1);
     await expect(message(page)).toBeFocused();
-    // Enter from the field, which the keyboard reaches back from the message, and a click.
-    await page.keyboard.press("Shift+Tab");
-    await page.keyboard.press("Shift+Tab");
-    await expect(field(page)).toBeFocused();
+    // Enter from the field, which the keyboard reaches on from the message, and a click.
+    await tabFromMessageToField(page);
     await page.keyboard.press("Enter");
     await page.getByRole("button", { name: PROCESSING_LABEL }).click();
     await expectProcessing(page);
@@ -278,8 +288,14 @@ test.describe("while a lookup runs", () => {
         }
         return active?.id === "save-url" ? "field" : (active?.textContent ?? "");
       });
+    // The message is in the message bar, before the form: Tab passes Close and the field to
+    // reach Continue (design review).
     await expect.poll(focused).toBe("message");
-    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Tab");
+    await expect.poll(focused).toBe("Close");
+    await page.keyboard.press("Tab");
+    await expect.poll(focused).toBe("field");
+    await page.keyboard.press("Tab");
     await expect.poll(focused).toBe(PROCESSING_LABEL);
     await page.keyboard.press("Enter");
     await page.keyboard.press("Shift+Tab");
@@ -313,7 +329,7 @@ test.describe("while a lookup runs", () => {
     await expectSaveFormFor(page, second, "Changed");
   });
 
-  test("5. moving back from the message to the field, changing the address and pressing Enter sends the new address", async ({
+  test("5. moving on from the message to the field, changing the address and pressing Enter sends the new address", async ({
     page,
     pages,
   }) => {
@@ -324,9 +340,7 @@ test.describe("while a lookup runs", () => {
     await field(page).press("Enter");
     const first = await lookups.next(1);
     await expect(message(page)).toBeFocused();
-    await page.keyboard.press("Shift+Tab");
-    await page.keyboard.press("Shift+Tab");
-    await expect(field(page)).toBeFocused();
+    await tabFromMessageToField(page);
     await page.keyboard.press("ControlOrMeta+A");
     await page.keyboard.insertText(second);
     await page.keyboard.press("Enter");
@@ -659,17 +673,17 @@ test.describe("review of #105", () => {
     await expectSaveFormFor(page, address, "No URL.parse");
   });
 
-  test("7. the error goes where the server puts it: after the form's heading, before the form, on both pages", async ({
+  test("7. the error goes where the server puts it: first in the message bar, on both pages", async ({
     page,
   }) => {
     await page.goto("/saved-links");
     await field(page).fill("pages.test/in-card");
     await field(page).press("Enter");
-    await expect(page.locator("h2#save-url-label + .alert + form.address-form")).toHaveCount(1);
+    await expect(page.locator("#messages > .alert:first-child")).toHaveCount(1);
     await page.goto("/save");
     await field(page).fill("pages.test/on-its-page");
     await field(page).press("Enter");
-    await expect(page.locator(".alert + form.address-form")).toHaveCount(1);
+    await expect(page.locator("#messages > .alert:first-child")).toHaveCount(1);
   });
 
   test("7. a value that must not stay is cleared only while the field still holds it", async ({
@@ -688,7 +702,7 @@ test.describe("review of #105", () => {
     await expect(field(page)).toHaveValue("something typed since");
   });
 
-  // Enter from the field, then back to the field to correct the address while the lookup runs:
+  // Enter from the field, then on to the field to correct the address while the lookup runs:
   // the failure's message must not take focus from the field, or the rest of the typing is lost.
   test("8. a failure message does not take focus from a user typing in the field", async ({
     page,
@@ -700,9 +714,7 @@ test.describe("review of #105", () => {
     await field(page).press("Enter");
     const lookup = await lookups.next(1);
     await expect(message(page)).toBeFocused();
-    await page.keyboard.press("Shift+Tab");
-    await page.keyboard.press("Shift+Tab");
-    await expect(field(page)).toBeFocused();
+    await tabFromMessageToField(page);
     await page.keyboard.press("End");
     await page.keyboard.type("-cor");
     await lookup.fail();
