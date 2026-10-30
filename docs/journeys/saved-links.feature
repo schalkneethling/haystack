@@ -85,7 +85,8 @@ Feature: The saved links list
     And I saved "Older guide", and then "Newer guide"
     When I open my saved links and move by heading
     Then VoiceOver reads "Saved links" as a heading at level 1
-    And the next heading is "Newer guide", a link, at level 2
+    And the next heading is "Save a link", at level 2
+    And the heading after that is "Newer guide", a link, at level 2
     And the heading after that is "Older guide", a link, at level 2
 
   @integration:apps/worker/test/delete-bookmark.test.ts
