@@ -145,6 +145,27 @@ function valueOf(flag: string, details: FlagDetails<unknown>, mayBeMissing = fal
   return details.value;
 }
 
+// The name of a thrown error, such as TypeError or FlagshipError: a capitalized word that ends in
+// "Error", which a value such as `batched` or `0.5` can't be.
+const THROWN_ERROR_NAME = /^[A-Z][A-Za-z0-9]{0,58}Error$/;
+
+// What errorCode gives for a thrown value that isn't an Error. It is Haystack's own string.
+const NOT_AN_ERROR = "unknown error";
+
+// The error from the binding, logged by its code or name, as errorCode gives it, as long as that
+// is a plain code, such as FLAG_NOT_FOUND or ECONNRESET, an error's name, or errorCode's own
+// string, and otherwise as UNRECOGNIZED. The binding is an outside service, so a thrown error's
+// `code` or `name`, like a getter's `errorCode`, could carry a flag's value.
+function logUnavailable(error: unknown): void {
+  const code = errorCode(error);
+  console.error("Flags unavailable, using the defaults:", {
+    code:
+      code === NOT_AN_ERROR || FLAG_ERROR_CODE.test(code) || THROWN_ERROR_NAME.test(code)
+        ? code
+        : "UNRECOGNIZED",
+  });
+}
+
 /**
  * Reads the sweep's flags, once for the run. Never throws: an error from the binding gives every
  * default, and is logged by its code or name only, so a Flagship problem can't stop the
@@ -163,7 +184,7 @@ export async function readSweepFlags(flags: FlagReader): Promise<SweepFlags> {
       flags.getNumberDetails(SWEEP_BATCH_SIZE_FLAG, SWEEP_FLAG_DEFAULTS.batchSize),
     ]);
   } catch (error) {
-    console.error("Flags unavailable, using the defaults:", { code: errorCode(error) });
+    logUnavailable(error);
     return SWEEP_FLAG_DEFAULTS;
   }
   return {
@@ -189,7 +210,7 @@ export async function readSearchFlags(flags: FlagReader): Promise<SearchFlags> {
   try {
     enabled = await flags.getBooleanDetails(SEARCH_ENABLED_FLAG, SEARCH_FLAG_DEFAULTS.enabled);
   } catch (error) {
-    console.error("Flags unavailable, using the defaults:", { code: errorCode(error) });
+    logUnavailable(error);
     return SEARCH_FLAG_DEFAULTS;
   }
   return {
@@ -240,7 +261,7 @@ export const SCORE_MAX = 3;
 /** The search settings, as one search uses them, named as `search_runs`' columns are. */
 export interface SearchSettings {
   readonly questions: (typeof SEARCH_QUESTIONS)[number];
-  // Always a signal that `questions` asks for.
+  // Not checked against `questions`, which may leave it out (#212 decides what happens then).
   readonly displaySignal: (typeof SEARCH_DISPLAY_SIGNALS)[number];
   // From 0 to 1.
   readonly noulThreshold: number;
@@ -298,31 +319,16 @@ function checkedThreshold(flag: string, value: unknown, max: number, fallback: n
   return fallback;
 }
 
-// The questions, unless they leave out the display signal, as `noul` does with the Score signal.
-// Such a search would have nothing to rank its results by, so it asks both questions, the
-// default, and keeps the display signal, which is the choice the user sees. The warning names
-// both flags, because either can be the one that was set by mistake.
-function questionsFor(
-  questions: SearchSettings["questions"],
-  displaySignal: SearchSettings["displaySignal"],
-): SearchSettings["questions"] {
-  if (questions === "both" || questions === displaySignal) {
-    return questions;
-  }
-  console.warn("Flag ignored, using its default:", {
-    flag: SEARCH_QUESTIONS_FLAG,
-    conflictsWith: SEARCH_DISPLAY_SIGNAL_FLAG,
-  });
-  return SEARCH_SETTING_DEFAULTS.questions;
-}
-
 /**
  * Reads the search settings, all five together, once for each search, so that the search sees
  * one consistent configuration and records it on its `search_runs` row. Never throws: an error
  * from the binding, or a missing binding, gives every default, even when the other reads worked,
  * and is logged by its code or name only, as readSweepFlags does, so a Flagship problem can't
- * fail a search. A value out of range gives that flag's default, with a warning that names the
- * flag and not the value. A missing flag is not logged: each is created only when Phase 12 needs
+ * fail a search. That line can't name a flag, because `Promise.all` doesn't say which read threw.
+ * A value out of range gives that flag's default, with a warning that names the flag and not the
+ * value. Each flag is checked on its own: whether the questions include the display signal is
+ * not checked here, because what a search does then is the search service's decision (#212). A
+ * missing flag is not logged: each is created only when Phase 12 needs
  * a value other than its default (#225), as `sweep-batch-size` is, so its absence is the expected
  * state, and a warning on every search would bury the ones that matter. A flag that the getter
  * couldn't evaluate for another reason is logged with the getter's code.
@@ -343,24 +349,22 @@ export async function readSearchSettings(flags: FlagReader): Promise<SearchSetti
       flags.getStringDetails(SEARCH_REQUEST_MODE_FLAG, defaults.requestMode),
     ]);
   } catch (error) {
-    console.error("Flags unavailable, using the defaults:", { code: errorCode(error) });
+    logUnavailable(error);
     return defaults;
   }
-  const checkedDisplaySignal = checkedChoice(
-    SEARCH_DISPLAY_SIGNAL_FLAG,
-    valueOf(SEARCH_DISPLAY_SIGNAL_FLAG, displaySignal, true),
-    SEARCH_DISPLAY_SIGNALS,
-    defaults.displaySignal,
-  );
-  const checkedQuestions = checkedChoice(
-    SEARCH_QUESTIONS_FLAG,
-    valueOf(SEARCH_QUESTIONS_FLAG, questions, true),
-    SEARCH_QUESTIONS,
-    defaults.questions,
-  );
   return {
-    questions: questionsFor(checkedQuestions, checkedDisplaySignal),
-    displaySignal: checkedDisplaySignal,
+    questions: checkedChoice(
+      SEARCH_QUESTIONS_FLAG,
+      valueOf(SEARCH_QUESTIONS_FLAG, questions, true),
+      SEARCH_QUESTIONS,
+      defaults.questions,
+    ),
+    displaySignal: checkedChoice(
+      SEARCH_DISPLAY_SIGNAL_FLAG,
+      valueOf(SEARCH_DISPLAY_SIGNAL_FLAG, displaySignal, true),
+      SEARCH_DISPLAY_SIGNALS,
+      defaults.displaySignal,
+    ),
     noulThreshold: checkedThreshold(
       SEARCH_NOUL_THRESHOLD_FLAG,
       valueOf(SEARCH_NOUL_THRESHOLD_FLAG, noulThreshold, true),

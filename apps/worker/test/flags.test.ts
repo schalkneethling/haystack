@@ -255,17 +255,6 @@ describe("readSearchSettings", () => {
     requestMode: "pair",
   };
 
-  // The live values with one flag's value replaced, and the settings the others give. A display
-  // signal that falls back to its default, the Score, would conflict with the live questions,
-  // `noul`, so those cases ask both questions, which keeps them about one flag.
-  function liveWith(flag: string, value: unknown) {
-    const questions = flag === SEARCH_DISPLAY_SIGNAL_FLAG ? "both" : liveSettings.questions;
-    return {
-      flags: fakeFlags({ ...live, [SEARCH_QUESTIONS_FLAG]: questions, [flag]: value }),
-      others: { ...liveSettings, questions },
-    };
-  }
-
   it("reads each setting's value", async () => {
     expect(await readSearchSettings(fakeFlags(live))).toEqual(liveSettings);
     expect(warn).not.toHaveBeenCalled();
@@ -404,10 +393,10 @@ describe("readSearchSettings", () => {
   ] as const)(
     "replaces a %s that isn't allowed (%j) with its default, and keeps the others",
     async (flag, setting, value) => {
-      const { flags, others } = liveWith(flag, value);
+      const flags = fakeFlags({ ...live, [flag]: value });
 
       expect(await readSearchSettings(flags)).toEqual({
-        ...others,
+        ...liveSettings,
         [setting]: SEARCH_SETTING_DEFAULTS[setting],
       });
       expect(warn).toHaveBeenCalledWith("Flag ignored, using its default:", { flag });
@@ -428,10 +417,10 @@ describe("readSearchSettings", () => {
   ] as const)(
     "replaces a %s outside its range (%s) with its default, and keeps the others",
     async (flag, setting, value) => {
-      const { flags, others } = liveWith(flag, value);
+      const flags = fakeFlags({ ...live, [flag]: value });
 
       expect(await readSearchSettings(flags)).toEqual({
-        ...others,
+        ...liveSettings,
         [setting]: SEARCH_SETTING_DEFAULTS[setting],
       });
       expect(warn).toHaveBeenCalledWith("Flag ignored, using its default:", { flag });
@@ -449,10 +438,10 @@ describe("readSearchSettings", () => {
   ] as const)(
     "replaces a %s of the wrong type (%j) with its default, and keeps the others",
     async (flag, setting, value) => {
-      const { flags, others } = liveWith(flag, value);
+      const flags = fakeFlags({ ...live, [flag]: value });
 
       expect(await readSearchSettings(flags)).toEqual({
-        ...others,
+        ...liveSettings,
         [setting]: SEARCH_SETTING_DEFAULTS[setting],
       });
       expect(warn).toHaveBeenCalledWith("Flag ignored, using its default:", { flag });
@@ -460,24 +449,72 @@ describe("readSearchSettings", () => {
     },
   );
 
-  // A search can only rank by a signal it asked for, so questions that leave out the display
-  // signal give both questions, and the display signal is kept.
+  // Each flag is checked on its own. Whether the questions include the display signal is the
+  // search service's decision (#212), so the module hands on both as they are.
+  it("keeps live questions of noul when the display signal falls back to the Score", async () => {
+    const flags = fakeFlags({
+      [SEARCH_QUESTIONS_FLAG]: "noul",
+      [SEARCH_DISPLAY_SIGNAL_FLAG]: "relevance",
+    });
+
+    expect(await readSearchSettings(flags)).toMatchObject({
+      questions: "noul",
+      displaySignal: "score",
+    });
+    expect(warn).toHaveBeenCalledWith("Flag ignored, using its default:", {
+      flag: SEARCH_DISPLAY_SIGNAL_FLAG,
+    });
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     ["noul", "score"],
     ["score", "noul"],
-  ])(
-    "asks both questions when the questions are %s and the signal is %s",
-    async (questions, signal) => {
-      const settings = await readSearchSettings(
-        fakeFlags({ [SEARCH_QUESTIONS_FLAG]: questions, [SEARCH_DISPLAY_SIGNAL_FLAG]: signal }),
-      );
+  ])("hands on questions of %s with the %s signal unchanged", async (questions, signal) => {
+    const flags = fakeFlags({
+      [SEARCH_QUESTIONS_FLAG]: questions,
+      [SEARCH_DISPLAY_SIGNAL_FLAG]: signal,
+    });
 
-      expect(settings).toMatchObject({ questions: "both", displaySignal: signal });
-      expect(warn).toHaveBeenCalledWith("Flag ignored, using its default:", {
-        flag: SEARCH_QUESTIONS_FLAG,
-        conflictsWith: SEARCH_DISPLAY_SIGNAL_FLAG,
+    expect(await readSearchSettings(flags)).toMatchObject({ questions, displaySignal: signal });
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+// The error a getter throws comes from an outside service too, so its code or name is logged
+// only when it is a plain code, an error's name, or errorCode's own string for a value that
+// isn't an Error.
+describe("the log line for a thrown error", () => {
+  function throwing(thrown: unknown): FlagReader {
+    const read = async (): Promise<never> => {
+      throw thrown;
+    };
+    return { getBooleanDetails: read, getNumberDetails: read, getStringDetails: read };
+  }
+
+  const coded = (code: string) => Object.assign(new Error("Flagship failed"), { code });
+  const named = (name: string) => Object.assign(new Error("Flagship failed"), { name });
+
+  it.each([
+    ["a plain code", coded("ECONNRESET"), "ECONNRESET"],
+    ["an error's name", named("FlagshipError"), "FlagshipError"],
+    ["TypeError", new TypeError("flags is undefined"), "TypeError"],
+    ["a value that isn't an Error", "Flagship failed", "unknown error"],
+    ["a code that holds a value", coded("search-request-mode=pair"), "UNRECOGNIZED"],
+    ["a lower-case code", coded("batched"), "UNRECOGNIZED"],
+    ["a code with a newline", coded("FLAG_NOT_FOUND\n"), "UNRECOGNIZED"],
+    ["an empty code", coded(""), "UNRECOGNIZED"],
+    ["a name that isn't an error's", named("Pair"), "UNRECOGNIZED"],
+    ["a name with a space", named("Flag search-questions Error"), "UNRECOGNIZED"],
+  ])("logs %s by what is allowed of it", async (_case, thrown, code) => {
+    for (const read of [readSweepFlags, readSearchFlags, readSearchSettings]) {
+      error.mockClear();
+
+      await read(throwing(thrown));
+
+      expect(error).toHaveBeenCalledExactlyOnceWith("Flags unavailable, using the defaults:", {
+        code,
       });
-      expect(warn).toHaveBeenCalledTimes(1);
-    },
-  );
+    }
+  });
 });
