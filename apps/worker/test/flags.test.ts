@@ -499,6 +499,7 @@ describe("the log line for a thrown error", () => {
     ["a plain code", coded("ECONNRESET"), "ECONNRESET"],
     ["an error's name", named("FlagshipError"), "FlagshipError"],
     ["TypeError", new TypeError("flags is undefined"), "TypeError"],
+    ["a plain Error", new Error("Flagship failed"), "Error"],
     ["a value that isn't an Error", "Flagship failed", "unknown error"],
     ["a code that holds a value", coded("search-request-mode=pair"), "UNRECOGNIZED"],
     ["a lower-case code", coded("batched"), "UNRECOGNIZED"],

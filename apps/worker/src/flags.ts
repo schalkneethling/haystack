@@ -145,9 +145,9 @@ function valueOf(flag: string, details: FlagDetails<unknown>, mayBeMissing = fal
   return details.value;
 }
 
-// The name of a thrown error, such as TypeError or FlagshipError: a capitalized word that ends in
-// "Error", which a value such as `batched` or `0.5` can't be.
-const THROWN_ERROR_NAME = /^[A-Z][A-Za-z0-9]{0,58}Error$/;
+// The name of a thrown error, such as Error, TypeError or FlagshipError: "Error", alone or after a
+// capitalized word, which a value such as `batched` or `0.5` can't be.
+const THROWN_ERROR_NAME = /^(?:[A-Z][A-Za-z0-9]{0,58})?Error$/;
 
 // What errorCode gives for a thrown value that isn't an Error. It is Haystack's own string.
 const NOT_AN_ERROR = "unknown error";
