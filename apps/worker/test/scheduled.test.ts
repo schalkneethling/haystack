@@ -126,7 +126,7 @@ function fakeFlags(values: Record<string, unknown>): FlagReader {
     Object.hasOwn(values, key)
       ? { value: values[key] as T }
       : { value: defaultValue, errorCode: "FLAG_NOT_FOUND" };
-  return { getBooleanDetails: read, getNumberDetails: read };
+  return { getBooleanDetails: read, getNumberDetails: read, getStringDetails: read };
 }
 
 async function scheduledEnv(
@@ -282,6 +282,7 @@ describe("runScheduled", () => {
         throw new Error("Flagship is unavailable");
       },
       getNumberDetails: async () => ({ value: 1 }),
+      getStringDetails: async () => ({ value: "" }),
     };
 
     const { sweep } = await runScheduled(await scheduledEnv(failing));

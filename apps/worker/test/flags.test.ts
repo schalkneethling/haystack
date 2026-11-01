@@ -11,9 +11,17 @@ import {
   type FlagDetails,
   type FlagReader,
   readSearchFlags,
+  readSearchSettings,
   readSweepFlags,
+  SCORE_MAX,
+  SEARCH_DISPLAY_SIGNAL_FLAG,
   SEARCH_ENABLED_FLAG,
   SEARCH_FLAG_DEFAULTS,
+  SEARCH_NOUL_THRESHOLD_FLAG,
+  SEARCH_QUESTIONS_FLAG,
+  SEARCH_REQUEST_MODE_FLAG,
+  SEARCH_SCORE_THRESHOLD_FLAG,
+  SEARCH_SETTING_DEFAULTS,
   SWEEP_BATCH_SIZE_FLAG,
   SWEEP_ENABLED_FLAG,
   SWEEP_FLAG_DEFAULTS,
@@ -28,7 +36,7 @@ function fakeFlags(values: Record<string, unknown>): FlagReader & { readonly key
       ? { value: values[key] as T }
       : { value: defaultValue, errorCode: "FLAG_NOT_FOUND" };
   };
-  return { keys, getBooleanDetails: read, getNumberDetails: read };
+  return { keys, getBooleanDetails: read, getNumberDetails: read, getStringDetails: read };
 }
 
 /** A fake binding whose getters give their default with this error code, for every flag. */
@@ -37,7 +45,7 @@ function failingFlags(errorCode: string): FlagReader {
     value: defaultValue,
     errorCode,
   });
-  return { getBooleanDetails: read, getNumberDetails: read };
+  return { getBooleanDetails: read, getNumberDetails: read, getStringDetails: read };
 }
 
 let warn: ReturnType<typeof vi.spyOn>;
@@ -119,6 +127,7 @@ describe("readSweepFlags", () => {
       getNumberDetails: async () => {
         throw Object.assign(new Error("Flagship is unavailable"), { name: "FlagshipError" });
       },
+      getStringDetails: async () => ({ value: "" }),
     };
 
     expect(await readSweepFlags(flags)).toEqual({ enabled: true, batchSize: 3 });
@@ -199,6 +208,7 @@ describe("readSearchFlags", () => {
         throw Object.assign(new Error("Flagship is unavailable"), { name: "FlagshipError" });
       },
       getNumberDetails: async () => ({ value: 0 }),
+      getStringDetails: async () => ({ value: "" }),
     };
 
     expect(await readSearchFlags(flags)).toEqual({ enabled: false });
@@ -225,4 +235,249 @@ describe("readSearchFlags", () => {
       flag: SEARCH_ENABLED_FLAG,
     });
   });
+});
+
+describe("readSearchSettings", () => {
+  // Every setting at a value other than its default, so each one shows that the live value is
+  // handed on.
+  const live = {
+    [SEARCH_QUESTIONS_FLAG]: "noul",
+    [SEARCH_DISPLAY_SIGNAL_FLAG]: "noul",
+    [SEARCH_NOUL_THRESHOLD_FLAG]: 0.7,
+    [SEARCH_SCORE_THRESHOLD_FLAG]: 2.25,
+    [SEARCH_REQUEST_MODE_FLAG]: "pair",
+  };
+  const liveSettings = {
+    questions: "noul",
+    displaySignal: "noul",
+    noulThreshold: 0.7,
+    scoreThreshold: 2.25,
+    requestMode: "pair",
+  };
+
+  // The live values with one flag's value replaced, and the settings the others give. A display
+  // signal that falls back to its default, the Score, would conflict with the live questions,
+  // `noul`, so those cases ask both questions, which keeps them about one flag.
+  function liveWith(flag: string, value: unknown) {
+    const questions = flag === SEARCH_DISPLAY_SIGNAL_FLAG ? "both" : liveSettings.questions;
+    return {
+      flags: fakeFlags({ ...live, [SEARCH_QUESTIONS_FLAG]: questions, [flag]: value }),
+      others: { ...liveSettings, questions },
+    };
+  }
+
+  it("reads each setting's value", async () => {
+    expect(await readSearchSettings(fakeFlags(live))).toEqual(liveSettings);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("reads each flag once, by its constant key", async () => {
+    const flags = fakeFlags({});
+
+    await readSearchSettings(flags);
+
+    expect(flags.keys.toSorted()).toEqual([
+      "search-display-signal",
+      "search-noul-threshold",
+      "search-questions",
+      "search-request-mode",
+      "search-score-threshold",
+    ]);
+  });
+
+  it.each([
+    [{ [SEARCH_QUESTIONS_FLAG]: "both" }, { questions: "both" }],
+    [{ [SEARCH_QUESTIONS_FLAG]: "score" }, { questions: "score" }],
+    [
+      { [SEARCH_QUESTIONS_FLAG]: "noul", [SEARCH_DISPLAY_SIGNAL_FLAG]: "noul" },
+      { questions: "noul", displaySignal: "noul" },
+    ],
+    [{ [SEARCH_DISPLAY_SIGNAL_FLAG]: "noul" }, { displaySignal: "noul" }],
+    [{ [SEARCH_DISPLAY_SIGNAL_FLAG]: "score" }, { displaySignal: "score" }],
+    [{ [SEARCH_REQUEST_MODE_FLAG]: "pair" }, { requestMode: "pair" }],
+    [{ [SEARCH_REQUEST_MODE_FLAG]: "batched" }, { requestMode: "batched" }],
+    [{ [SEARCH_NOUL_THRESHOLD_FLAG]: 0 }, { noulThreshold: 0 }],
+    [{ [SEARCH_NOUL_THRESHOLD_FLAG]: 1 }, { noulThreshold: 1 }],
+    [{ [SEARCH_SCORE_THRESHOLD_FLAG]: 0 }, { scoreThreshold: 0 }],
+    [{ [SEARCH_SCORE_THRESHOLD_FLAG]: SCORE_MAX }, { scoreThreshold: 3 }],
+  ])("keeps the allowed value %j", async (values, expected) => {
+    expect(await readSearchSettings(fakeFlags(values))).toEqual({
+      ...SEARCH_SETTING_DEFAULTS,
+      ...expected,
+    });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  // Until Phase 12 (#225) creates a flag, its absence is the expected state, so it is not logged
+  // on every search.
+  it("gives the plan's defaults for missing flags, without logging them", async () => {
+    expect(await readSearchSettings(fakeFlags({}))).toEqual({
+      questions: "both",
+      displaySignal: "score",
+      noulThreshold: 0.5,
+      scoreThreshold: 1.5,
+      requestMode: "batched",
+    });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it.each(["TYPE_MISMATCH", "PARSE_ERROR"])(
+    "uses the defaults and logs %s for each flag",
+    async (errorCode) => {
+      expect(await readSearchSettings(failingFlags(errorCode))).toEqual(SEARCH_SETTING_DEFAULTS);
+      for (const flag of Object.keys(live)) {
+        expect(warn).toHaveBeenCalledWith("Flag not evaluated, using its default:", {
+          flag,
+          code: errorCode,
+        });
+      }
+      expect(warn).toHaveBeenCalledTimes(5);
+    },
+  );
+
+  it.each(["flag search-request-mode is pair", "", "TYPE_MISMATCH\n"])(
+    "logs an error code that isn't a plain code (%j) as UNRECOGNIZED",
+    async (errorCode) => {
+      await readSearchSettings(failingFlags(errorCode));
+
+      expect(warn).toHaveBeenCalledWith("Flag not evaluated, using its default:", {
+        flag: SEARCH_REQUEST_MODE_FLAG,
+        code: "UNRECOGNIZED",
+      });
+    },
+  );
+
+  it("never logs the getter's errorMessage", async () => {
+    // The simulator's message for a type mismatch describes the flag's value (TypeCastError).
+    const errorMessage = "Flag 'search-request-mode' has type 'number', expected 'string'";
+    const read = async <T>(_key: string, defaultValue: T): Promise<FlagDetails<T>> => {
+      const details = { value: defaultValue, errorCode: "TYPE_MISMATCH", errorMessage };
+      return details;
+    };
+    const flags: FlagReader = {
+      getBooleanDetails: read,
+      getNumberDetails: read,
+      getStringDetails: read,
+    };
+
+    await readSearchSettings(flags);
+
+    expect(warn).toHaveBeenCalled();
+    expect(JSON.stringify([...warn.mock.calls, ...error.mock.calls])).not.toContain("has type");
+  });
+
+  it("gives every default when the binding throws, even when the other reads worked", async () => {
+    // The string getter answers with live values, but the number getter throws, as the binding
+    // does for any error other than a missing flag or a type mismatch (Q13).
+    const flags: FlagReader = {
+      getBooleanDetails: async () => ({ value: true }),
+      getNumberDetails: async () => {
+        throw Object.assign(new Error("Flagship is unavailable for search-noul-threshold"), {
+          name: "FlagshipError",
+        });
+      },
+      getStringDetails: async () => ({ value: "noul" }),
+    };
+
+    expect(await readSearchSettings(flags)).toEqual(SEARCH_SETTING_DEFAULTS);
+    expect(error).toHaveBeenCalledWith("Flags unavailable, using the defaults:", {
+      code: "FlagshipError",
+    });
+    expect(JSON.stringify(error.mock.calls)).not.toContain("unavailable for");
+  });
+
+  it("gives every default when the binding is missing, and logs it as an outage", async () => {
+    const missing = undefined as unknown as FlagReader;
+
+    expect(await readSearchSettings(missing)).toEqual(SEARCH_SETTING_DEFAULTS);
+    expect(error).toHaveBeenCalledWith("Flags unavailable, using the defaults:", {
+      code: "TypeError",
+    });
+  });
+
+  it.each([
+    [SEARCH_QUESTIONS_FLAG, "questions", "Both"],
+    [SEARCH_QUESTIONS_FLAG, "questions", "noul,score"],
+    [SEARCH_DISPLAY_SIGNAL_FLAG, "displaySignal", "relevance"],
+    [SEARCH_REQUEST_MODE_FLAG, "requestMode", "batched "],
+    [SEARCH_REQUEST_MODE_FLAG, "requestMode", ""],
+  ] as const)(
+    "replaces a %s that isn't allowed (%j) with its default, and keeps the others",
+    async (flag, setting, value) => {
+      const { flags, others } = liveWith(flag, value);
+
+      expect(await readSearchSettings(flags)).toEqual({
+        ...others,
+        [setting]: SEARCH_SETTING_DEFAULTS[setting],
+      });
+      expect(warn).toHaveBeenCalledWith("Flag ignored, using its default:", { flag });
+      expect(warn).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([
+    [SEARCH_NOUL_THRESHOLD_FLAG, "noulThreshold", -0.01],
+    [SEARCH_NOUL_THRESHOLD_FLAG, "noulThreshold", 1.01],
+    [SEARCH_NOUL_THRESHOLD_FLAG, "noulThreshold", 75],
+    [SEARCH_NOUL_THRESHOLD_FLAG, "noulThreshold", Number.NaN],
+    [SEARCH_NOUL_THRESHOLD_FLAG, "noulThreshold", Number.POSITIVE_INFINITY],
+    [SEARCH_SCORE_THRESHOLD_FLAG, "scoreThreshold", -1],
+    [SEARCH_SCORE_THRESHOLD_FLAG, "scoreThreshold", 3.01],
+    [SEARCH_SCORE_THRESHOLD_FLAG, "scoreThreshold", Number.NaN],
+    [SEARCH_SCORE_THRESHOLD_FLAG, "scoreThreshold", Number.NEGATIVE_INFINITY],
+  ] as const)(
+    "replaces a %s outside its range (%s) with its default, and keeps the others",
+    async (flag, setting, value) => {
+      const { flags, others } = liveWith(flag, value);
+
+      expect(await readSearchSettings(flags)).toEqual({
+        ...others,
+        [setting]: SEARCH_SETTING_DEFAULTS[setting],
+      });
+      expect(warn).toHaveBeenCalledWith("Flag ignored, using its default:", { flag });
+      expect(warn).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([
+    [SEARCH_QUESTIONS_FLAG, "questions", 1],
+    [SEARCH_DISPLAY_SIGNAL_FLAG, "displaySignal", null],
+    [SEARCH_REQUEST_MODE_FLAG, "requestMode", true],
+    [SEARCH_NOUL_THRESHOLD_FLAG, "noulThreshold", "0.7"],
+    [SEARCH_SCORE_THRESHOLD_FLAG, "scoreThreshold", null],
+    [SEARCH_SCORE_THRESHOLD_FLAG, "scoreThreshold", false],
+  ] as const)(
+    "replaces a %s of the wrong type (%j) with its default, and keeps the others",
+    async (flag, setting, value) => {
+      const { flags, others } = liveWith(flag, value);
+
+      expect(await readSearchSettings(flags)).toEqual({
+        ...others,
+        [setting]: SEARCH_SETTING_DEFAULTS[setting],
+      });
+      expect(warn).toHaveBeenCalledWith("Flag ignored, using its default:", { flag });
+      expect(warn).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  // A search can only rank by a signal it asked for, so questions that leave out the display
+  // signal give both questions, and the display signal is kept.
+  it.each([
+    ["noul", "score"],
+    ["score", "noul"],
+  ])(
+    "asks both questions when the questions are %s and the signal is %s",
+    async (questions, signal) => {
+      const settings = await readSearchSettings(
+        fakeFlags({ [SEARCH_QUESTIONS_FLAG]: questions, [SEARCH_DISPLAY_SIGNAL_FLAG]: signal }),
+      );
+
+      expect(settings).toMatchObject({ questions: "both", displaySignal: signal });
+      expect(warn).toHaveBeenCalledWith("Flag ignored, using its default:", {
+        flag: SEARCH_QUESTIONS_FLAG,
+        conflictsWith: SEARCH_DISPLAY_SIGNAL_FLAG,
+      });
+      expect(warn).toHaveBeenCalledTimes(1);
+    },
+  );
 });

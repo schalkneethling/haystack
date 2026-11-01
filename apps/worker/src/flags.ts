@@ -2,8 +2,8 @@
 // "Secrets and configuration", Q3 and Q13 in plans/haystack-v1-implementation-plan.md.
 //
 // Flags are the settings that change without a deploy (plan, decision 20). Each is read once per
-// sweep run, or once per request, with a constant key, and passed on, so the run or the request
-// sees one value throughout. Each
+// sweep run, once per request, or once per search, with a constant key, and passed on, so the
+// run, the request or the search sees one value throughout. Each
 // flag's default is a constant here, so the defaults are reviewed in code. They are what a
 // Flagship outage runs with, so they are the safe values.
 //
@@ -15,6 +15,7 @@
 // The flags are read through the details getters, which report those three cases as an
 // `errorCode`, so a flag that was never created, or was created in another app, is logged rather
 // than quietly giving its default, which turns the sweep on.
+import { SEARCH_DISPLAY_SIGNALS, SEARCH_QUESTIONS, SEARCH_REQUEST_MODES } from "./db/schema.ts";
 import { SWEEP_BATCH_SIZE, SWEEP_BATCH_SIZE_LIMIT } from "./enrichment/enrich-pending.ts";
 import { errorCode } from "./error-code.ts";
 
@@ -40,6 +41,7 @@ export interface FlagDetails<T> {
 export interface FlagReader {
   getBooleanDetails(flagKey: string, defaultValue: boolean): Promise<FlagDetails<boolean>>;
   getNumberDetails(flagKey: string, defaultValue: number): Promise<FlagDetails<number>>;
+  getStringDetails(flagKey: string, defaultValue: string): Promise<FlagDetails<string>>;
 }
 
 /**
@@ -197,6 +199,185 @@ export async function readSearchFlags(flags: FlagReader): Promise<SearchFlags> {
       // so that a flag deleted or renamed in the Flagship app is logged, as `sweep-enabled` is.
       valueOf(SEARCH_ENABLED_FLAG, enabled, true),
       SEARCH_FLAG_DEFAULTS.enabled,
+    ),
+  };
+}
+
+/**
+ * Which Jev questions a search asks: a string flag, `both`, `noul` or `score`, recorded as
+ * `search_runs.questions`. After Phase 12 chooses a signal, it can ask only that one, which gives
+ * back the batch capacity the other question uses (plan, "Ranking and thresholds").
+ */
+export const SEARCH_QUESTIONS_FLAG = "search-questions";
+
+/** Which signal ranks the results a search shows: a string flag, `noul` or `score`. */
+export const SEARCH_DISPLAY_SIGNAL_FLAG = "search-display-signal";
+
+/**
+ * The Noul threshold: a number flag from 0 to 1, the Noul's own scale. The Noul list holds the
+ * answers with `noul >= threshold`.
+ */
+export const SEARCH_NOUL_THRESHOLD_FLAG = "search-noul-threshold";
+
+/**
+ * The Score threshold: a number flag from 0 to SCORE_MAX, the scale of the `score` that the API
+ * returns. The Score list holds the answers with `score >= threshold`.
+ */
+export const SEARCH_SCORE_THRESHOLD_FLAG = "search-score-threshold";
+
+/** How a search asks Jev: a string flag, `pair` (one request per bookmark) or `batched`. */
+export const SEARCH_REQUEST_MODE_FLAG = "search-request-mode";
+
+/**
+ * The highest `score` the API can return for the relevance question: its levels are numbered 0
+ * to 3, and `score` is their probability-weighted mean (plan, "Question design"). Haystack keeps
+ * that scale rather than dividing by 3, so a threshold compares directly with
+ * `search_answers.score`, which stores the API's number unchanged (#210). A change to the number
+ * of levels changes this, and with it the Score threshold's range.
+ */
+export const SCORE_MAX = 3;
+
+/** The search settings, as one search uses them, named as `search_runs`' columns are. */
+export interface SearchSettings {
+  readonly questions: (typeof SEARCH_QUESTIONS)[number];
+  // Always a signal that `questions` asks for.
+  readonly displaySignal: (typeof SEARCH_DISPLAY_SIGNALS)[number];
+  // From 0 to 1.
+  readonly noulThreshold: number;
+  // From 0 to SCORE_MAX.
+  readonly scoreThreshold: number;
+  readonly requestMode: (typeof SEARCH_REQUEST_MODES)[number];
+}
+
+/**
+ * The defaults, which search runs with until Phase 12 changes a flag, and during a Flagship
+ * outage: both questions, so that every search logs both signals for Phase 12; the Score signal;
+ * and batched mode, because pair mode spends one request per bookmark against Jev's rate limit
+ * (Q1).
+ *
+ * The thresholds are starting values, proposed in #209, which Phase 12 replaces:
+ * - Noul 0.5, where yes becomes more likely than no. A Noul near 0.5 means that Jev is unsure,
+ *   not that the bookmark is somewhat relevant, so this is the lowest value at which Jev leans
+ *   towards "it helps".
+ * - Score 1.5, halfway between level 1, "Same general area, but would not help", and level 2,
+ *   "Partially addresses the need". A result is shown when its probability leans towards the
+ *   levels that help, which keeps the partial matches, because an empty list for a query that
+ *   has one looks like "nothing matches".
+ */
+export const SEARCH_SETTING_DEFAULTS: SearchSettings = Object.freeze({
+  questions: "both",
+  displaySignal: "score",
+  noulThreshold: 0.5,
+  scoreThreshold: 1.5,
+  requestMode: "batched",
+});
+
+// A live string setting, or its default for a value that isn't one of the allowed values, such
+// as `Batched`, which the getter returns like any other string.
+function checkedChoice<T extends string>(
+  flag: string,
+  value: unknown,
+  allowed: readonly T[],
+  fallback: T,
+): T {
+  const match = allowed.find((option) => option === value);
+  if (match !== undefined) {
+    return match;
+  }
+  console.warn("Flag ignored, using its default:", { flag });
+  return fallback;
+}
+
+// A live threshold, or its default for a value outside 0 to `max`, such as a Noul of 75 typed as
+// a percentage, which would hide every result. NaN and the infinities fail the comparisons too.
+function checkedThreshold(flag: string, value: unknown, max: number, fallback: number): number {
+  if (typeof value === "number" && value >= 0 && value <= max) {
+    return value;
+  }
+  console.warn("Flag ignored, using its default:", { flag });
+  return fallback;
+}
+
+// The questions, unless they leave out the display signal, as `noul` does with the Score signal.
+// Such a search would have nothing to rank its results by, so it asks both questions, the
+// default, and keeps the display signal, which is the choice the user sees. The warning names
+// both flags, because either can be the one that was set by mistake.
+function questionsFor(
+  questions: SearchSettings["questions"],
+  displaySignal: SearchSettings["displaySignal"],
+): SearchSettings["questions"] {
+  if (questions === "both" || questions === displaySignal) {
+    return questions;
+  }
+  console.warn("Flag ignored, using its default:", {
+    flag: SEARCH_QUESTIONS_FLAG,
+    conflictsWith: SEARCH_DISPLAY_SIGNAL_FLAG,
+  });
+  return SEARCH_SETTING_DEFAULTS.questions;
+}
+
+/**
+ * Reads the search settings, all five together, once for each search, so that the search sees
+ * one consistent configuration and records it on its `search_runs` row. Never throws: an error
+ * from the binding, or a missing binding, gives every default, even when the other reads worked,
+ * and is logged by its code or name only, as readSweepFlags does, so a Flagship problem can't
+ * fail a search. A value out of range gives that flag's default, with a warning that names the
+ * flag and not the value. A missing flag is not logged: each is created only when Phase 12 needs
+ * a value other than its default (#225), as `sweep-batch-size` is, so its absence is the expected
+ * state, and a warning on every search would bury the ones that matter. A flag that the getter
+ * couldn't evaluate for another reason is logged with the getter's code.
+ */
+export async function readSearchSettings(flags: FlagReader): Promise<SearchSettings> {
+  const defaults = SEARCH_SETTING_DEFAULTS;
+  let questions: FlagDetails<unknown>;
+  let displaySignal: FlagDetails<unknown>;
+  let noulThreshold: FlagDetails<unknown>;
+  let scoreThreshold: FlagDetails<unknown>;
+  let requestMode: FlagDetails<unknown>;
+  try {
+    [questions, displaySignal, noulThreshold, scoreThreshold, requestMode] = await Promise.all([
+      flags.getStringDetails(SEARCH_QUESTIONS_FLAG, defaults.questions),
+      flags.getStringDetails(SEARCH_DISPLAY_SIGNAL_FLAG, defaults.displaySignal),
+      flags.getNumberDetails(SEARCH_NOUL_THRESHOLD_FLAG, defaults.noulThreshold),
+      flags.getNumberDetails(SEARCH_SCORE_THRESHOLD_FLAG, defaults.scoreThreshold),
+      flags.getStringDetails(SEARCH_REQUEST_MODE_FLAG, defaults.requestMode),
+    ]);
+  } catch (error) {
+    console.error("Flags unavailable, using the defaults:", { code: errorCode(error) });
+    return defaults;
+  }
+  const checkedDisplaySignal = checkedChoice(
+    SEARCH_DISPLAY_SIGNAL_FLAG,
+    valueOf(SEARCH_DISPLAY_SIGNAL_FLAG, displaySignal, true),
+    SEARCH_DISPLAY_SIGNALS,
+    defaults.displaySignal,
+  );
+  const checkedQuestions = checkedChoice(
+    SEARCH_QUESTIONS_FLAG,
+    valueOf(SEARCH_QUESTIONS_FLAG, questions, true),
+    SEARCH_QUESTIONS,
+    defaults.questions,
+  );
+  return {
+    questions: questionsFor(checkedQuestions, checkedDisplaySignal),
+    displaySignal: checkedDisplaySignal,
+    noulThreshold: checkedThreshold(
+      SEARCH_NOUL_THRESHOLD_FLAG,
+      valueOf(SEARCH_NOUL_THRESHOLD_FLAG, noulThreshold, true),
+      1,
+      defaults.noulThreshold,
+    ),
+    scoreThreshold: checkedThreshold(
+      SEARCH_SCORE_THRESHOLD_FLAG,
+      valueOf(SEARCH_SCORE_THRESHOLD_FLAG, scoreThreshold, true),
+      SCORE_MAX,
+      defaults.scoreThreshold,
+    ),
+    requestMode: checkedChoice(
+      SEARCH_REQUEST_MODE_FLAG,
+      valueOf(SEARCH_REQUEST_MODE_FLAG, requestMode, true),
+      SEARCH_REQUEST_MODES,
+      defaults.requestMode,
     ),
   };
 }

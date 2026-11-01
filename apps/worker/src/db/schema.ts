@@ -159,10 +159,13 @@ const SEARCH_CHANNELS = ["web", "webmcp", "mcp", "eval"] as const;
 // The web channel only. `whisper` is reserved for the backlog item, so adding it needs no
 // table rebuild.
 const SEARCH_INPUT_MODES = ["typed", "web-speech", "whisper"] as const;
-const SEARCH_REQUEST_MODES = ["pair", "batched"] as const;
+// The request mode, the questions and the display signal are search settings, read from Flagship
+// by the configuration module (flags.ts, #209), which accepts exactly these values, so a value a
+// run records always fits its column.
+export const SEARCH_REQUEST_MODES = ["pair", "batched"] as const;
 // Which Jev questions the run asked.
-const SEARCH_QUESTIONS = ["both", "noul", "score"] as const;
-const SEARCH_DISPLAY_SIGNALS = ["noul", "score"] as const;
+export const SEARCH_QUESTIONS = ["both", "noul", "score"] as const;
+export const SEARCH_DISPLAY_SIGNALS = ["noul", "score"] as const;
 // `partial`: some chunks failed.
 const SEARCH_OUTCOMES = ["ok", "partial", "failed"] as const;
 
