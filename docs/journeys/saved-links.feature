@@ -92,8 +92,9 @@ Feature: The saved links list
     When I open my saved links and move by heading
     Then VoiceOver reads "Saved links" as a heading at level 1
     And the next heading is "Save a link", at level 2
-    And the heading after that is "Newer guide", a link, at level 2
-    And the heading after that is "Older guide", a link, at level 2
+    And the heading after that is "Recently saved", at level 2
+    And the heading after that is "Newer guide", a link, at level 3
+    And the heading after that is "Older guide", a link, at level 3
 
   @integration:apps/worker/test/delete-bookmark.test.ts
   @playwright:apps/worker/e2e/delete-dialog.e2e.ts

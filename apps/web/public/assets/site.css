@@ -330,7 +330,10 @@ main > :where(p, ul, div) {
   gap: var(--space-s);
 }
 
-.address-form-title {
+/* The saved links' and the search results' list headings (#245) look like the address form's
+   heading, the other h2 on the saved links page, so the page's h2s match. */
+.address-form-title,
+.cards-heading {
   font-size: var(--text-form-title);
   font-weight: 700;
   letter-spacing: -0.01em;
@@ -585,18 +588,18 @@ search {
   padding: 1.25rem;
 }
 
-.cards :is(h2, h3) {
+.cards h3 {
   font-size: var(--text-card-title);
   font-weight: 600;
   letter-spacing: -0.01em;
   overflow-wrap: anywhere;
 }
 
-.cards h2 a {
+.cards h3 a {
   color: var(--color-ink);
 }
 
-.cards h2 a:hover {
+.cards h3 a:hover {
   color: var(--color-accent);
 }
 
