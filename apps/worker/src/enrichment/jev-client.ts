@@ -202,20 +202,45 @@ export interface ScoreAnswerValue {
 }
 
 /**
+ * How far above the top level's number a `score` may lie. A weighted mean of the levels can't
+ * exceed the top level, but computed in floating point it can land a hair above it, as
+ * 3.0000000000000004 for a top level of 3, and that rounding error isn't a malformed answer.
+ */
+const SCORE_ROUNDING_TOLERANCE = 1e-9;
+
+/**
+ * How far a Score's probabilities may add up away from 1, per level. The Score page says "The
+ * sum of all values is 1", and the API reference that they sum to "approximately 1". The
+ * documented answers give each probability to two decimals, such as 0.57 and 0.43, so each value
+ * can be up to 0.005 from the one Jev computed, and the sum up to 0.005 for each level: 0.02 for
+ * search's four levels. A sum further off than that isn't a distribution over the levels, such
+ * as all four at 0.
+ */
+const SCORE_SUM_TOLERANCE_PER_LEVEL = 0.005;
+
+/**
  * The schema of a Score answer over `levelCount` levels, from 1 to 10 as the API allows. `score`
- * must lie from 0 to the top level's number, where a weighted mean of the levels always lies, and
- * `probabilities` must name every level and no other. `legend`, which maps each level back to
- * its description, isn't stored, so it isn't checked.
+ * must lie from 0 to the top level's number, where a weighted mean of the levels always lies, give
+ * or take SCORE_ROUNDING_TOLERANCE. `probabilities` must name every level and no other, and add up
+ * to 1, give or take SCORE_SUM_TOLERANCE_PER_LEVEL for each level. `legend`, which maps each level
+ * back to its description, isn't stored, so it isn't checked.
  */
 export function scoreAnswer(levelCount: number) {
   if (!Number.isInteger(levelCount) || levelCount < 1 || levelCount > 10) {
     throw new RangeError(`levelCount is ${levelCount}, which isn't a whole number from 1 to 10`);
   }
   const levels = Array.from({ length: levelCount }, (_, level) => String(level));
+  // SCORE_ROUNDING_TOLERANCE is added, so that a sum exactly at the limit, such as 0.98 for four
+  // levels, isn't refused for its own floating-point error.
+  const sumTolerance = SCORE_SUM_TOLERANCE_PER_LEVEL * levelCount + SCORE_ROUNDING_TOLERANCE;
   return v.pipe(
     v.object({
       type: v.literal("score"),
-      score: v.pipe(v.number(), v.minValue(0), v.maxValue(levelCount - 1)),
+      score: v.pipe(
+        v.number(),
+        v.minValue(0),
+        v.maxValue(levelCount - 1 + SCORE_ROUNDING_TOLERANCE),
+      ),
       confidence: Probability,
       probabilities: v.pipe(
         v.record(v.string(), Probability),
@@ -224,6 +249,12 @@ export function scoreAnswer(levelCount: number) {
             Object.keys(probabilities).length === levels.length &&
             levels.every((level) => Object.hasOwn(probabilities, level)),
           "The probabilities must name every level and no other",
+        ),
+        v.check(
+          (probabilities) =>
+            Math.abs(Object.values(probabilities).reduce((sum, value) => sum + value, 0) - 1) <=
+            sumTolerance,
+          "The probabilities must add up to 1",
         ),
       ),
     }),

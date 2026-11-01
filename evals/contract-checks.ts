@@ -1,19 +1,24 @@
 // The live requests of the contract check (#203), one for each outside API the enrichment clients
 // call, and one more to Jev for search's questions (#210). See "Testing strategy" in
-// plans/haystack-v1-implementation-plan.md, which says when to run it and how. The tests answer every outside request from recorded fixtures, so they can't
-// notice a service that changed its answer. This check sends each request to the live service and
-// validates the answer with the schemas the client uses, so it compares Haystack's fixtures and
-// schemas with the live services. It is not a test of those services.
+// plans/haystack-v1-implementation-plan.md, which says when to run it and how. The tests answer
+// every outside request from recorded fixtures, so they can't notice a service that changed its
+// answer. This check sends each request to the live service and validates the answer with the
+// schemas the client uses, so it compares Haystack's fixtures and schemas with the live services.
+// It is not a test of those services.
 //
 // What each request is made of:
 // - The address and the headers are the client's own, from the function the client sends its own
 //   request with (jevRequest, messagesRequestTarget with each adapter's transport, and
 //   gitHubRepositoryRequest). So the gateway request carries `cf-aig-collect-log-payload: false`,
 //   and a key goes only where the client sends it.
-// - The body is a fixed constant here, as small as the API allows, and holds no bookmark data.
-//   The search request's body is built by search's own code (searchRequestParts) from a fixed
-//   input, JEV_SEARCH_ASK, so it has the questions' production wording. The
-//   only link in it is Haystack's own public repository, which every request names.
+// - The enrichment Jev request's body (JEV_STATE and the enrichment questions) and the Messages
+//   API body (MESSAGES_BODY) are fixed constants here, as small as the API allows. The only link
+//   any request names is Haystack's own public repository, in the enrichment Jev body and in
+//   GitHub's address.
+// - The search Jev request's body is built by search's own code (searchRequestParts) from a fixed
+//   input, JEV_SEARCH_ASK, so it carries the questions' production wording rather than the
+//   smallest wording the API allows, and it names no link.
+// - No body holds bookmark data.
 // - The schemas are imported from the clients, never copied, and each is applied where the client
 //   applies it.
 //

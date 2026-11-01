@@ -17,10 +17,13 @@
 // level numbers. Both are kept as Jev returns them.
 //
 // Each bookmark is named in the state and in its questions by an alias, `b_0`, `b_1` and so on,
-// in the order the caller gives them, and never by its ID. The documentation describes a
-// question's reference to the state as a "dot-and-index path" in backticks, such as
-// `ticket.messages[0].text`, and gives no grammar for a key with hyphens, which a bookmark's UUID
-// has, or for one that starts with a digit. An alias is a plain identifier, so `bookmarks.b_3` is
+// in the order the caller gives them, and never by its ID. "How to build with TypeSafe"
+// (https://docs.typesafe.ai/concepts/how-to-build-with-system-one.md, read on 2026-11-01) says:
+// "Use a backticked dot-and-index path to point a question at a specific nested value, such as
+// `support.tickets[0].message`." Neither it nor the primitives page
+// (https://docs.typesafe.ai/primitives.md, "Reference specific fields", read the same day) gives a
+// grammar for a key with hyphens, which a bookmark's UUID has, or for one that starts with a
+// digit. An alias is a plain identifier, so `bookmarks.b_3` is
 // unambiguous, and it is also shorter, which matters because each bookmark's key is repeated in
 // both of its questions (see "Jev model limits").
 //

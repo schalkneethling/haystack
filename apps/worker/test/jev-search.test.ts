@@ -41,8 +41,9 @@ const config: JevConfig = {
   TYPESAFE_API_KEY: KEY,
 };
 
-// Short enough to keep the tests fast, with search's own attempt limit.
-const timing: JevTiming = { attemptTimeoutMs: 100, backoffInitialMs: 1 };
+// SEARCH_TIMING with shorter waits, to keep the tests fast. Its attempt limit is search's own, so
+// a change to SEARCH_TIMING's limit changes how many attempts the retry tests expect.
+const timing: JevTiming = { ...SEARCH_TIMING, attemptTimeoutMs: 100, backoffInitialMs: 1 };
 
 // Bookmark IDs as the database makes them, with crypto.randomUUID().
 const BOOKMARKS: readonly SearchBookmark[] = [
@@ -410,18 +411,15 @@ describe("askSearch", () => {
       if (!result.ok) {
         throw new Error("The search failed");
       }
+      // That `score` is the weighted mean of the levels is a property of the API's answer, which
+      // Haystack doesn't compute. The recorded example that shows it has three levels, so it is
+      // in jev-client.test.ts ("keeps the Score page's recorded answer as returned").
       for (const [index, returned] of [RELEVANCE, LOW_RELEVANCE].entries()) {
-        const kept = result.answer[index]?.score;
-        expect(kept).toEqual({
+        expect(result.answer[index]?.score).toEqual({
           score: returned.score,
           probabilities: returned.probabilities,
           confidence: returned.confidence,
         });
-        const weightedMean = Object.entries(returned.probabilities).reduce(
-          (sum, [level, probability]) => sum + Number(level) * probability,
-          0,
-        );
-        expect(kept?.score).toBeCloseTo(weightedMean, 10);
       }
     });
 
@@ -547,6 +545,7 @@ describe("askSearch", () => {
       });
     }
 
+    // `timing` carries SEARCH_TIMING's attempt limit, so a lower limit there fails this test.
     it("stops after 3 attempts of 429, 529 and 503, and the failure is transient", async () => {
       fixture.respond(status(429), status(529), status(503));
       expect(await ask()).toEqual({
