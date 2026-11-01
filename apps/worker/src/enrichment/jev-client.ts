@@ -1,16 +1,20 @@
 // The client for Jev, TypeSafe's System One model (#122). See "Jev client", Q3 and "Enrichment
-// sweep" in plans/haystack-v1-implementation-plan.md. It asks one question per request, because
-// enrichment asks its two questions at different steps: the `kind` question may only be asked
-// after the sensitivity answer allows it.
+// sweep" in plans/haystack-v1-implementation-plan.md. Enrichment asks one question per request
+// (askJev), because it asks its two questions at different steps: the `kind` question may only be
+// asked after the sensitivity answer allows it. Search asks many questions in one request
+// (askJevQuestions, from search/jev-search.ts, #210).
 //
 // The request and response fields, the status codes and the retry advice come from TypeSafe's API
 // reference (https://docs.typesafe.ai/api/system-one.md) and its errors page
-// (https://docs.typesafe.ai/api/errors.md), read on 2026-10-22, and again on 2026-10-28 for
-// jev-1.14.0 (#201), when the fields read here were unchanged.
+// (https://docs.typesafe.ai/api/errors.md), read on 2026-10-22, again on 2026-10-28 for
+// jev-1.14.0 (#201), when the fields read here were unchanged, and on 2026-11-01 for the Score
+// answer that search reads (#210).
 //
 // The limits:
-// - At most JEV_ATTEMPT_LIMIT requests per question, because Q3 counts 3 per question when it
-//   sizes the sweep. Every attempt counts, a timed-out one included.
+// - At most JEV_ATTEMPT_LIMIT requests per question, or per request of search's questions. Q3
+//   counts 3 per question when it sizes the sweep, and search keeps the same cap because a person
+//   is waiting for its answer (see "Jev client" in the plan, #210). Every attempt counts, a
+//   timed-out one included.
 // - Each attempt, from the request to the last byte of the response, stops after
 //   `attemptTimeoutMs`.
 // - The key is sent only in the `authorization` header, only to JEV_BASE_URL, and only over
@@ -31,7 +35,7 @@ export interface JevConfig {
   TYPESAFE_API_KEY: string;
 }
 
-/** How many requests one question makes at most. */
+/** How many requests one question, or one request of search's questions, makes at most. */
 export const JEV_ATTEMPT_LIMIT = 3;
 
 /** How long one attempt may take. The documentation's own examples answer in under a second. */
@@ -94,6 +98,19 @@ export interface ChoiceQuestion<Option extends string> {
   readonly instructions: JevContent;
   readonly criteria: Readonly<Record<Option, JevContent>>;
 }
+
+/**
+ * A question that rates the state on ordered levels. A level's number is its position in
+ * `criteria`, from 0, and the API accepts from 1 to 10 of them.
+ */
+export interface ScoreQuestion {
+  readonly type: "score";
+  readonly instructions: JevContent;
+  readonly criteria: readonly [JevContent, ...JevContent[]];
+}
+
+/** Any question the client asks. */
+export type JevQuestion = NoulQuestion | ChoiceQuestion<string> | ScoreQuestion;
 
 /**
  * Why a question got no answer, as a fixed code that is safe to log:
@@ -169,6 +186,52 @@ export function choiceAnswer<const Option extends string>(options: readonly [Opt
       ),
     }),
     v.transform(({ choice, probabilities }) => ({ choice, probabilities })),
+  );
+}
+
+/**
+ * A Score answer, as the API returns it: `score`, the probability-weighted mean of the level
+ * numbers, which the API computes; `probabilities`, one for each level, keyed by the level's
+ * number as a string, from "0"; and `confidence`. They are kept as returned, and no number is
+ * derived from them here.
+ */
+export interface ScoreAnswerValue {
+  readonly score: number;
+  readonly probabilities: Readonly<Record<string, number>>;
+  readonly confidence: number;
+}
+
+/**
+ * The schema of a Score answer over `levelCount` levels, from 1 to 10 as the API allows. `score`
+ * must lie from 0 to the top level's number, where a weighted mean of the levels always lies, and
+ * `probabilities` must name every level and no other. `legend`, which maps each level back to
+ * its description, isn't stored, so it isn't checked.
+ */
+export function scoreAnswer(levelCount: number) {
+  if (!Number.isInteger(levelCount) || levelCount < 1 || levelCount > 10) {
+    throw new RangeError(`levelCount is ${levelCount}, which isn't a whole number from 1 to 10`);
+  }
+  const levels = Array.from({ length: levelCount }, (_, level) => String(level));
+  return v.pipe(
+    v.object({
+      type: v.literal("score"),
+      score: v.pipe(v.number(), v.minValue(0), v.maxValue(levelCount - 1)),
+      confidence: Probability,
+      probabilities: v.pipe(
+        v.record(v.string(), Probability),
+        v.check(
+          (probabilities) =>
+            Object.keys(probabilities).length === levels.length &&
+            levels.every((level) => Object.hasOwn(probabilities, level)),
+          "The probabilities must name every level and no other",
+        ),
+      ),
+    }),
+    v.transform(({ score, probabilities, confidence }): ScoreAnswerValue => ({
+      score,
+      probabilities,
+      confidence,
+    })),
   );
 }
 
@@ -270,11 +333,19 @@ function sleep(milliseconds: number, signal: AbortSignal | undefined): Promise<v
   });
 }
 
-// The answer to question `id` in a 2xx response's body, or undefined when the body isn't one.
-function parseAnswer<Answer>(
+/**
+ * Reads the caller's answer from a response's `answers`, or returns undefined when they aren't a
+ * valid answer to every question that was asked.
+ */
+export type JevAnswerReader<Answer> = (
+  answers: Readonly<Record<string, unknown>>,
+) => Answer | undefined;
+
+// What `read` makes of a 2xx response's body, with the model that answered and the input tokens,
+// or undefined when the body isn't a System One response or `read` finds no valid answer in it.
+function parseResponse<Answer>(
   body: string,
-  id: string,
-  schema: v.GenericSchema<unknown, Answer>,
+  read: JevAnswerReader<Answer>,
 ): { model: string; inputTokens: number; answer: Answer } | undefined {
   let json: unknown;
   try {
@@ -283,17 +354,17 @@ function parseAnswer<Answer>(
     return undefined;
   }
   const response = v.safeParse(SystemOneResponse, json);
-  if (!response.success || !Object.hasOwn(response.output.answers, id)) {
+  if (!response.success) {
     return undefined;
   }
-  const answer = v.safeParse(schema, response.output.answers[id]);
-  if (!answer.success) {
+  const answer = read(response.output.answers);
+  if (answer === undefined) {
     return undefined;
   }
   return {
     model: response.output.model,
     inputTokens: response.output.usage.input_tokens,
-    answer: answer.output,
+    answer,
   };
 }
 
@@ -302,7 +373,7 @@ export interface JevAsk<Answer> {
   readonly state: JevContent;
   // The question's name in the request and the response. It isn't sent to the model.
   readonly id: string;
-  readonly question: NoulQuestion | ChoiceQuestion<string>;
+  readonly question: JevQuestion;
   readonly answer: v.GenericSchema<unknown, Answer>;
 }
 
@@ -323,14 +394,15 @@ function endpoint(config: JevConfig): URL {
 }
 
 /** The questions of one request, each under the name its answer comes back under. */
-export type JevQuestions = Readonly<Record<string, NoulQuestion | ChoiceQuestion<string>>>;
+export type JevQuestions = Readonly<Record<string, JevQuestion>>;
 
 /**
  * The request that asks `questions` about `state`: the pinned model, the key in the
  * `authorization` header, and no redirects followed. It throws the configuration errors `askJev`
- * throws, before anything is sent. askJev sends it with one question. The contract check
- * (evals/contract-checks.ts, #203) sends it once with fixed questions and a fixed state, so the
- * live request that check makes is this one.
+ * throws, before anything is sent. askJev sends it with one question, and search with a Noul, a
+ * Score or both for each bookmark (search/jev-search.ts, #210). The contract check
+ * (evals/contract-checks.ts, #203) sends it with fixed questions and a fixed state, so the live
+ * requests that check makes are this one.
  */
 export function jevRequest(
   config: JevConfig,
@@ -376,19 +448,50 @@ export function assertJevConfig(config: JevConfig): void {
  * way still runs to its answer or its own time limit, because the signal isn't given to `fetch`.
  * The on-save path passes no signal.
  */
-export async function askJev<Answer>(
+export function askJev<Answer>(
   config: JevConfig,
   { state, id, question, answer }: JevAsk<Answer>,
   timing: JevTiming = JEV_TIMING,
   signal?: AbortSignal,
 ): Promise<JevResult<Answer>> {
+  return askJevQuestions(
+    config,
+    state,
+    { [id]: question },
+    (answers) => {
+      if (!Object.hasOwn(answers, id)) {
+        return undefined;
+      }
+      const parsed = v.safeParse(answer, answers[id]);
+      return parsed.success ? parsed.output : undefined;
+    },
+    timing,
+    signal,
+  );
+}
+
+/**
+ * Asks Jev every question in `questions` about `state`, in one request, with askJev's attempts,
+ * failure classes, configuration errors and `signal`, which askJev's comment describes. `read`
+ * turns the response's `answers` into the caller's answer. A 2xx response for which it returns
+ * undefined, because an answer is missing or malformed, is an `invalid-response` for the whole
+ * request. That is permanent, so it isn't retried, as a single question's invalid answer isn't.
+ */
+export async function askJevQuestions<Answer>(
+  config: JevConfig,
+  state: JevContent,
+  questions: JevQuestions,
+  read: JevAnswerReader<Answer>,
+  timing: JevTiming = JEV_TIMING,
+  signal?: AbortSignal,
+): Promise<JevResult<Answer>> {
   signal?.throwIfAborted();
-  const { url, init } = jevRequest(config, state, { [id]: question });
+  const { url, init } = jevRequest(config, state, questions);
   const attemptLimit = checkedAttemptLimit(timing);
   for (let attempts = 1; ; attempts += 1) {
     const outcome = await attempt(url, init, timing.attemptTimeoutMs);
     if (outcome.ok) {
-      const parsed = parseAnswer(outcome.body, id, answer);
+      const parsed = parseResponse(outcome.body, read);
       return parsed === undefined
         ? { ok: false, failure: "permanent", reason: "invalid-response", attempts }
         : { ok: true, ...parsed, attempts };

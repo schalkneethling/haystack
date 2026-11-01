@@ -1,5 +1,6 @@
 // The contract check's command (#203): one live request to each outside API the enrichment
-// clients call, with the production configuration, and one line of report for each. See
+// clients call, and one more to Jev for search's questions (#210), with the production
+// configuration, and one line of report for each. See
 // "Testing strategy" in plans/haystack-v1-implementation-plan.md for when to run it.
 //
 // Run it with `vp -C evals run contract`. That runs this directory's tests first, then this file

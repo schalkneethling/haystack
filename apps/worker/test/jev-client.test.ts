@@ -2,6 +2,7 @@
 // request is answered by the Jev fixture (jev-fixture.ts), which fails a test that makes a
 // request it did not plan for. See "Jev client" and Q3 in plans/haystack-v1-implementation-plan.md.
 import { delay, HttpResponse, type JsonBodyType } from "msw";
+import * as v from "valibot";
 import {
   afterAll,
   afterEach,
@@ -21,6 +22,7 @@ import {
   type JevResult,
   type JevTiming,
   NoulAnswer,
+  scoreAnswer,
 } from "../src/enrichment/jev-client.ts";
 import {
   answer,
@@ -681,6 +683,30 @@ describe("askJev", () => {
         `${JEV_LOOPBACK_ORIGIN}/v1/systemone`,
       ]);
       expect(fixture.requests[0]?.headers.get("authorization")).toBe(`Bearer ${KEY}`);
+    });
+  });
+});
+
+// Search's answers are validated with it (jev-search.test.ts, #210).
+describe("scoreAnswer", () => {
+  // The API accepts from 1 to 10 levels, so any other count is a bug in the caller.
+  it.each([0, 11, 2.5, Number.NaN])("throws for %s levels", (levelCount) => {
+    expect(() => scoreAnswer(levelCount)).toThrow(RangeError);
+  });
+
+  it("reads the API reference's Score example, over its three levels", () => {
+    // The example in https://docs.typesafe.ai/api/system-one.md, read on 2026-11-01.
+    const example = {
+      type: "score",
+      score: 1.7,
+      confidence: 0.55,
+      legend: { "0": "Can wait", "1": "Needs attention this week", "2": "Needs attention today" },
+      probabilities: { "0": 0.1, "1": 0.1, "2": 0.8 },
+    };
+    expect(v.parse(scoreAnswer(3), example)).toEqual({
+      score: 1.7,
+      probabilities: { "0": 0.1, "1": 0.1, "2": 0.8 },
+      confidence: 0.55,
     });
   });
 });
