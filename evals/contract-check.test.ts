@@ -10,6 +10,7 @@ import { MessageResponse } from "../apps/worker/src/enrichment/anthropic-message
 import { RepositoryResponse } from "../apps/worker/src/enrichment/github-client.ts";
 import { NoulAnswer, SystemOneResponse } from "../apps/worker/src/enrichment/jev-client.ts";
 import { KindAnswerSchema } from "../apps/worker/src/enrichment/jev-questions.ts";
+import { RelevanceAnswer, searchRequestParts } from "../apps/worker/src/search/jev-search.ts";
 import {
   AI_GATEWAY_CHECK,
   ANTHROPIC_CHECK,
@@ -19,6 +20,8 @@ import {
   type ContractConfig,
   GITHUB_CHECK,
   JEV_CHECK,
+  JEV_SEARCH_ASK,
+  JEV_SEARCH_CHECK,
   JEV_STATE,
   MESSAGES_BODY,
 } from "./contract-checks.ts";
@@ -65,6 +68,27 @@ const JEV_ANSWER = {
   usage: { input_tokens: 1067, output_tokens: 49 },
 };
 
+// An answer to the search questions in the shape of jev-search.test.ts's.
+const JEV_SEARCH_ANSWER = {
+  model: "jev-1.14.0",
+  answers: {
+    b_0_helps: { type: "noul", noul: 0.91 },
+    b_0_relevance: {
+      type: "score",
+      score: 2.3,
+      confidence: 0.41,
+      legend: {
+        "0": "Unrelated to the need",
+        "1": "Same general area, but would not help with this specific need",
+        "2": "Partially addresses the need, or is one of several reasonable options",
+        "3": "Directly addresses the need",
+      },
+      probabilities: { "0": 0.1, "1": 0.1, "2": 0.2, "3": 0.6 },
+    },
+  },
+  usage: { input_tokens: 196, output_tokens: 30 },
+};
+
 const MESSAGE = {
   id: "msg_fixture",
   type: "message",
@@ -105,6 +129,14 @@ const CASES: readonly {
     schema: SystemOneResponse,
     field: "usage",
     partSchemas: [NoulAnswer, KindAnswerSchema],
+    keys: ["TYPESAFE_API_KEY"],
+  },
+  {
+    check: JEV_SEARCH_CHECK,
+    answer: JEV_SEARCH_ANSWER,
+    schema: SystemOneResponse,
+    field: "answers",
+    partSchemas: [NoulAnswer, RelevanceAnswer],
     keys: ["TYPESAFE_API_KEY"],
   },
   {
@@ -161,10 +193,12 @@ function fakeFetch(answer: (request: SentRequest) => Response | Promise<Response
   return { fetcher, sent };
 }
 
-// The answer each request gets in a passing run, chosen by the request's address.
+// The answer each request gets in a passing run, chosen by the request's address, and for Jev by
+// whether it asks the search questions.
 function passingAnswer(request: SentRequest): Response {
   if (request.url.includes("/systemone")) {
-    return Response.json(JEV_ANSWER);
+    const { questions } = JSON.parse(request.body ?? "{}") as { questions: object };
+    return Response.json(Object.hasOwn(questions, "kind") ? JEV_ANSWER : JEV_SEARCH_ANSWER);
   }
   return Response.json(request.url.includes("/repos/") ? REPOSITORY : MESSAGE);
 }
@@ -291,17 +325,64 @@ describe("the Jev check", () => {
   });
 });
 
+describe("the search check", () => {
+  it("names the Score's probabilities when they leave out a level", async () => {
+    const { "3": _, ...probabilities } = JEV_SEARCH_ANSWER.answers.b_0_relevance.probabilities;
+    const answer = {
+      ...JEV_SEARCH_ANSWER,
+      answers: {
+        ...JEV_SEARCH_ANSWER.answers,
+        b_0_relevance: { ...JEV_SEARCH_ANSWER.answers.b_0_relevance, probabilities },
+      },
+    };
+    const { fetcher } = fakeFetch(() => Response.json(answer));
+    await expect(runContractCheck(JEV_SEARCH_CHECK, config, fetcher)).resolves.toEqual({
+      result: "invalid",
+      field: "answers.b_0_relevance.probabilities",
+    });
+  });
+
+  it("names the Noul when Jev renames it", async () => {
+    const answer = {
+      ...JEV_SEARCH_ANSWER,
+      answers: {
+        ...JEV_SEARCH_ANSWER.answers,
+        b_0_helps: { type: "noul", probability: 0.91 },
+      },
+    };
+    const { fetcher } = fakeFetch(() => Response.json(answer));
+    await expect(runContractCheck(JEV_SEARCH_CHECK, config, fetcher)).resolves.toEqual({
+      result: "invalid",
+      field: "answers.b_0_helps.noul",
+    });
+  });
+
+  it("names the Score's confidence when it is missing", async () => {
+    const { confidence: _, ...relevance } = JEV_SEARCH_ANSWER.answers.b_0_relevance;
+    const answer = {
+      ...JEV_SEARCH_ANSWER,
+      answers: { ...JEV_SEARCH_ANSWER.answers, b_0_relevance: relevance },
+    };
+    const { fetcher } = fakeFetch(() => Response.json(answer));
+    await expect(runContractCheck(JEV_SEARCH_CHECK, config, fetcher)).resolves.toEqual({
+      result: "invalid",
+      field: "answers.b_0_relevance.confidence",
+    });
+  });
+});
+
 describe("the requests", () => {
   it("send fixed bodies, which name only Haystack's own repository", async () => {
     const { fetcher, sent } = fakeFetch(passingAnswer);
     await runContractChecks(CONTRACT_CHECKS, config, fetcher, () => {});
     expect(sent.map(({ method, url }) => `${method} ${url}`)).toEqual([
       "POST https://jev.test/v1/systemone",
+      "POST https://jev.test/v1/systemone",
       "POST https://api.anthropic.test/v1/messages",
       `POST https://gateway.ai.cloudflare.test/v1/${config.AI_GATEWAY_ACCOUNT_ID}/${config.AI_GATEWAY_ID}/anthropic/v1/messages`,
       "GET https://api.github.test/repos/schalkneethling/haystack",
     ]);
-    const [jev, anthropic, gateway, github] = sent;
+    const [jev, jevSearch, anthropic, gateway, github] = sent;
     expect(JSON.parse(jev?.body ?? "")).toEqual({
       model: config.JEV_MODEL,
       state: JEV_STATE,
@@ -310,6 +391,15 @@ describe("the requests", () => {
         kind: expect.objectContaining({ type: "choice" }),
       },
     });
+    // The search request is the one search's own code builds from the fixed input, with both
+    // questions about its one bookmark.
+    const { state, questions } = searchRequestParts(JEV_SEARCH_ASK);
+    expect(JSON.parse(jevSearch?.body ?? "")).toEqual({
+      model: config.JEV_MODEL,
+      state,
+      questions,
+    });
+    expect(Object.keys(questions)).toEqual(["b_0_helps", "b_0_relevance"]);
     // The sensitivity question sees the link's description only, as in production.
     expect(JSON.stringify(JEV_STATE.link)).not.toContain(CONTRACT_LINK);
     for (const request of [anthropic, gateway]) {
@@ -334,6 +424,7 @@ describe("the requests", () => {
 // Anthropic's `model` is a string, so it passes.
 const FIRST_INVALID: Readonly<Record<string, string>> = {
   [JEV_CHECK.name]: "answers",
+  [JEV_SEARCH_CHECK.name]: "answers",
   [ANTHROPIC_CHECK.name]: "stop_details",
   [AI_GATEWAY_CHECK.name]: "stop_details",
   [GITHUB_CHECK.name]: "private",

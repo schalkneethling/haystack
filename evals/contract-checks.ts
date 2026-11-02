@@ -1,17 +1,24 @@
 // The live requests of the contract check (#203), one for each outside API the enrichment clients
-// call. See "Testing strategy" in plans/haystack-v1-implementation-plan.md, which says when to
-// run it and how. The tests answer every outside request from recorded fixtures, so they can't
-// notice a service that changed its answer. This check sends each request to the live service and
-// validates the answer with the schemas the client uses, so it compares Haystack's fixtures and
-// schemas with the live services. It is not a test of those services.
+// call, and one more to Jev for search's questions (#210). See "Testing strategy" in
+// plans/haystack-v1-implementation-plan.md, which says when to run it and how. The tests answer
+// every outside request from recorded fixtures, so they can't notice a service that changed its
+// answer. This check sends each request to the live service and validates the answer with the
+// schemas the client uses, so it compares Haystack's fixtures and schemas with the live services.
+// It is not a test of those services.
 //
 // What each request is made of:
 // - The address and the headers are the client's own, from the function the client sends its own
 //   request with (jevRequest, messagesRequestTarget with each adapter's transport, and
 //   gitHubRepositoryRequest). So the gateway request carries `cf-aig-collect-log-payload: false`,
 //   and a key goes only where the client sends it.
-// - The body is a fixed constant here, as small as the API allows, and holds no bookmark data. The
-//   only link in it is Haystack's own public repository, which every request names.
+// - The enrichment Jev request's body (JEV_STATE and the enrichment questions) and the Messages
+//   API body (MESSAGES_BODY) are fixed constants here, as small as the API allows. The only link
+//   any request names is Haystack's own public repository, in the enrichment Jev body and in
+//   GitHub's address.
+// - The search Jev request's body is built by search's own code (searchRequestParts) from a fixed
+//   input, JEV_SEARCH_ASK, so it carries the questions' production wording rather than the
+//   smallest wording the API allows, and it names no link.
+// - No body holds bookmark data.
 // - The schemas are imported from the clients, never copied, and each is applied where the client
 //   applies it.
 //
@@ -53,6 +60,13 @@ import {
   KindAnswerSchema,
   SENSITIVITY_QUESTION,
 } from "../apps/worker/src/enrichment/jev-questions.ts";
+import {
+  questionIds,
+  RelevanceAnswer,
+  SEARCH_TIMING,
+  type SearchAsk,
+  searchRequestParts,
+} from "../apps/worker/src/search/jev-search.ts";
 
 /**
  * What the checks read: the Worker's `vars` from wrangler.jsonc, and its secrets. ANTHROPIC_MODEL
@@ -155,6 +169,42 @@ function messagesRequest(
   };
 }
 
+/**
+ * The search request's input: a fixed query, and one bookmark made of CONTRACT_LINK's title, which
+ * is nobody's bookmark. Both questions are asked, so that one request checks the Noul and the
+ * Score answers.
+ */
+export const JEV_SEARCH_ASK: SearchAsk = {
+  query: "a bookmark manager with natural-language search",
+  bookmarks: [
+    {
+      id: "contract-check",
+      title: CONTRACT_TITLE,
+      kind: "tool",
+      matchText: `${CONTRACT_TITLE}. Bookmarks you can find again.`,
+    },
+  ],
+  questions: "both",
+};
+
+// The names of JEV_SEARCH_ASK's one bookmark's questions, from the alias search gives it.
+const SEARCH_IDS = questionIds(searchRequestParts(JEV_SEARCH_ASK).aliases[0] ?? "");
+
+/** Jev's answers to search's questions, about JEV_SEARCH_ASK, built as askSearch builds them. */
+export const JEV_SEARCH_CHECK: ContractCheck = {
+  name: "Jev (the search questions)",
+  timeoutMs: SEARCH_TIMING.attemptTimeoutMs,
+  request(config) {
+    const { state, questions } = searchRequestParts(JEV_SEARCH_ASK);
+    return jevRequest(config, state, questions);
+  },
+  parts: [
+    { path: [], schema: SystemOneResponse },
+    { path: ["answers", SEARCH_IDS.helps], schema: NoulAnswer },
+    { path: ["answers", SEARCH_IDS.relevance], schema: RelevanceAnswer },
+  ],
+};
+
 /** The Messages API, straight to Anthropic, as the Anthropic adapter sends it. */
 export const ANTHROPIC_CHECK: ContractCheck = {
   name: "Anthropic",
@@ -200,11 +250,12 @@ export const GITHUB_CHECK: ContractCheck = {
 };
 
 /**
- * Every check, in the order a run sends them: one request each, so a run sends four requests in
- * all: one each to TypeSafe, Anthropic, AI Gateway and GitHub.
+ * Every check, in the order a run sends them: one request each, so a run sends five requests in
+ * all: two to TypeSafe, and one each to Anthropic, AI Gateway and GitHub.
  */
 export const CONTRACT_CHECKS: readonly ContractCheck[] = [
   JEV_CHECK,
+  JEV_SEARCH_CHECK,
   ANTHROPIC_CHECK,
   AI_GATEWAY_CHECK,
   GITHUB_CHECK,
