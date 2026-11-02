@@ -2,6 +2,7 @@
 // request is answered by the Jev fixture (jev-fixture.ts), which fails a test that makes a
 // request it did not plan for. See "Jev client" and Q3 in plans/haystack-v1-implementation-plan.md.
 import { delay, HttpResponse, type JsonBodyType } from "msw";
+import * as v from "valibot";
 import {
   afterAll,
   afterEach,
@@ -21,6 +22,7 @@ import {
   type JevResult,
   type JevTiming,
   NoulAnswer,
+  scoreAnswer,
 } from "../src/enrichment/jev-client.ts";
 import {
   answer,
@@ -682,5 +684,95 @@ describe("askJev", () => {
       ]);
       expect(fixture.requests[0]?.headers.get("authorization")).toBe(`Bearer ${KEY}`);
     });
+  });
+});
+
+// Search's answers are validated with it (jev-search.test.ts, #210).
+describe("scoreAnswer", () => {
+  // The API accepts from 1 to 10 levels, so any other count is a bug in the caller.
+  it.each([0, 11, 2.5, Number.NaN])("throws for %s levels", (levelCount) => {
+    expect(() => scoreAnswer(levelCount)).toThrow(RangeError);
+  });
+
+  it("reads the API reference's Score example, over its three levels", () => {
+    // The example in https://docs.typesafe.ai/api/system-one.md, read on 2026-11-01.
+    const example = {
+      type: "score",
+      score: 1.7,
+      confidence: 0.55,
+      legend: { "0": "Can wait", "1": "Needs attention this week", "2": "Needs attention today" },
+      probabilities: { "0": 0.1, "1": 0.1, "2": 0.8 },
+    };
+    expect(v.parse(scoreAnswer(3), example)).toEqual({
+      score: 1.7,
+      probabilities: { "0": 0.1, "1": 0.1, "2": 0.8 },
+      confidence: 0.55,
+    });
+  });
+
+  // The Score page's recorded jev-1.13.0 answer to its bug-severity question
+  // (https://docs.typesafe.ai/primitives/score.md, "Response structure", read on 2026-11-01).
+  it("keeps the Score page's recorded answer as returned", () => {
+    const recorded = {
+      type: "score",
+      score: 1.43,
+      confidence: 0.35,
+      legend: {
+        "0": "Cosmetic; no impact to functionality",
+        "1": "Broken or degraded feature, but workaround exists",
+        "2": "Blocking issue; no workaround exists",
+      },
+      probabilities: { "0": 0.0, "1": 0.57, "2": 0.43 },
+    };
+    const kept = v.parse(scoreAnswer(3), recorded);
+    expect(kept).toEqual({
+      score: 1.43,
+      probabilities: { "0": 0.0, "1": 0.57, "2": 0.43 },
+      confidence: 0.35,
+    });
+    // The score is the weighted mean of the level numbers, 0 × 0.0 + 1 × 0.57 + 2 × 0.43. That is
+    // a property of the API's answer, not of Haystack's code, which derives no number and keeps the
+    // score as Jev sent it.
+    const weightedMean = Object.entries(recorded.probabilities).reduce(
+      (sum, [level, probability]) => sum + Number(level) * probability,
+      0,
+    );
+    expect(kept.score).toBeCloseTo(weightedMean, 10);
+  });
+
+  // Over four levels, as search asks, with the plan's worked example: 0.1, 0.1, 0.2 and 0.6.
+  const fourLevels = scoreAnswer(4);
+  const answer = (score: number, probabilities: Record<string, number>) => ({
+    type: "score",
+    score,
+    confidence: 0.41,
+    legend: { "0": "a", "1": "b", "2": "c", "3": "d" },
+    probabilities,
+  });
+  const worked = { "0": 0.1, "1": 0.1, "2": 0.2, "3": 0.6 };
+
+  // A weighted mean computed in floating point can land a hair above the top level.
+  it("accepts a score a rounding error above the top level, and no further", () => {
+    const top = { "0": 0, "1": 0, "2": 0, "3": 1 };
+    expect(v.safeParse(fourLevels, answer(3.0000000000000004, top)).success).toBe(true);
+    expect(v.safeParse(fourLevels, answer(3.001, top)).success).toBe(false);
+  });
+
+  // Two-decimal probabilities can add up to as little as 0.98 or as much as 1.02 over four
+  // levels, which is a distribution. Further off is not.
+  it.each([
+    ["0.98", { "0": 0.1, "1": 0.1, "2": 0.2, "3": 0.58 }],
+    ["1.02", { "0": 0.1, "1": 0.1, "2": 0.2, "3": 0.62 }],
+    ["1", worked],
+  ])("accepts probabilities that add up to %s", (_, probabilities) => {
+    expect(v.safeParse(fourLevels, answer(2.3, probabilities)).success).toBe(true);
+  });
+
+  it.each([
+    ["0", { "0": 0, "1": 0, "2": 0, "3": 0 }],
+    ["0.97", { "0": 0.1, "1": 0.1, "2": 0.2, "3": 0.57 }],
+    ["1.03", { "0": 0.1, "1": 0.1, "2": 0.2, "3": 0.63 }],
+  ])("refuses probabilities that add up to %s", (_, probabilities) => {
+    expect(v.safeParse(fourLevels, answer(0, probabilities)).success).toBe(false);
   });
 });
