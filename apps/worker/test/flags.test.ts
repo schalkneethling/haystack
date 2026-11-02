@@ -13,7 +13,6 @@ import {
   readSearchFlags,
   readSearchSettings,
   readSweepFlags,
-  SCORE_MAX,
   SEARCH_DISPLAY_SIGNAL_FLAG,
   SEARCH_ENABLED_FLAG,
   SEARCH_FLAG_DEFAULTS,
@@ -26,6 +25,7 @@ import {
   SWEEP_ENABLED_FLAG,
   SWEEP_FLAG_DEFAULTS,
 } from "../src/flags.ts";
+import { RELEVANCE_SCORE_MAX } from "../src/search/jev-search.ts";
 
 /** A fake binding with these flags set, and every key it was asked for. */
 function fakeFlags(values: Record<string, unknown>): FlagReader & { readonly keys: string[] } {
@@ -296,7 +296,7 @@ describe("readSearchSettings", () => {
     [{ [SEARCH_NOUL_THRESHOLD_FLAG]: 0 }, { noulThreshold: 0 }],
     [{ [SEARCH_NOUL_THRESHOLD_FLAG]: 1 }, { noulThreshold: 1 }],
     [{ [SEARCH_SCORE_THRESHOLD_FLAG]: 0 }, { scoreThreshold: 0 }],
-    [{ [SEARCH_SCORE_THRESHOLD_FLAG]: SCORE_MAX }, { scoreThreshold: 3 }],
+    [{ [SEARCH_SCORE_THRESHOLD_FLAG]: RELEVANCE_SCORE_MAX }, { scoreThreshold: 3 }],
   ])("keeps the allowed value %j", async (values, expected) => {
     expect(await readSearchSettings(fakeFlags(values))).toEqual({
       ...SEARCH_SETTING_DEFAULTS,

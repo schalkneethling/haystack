@@ -116,6 +116,14 @@ const RELEVANCE_LEVELS = [
   "Directly addresses the need",
 ] as const;
 
+/**
+ * The highest `score` the API can return for the `relevance` question, 3 with the four levels
+ * above: the levels are numbered from 0, and `score` is their probability-weighted mean, so it
+ * can't pass the last level's number. The Score threshold's range ends here (`readSearchSettings`
+ * in flags.ts, #255), so a change to the levels changes the range with it.
+ */
+export const RELEVANCE_SCORE_MAX = RELEVANCE_LEVELS.length - 1;
+
 /** The `relevance` question about the bookmark with this alias, worded as in "Question design". */
 export function relevanceQuestion(alias: string): ScoreQuestion {
   return {

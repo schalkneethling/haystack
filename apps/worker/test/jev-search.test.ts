@@ -3,6 +3,7 @@
 // (jev-fixture.ts), which fails a test that makes a request it did not plan for, so no test calls
 // TypeSafe. See "Question design" and "Jev client" in plans/haystack-v1-implementation-plan.md.
 import { delay, HttpResponse, type JsonBodyType } from "msw";
+import * as v from "valibot";
 import {
   afterAll,
   afterEach,
@@ -16,6 +17,9 @@ import {
 import type { JevConfig, JevTiming } from "../src/enrichment/jev-client.ts";
 import {
   askSearch,
+  RELEVANCE_SCORE_MAX,
+  RelevanceAnswer,
+  relevanceQuestion,
   SEARCH_TIMING,
   type SearchAsk,
   type SearchBookmark,
@@ -637,5 +641,31 @@ describe("askSearch", () => {
       expect(String(error)).not.toContain(KEY);
       expect(fixture.requests).toEqual([]);
     });
+  });
+});
+
+// The Score threshold's range ends at RELEVANCE_SCORE_MAX (flags.ts, #255), so it has to follow
+// the relevance question's levels: a level added or removed moves it.
+describe("RELEVANCE_SCORE_MAX", () => {
+  // All the probability on the last level, built from the levels, so that a change to their
+  // number fails on the score's range, not on the probabilities' keys.
+  const top = Object.fromEntries(
+    Array.from({ length: RELEVANCE_SCORE_MAX + 1 }, (_, level) => [
+      String(level),
+      level === RELEVANCE_SCORE_MAX ? 1 : 0,
+    ]),
+  );
+  const answer = (score: number) => ({ type: "score", score, confidence: 0.9, probabilities: top });
+
+  it("is 3 with the relevance question's four levels", () => {
+    expect(relevanceQuestion("b_0").criteria).toHaveLength(4);
+    expect(RELEVANCE_SCORE_MAX).toBe(3);
+  });
+
+  // RelevanceAnswer gets its maximum from the number of levels on its own path (scoreAnswer in
+  // jev-client.ts), so this is the check that ties the two together.
+  it("is the highest score a relevance answer can have", () => {
+    expect(v.safeParse(RelevanceAnswer, answer(RELEVANCE_SCORE_MAX)).success).toBe(true);
+    expect(v.safeParse(RelevanceAnswer, answer(RELEVANCE_SCORE_MAX + 0.001)).success).toBe(false);
   });
 });

@@ -18,6 +18,7 @@
 import { SEARCH_DISPLAY_SIGNALS, SEARCH_QUESTIONS, SEARCH_REQUEST_MODES } from "./db/schema.ts";
 import { SWEEP_BATCH_SIZE, SWEEP_BATCH_SIZE_LIMIT } from "./enrichment/enrich-pending.ts";
 import { errorCode } from "./error-code.ts";
+import { RELEVANCE_SCORE_MAX } from "./search/jev-search.ts";
 
 /**
  * The part of a details getter's answer this module reads (`FlagshipEvaluationDetails` in
@@ -280,22 +281,16 @@ export const SEARCH_DISPLAY_SIGNAL_FLAG = "search-display-signal";
 export const SEARCH_NOUL_THRESHOLD_FLAG = "search-noul-threshold";
 
 /**
- * The Score threshold: a number flag from 0 to SCORE_MAX, the scale of the `score` that the API
- * returns. The Score list holds the answers with `score >= threshold`.
+ * The Score threshold: a number flag on the scale of the `score` that the API returns, from 0 to
+ * RELEVANCE_SCORE_MAX, which comes from the relevance question's levels (jev-search.ts, #255).
+ * Haystack keeps that scale rather than dividing by the maximum, so a threshold compares
+ * directly with `search_answers.score`, which stores the API's number unchanged (#210). The Score
+ * list holds the answers with `score >= threshold`.
  */
 export const SEARCH_SCORE_THRESHOLD_FLAG = "search-score-threshold";
 
 /** How a search asks Jev: a string flag, `pair` (one request per bookmark) or `batched`. */
 export const SEARCH_REQUEST_MODE_FLAG = "search-request-mode";
-
-/**
- * The highest `score` the API can return for the relevance question: its levels are numbered 0
- * to 3, and `score` is their probability-weighted mean (plan, "Question design"). Haystack keeps
- * that scale rather than dividing by 3, so a threshold compares directly with
- * `search_answers.score`, which stores the API's number unchanged (#210). A change to the number
- * of levels changes this, and with it the Score threshold's range.
- */
-export const SCORE_MAX = 3;
 
 /** The search settings, as one search uses them, named as `search_runs`' columns are. */
 export interface SearchSettings {
@@ -304,7 +299,7 @@ export interface SearchSettings {
   readonly displaySignal: (typeof SEARCH_DISPLAY_SIGNALS)[number];
   // From 0 to 1.
   readonly noulThreshold: number;
-  // From 0 to SCORE_MAX.
+  // From 0 to RELEVANCE_SCORE_MAX.
   readonly scoreThreshold: number;
   readonly requestMode: (typeof SEARCH_REQUEST_MODES)[number];
 }
@@ -423,7 +418,7 @@ export async function readSearchSettings(flags: FlagReader): Promise<SearchSetti
     scoreThreshold: checkedThreshold(
       SEARCH_SCORE_THRESHOLD_FLAG,
       valueOf(SEARCH_SCORE_THRESHOLD_FLAG, scoreThreshold, true),
-      SCORE_MAX,
+      RELEVANCE_SCORE_MAX,
       defaults.scoreThreshold,
     ),
     requestMode: checkedChoice(
