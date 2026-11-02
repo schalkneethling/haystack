@@ -385,6 +385,30 @@ describe("readSearchSettings", () => {
     expect(JSON.stringify(error.mock.calls)).not.toContain("unavailable for");
   });
 
+  // Promise.all rejects with the read that fails first in time, so a fast failure of a later
+  // flag is named over a slow failure of an earlier one, as in an outage where one read times out.
+  it("names the flag whose read failed first in time", async () => {
+    const failing = (code: string, ms: number) =>
+      new Promise<never>((_resolve, reject) => {
+        setTimeout(() => reject(Object.assign(new Error("Flagship failed"), { code })), ms);
+      });
+    const flags: FlagReader = {
+      getBooleanDetails: () => failing("ETIMEDOUT", 50),
+      getNumberDetails: () => failing("ETIMEDOUT", 50),
+      getStringDetails: (key) =>
+        failing(
+          key === SEARCH_REQUEST_MODE_FLAG ? "ECONNRESET" : "ETIMEDOUT",
+          key === SEARCH_REQUEST_MODE_FLAG ? 0 : 50,
+        ),
+    };
+
+    expect(await readSearchSettings(flags)).toEqual(SEARCH_SETTING_DEFAULTS);
+    expect(error).toHaveBeenCalledExactlyOnceWith("Flags unavailable, using the defaults:", {
+      flag: SEARCH_REQUEST_MODE_FLAG,
+      code: "ECONNRESET",
+    });
+  });
+
   it("names the flag whose read threw, not the first flag", async () => {
     const live = fakeFlags({});
     const flags: FlagReader = {

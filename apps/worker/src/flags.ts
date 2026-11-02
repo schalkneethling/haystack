@@ -202,10 +202,11 @@ function logUnavailable(error: unknown): void {
  * Reads the sweep's flags, once for the run. Never throws: an error from the binding gives every
  * default, and is logged by the flag's key and the error's code or name only, so a Flagship
  * problem can't stop the scheduled run (Q13). So does a binding that is missing, which `Env`
- * can't rule out at runtime, because the getters are called inside the same `try`. A flag the getter couldn't evaluate
- * gives its default and is logged with the getter's code, except a missing batch size: the plan
- * creates that flag only to lower the batch without a deploy ("Deploys"), while a missing switch
- * turns the sweep on. A value outside its range gives that flag's default.
+ * can't rule out at runtime, because the getters are called inside the same `try`. A flag the
+ * getter couldn't evaluate gives its default and is logged with the getter's code, except a
+ * missing batch size: the plan creates that flag only to lower the batch without a deploy
+ * ("Deploys"), while a missing switch turns the sweep on. A value outside its range gives that
+ * flag's default.
  */
 export async function readSweepFlags(flags: FlagReader): Promise<SweepFlags> {
   let enabled: FlagDetails<unknown>;
@@ -236,10 +237,10 @@ export async function readSweepFlags(flags: FlagReader): Promise<SweepFlags> {
 /**
  * Reads the search page's switch, once for the request. Never throws: an error from the binding,
  * or a missing binding, gives the default, off, and is logged by the flag's key and the error's
- * code or name only, as readSweepFlags does, so a Flagship problem can't fail a page. A value that isn't a boolean
- * gives the default too. A missing flag is not logged, because it is the expected state until
- * #218 creates it, and it gives the default, off, which is the safe state, while logging it would
- * add a line to every page load.
+ * code or name only, as readSweepFlags does, so a Flagship problem can't fail a page. A value
+ * that isn't a boolean gives the default too. A missing flag is not logged, because it is the
+ * expected state until #218 creates it, and it gives the default, off, which is the safe state,
+ * while logging it would add a line to every page load.
  */
 export async function readSearchFlags(flags: FlagReader): Promise<SearchFlags> {
   let enabled: FlagDetails<unknown>;
@@ -363,7 +364,8 @@ function checkedThreshold(flag: string, value: unknown, max: number, fallback: n
  * from the binding, or a missing binding, gives every default, even when the other reads worked,
  * and is logged by the key of the flag whose read threw and the error's code or name only, as
  * readSweepFlags does, so a Flagship problem can't fail a search. When more than one read throws,
- * as all five do for a missing binding, the line names the first in the order below.
+ * the line names the one that failed first, because `Promise.all` rejects with that error; when
+ * they fail at once, as all five do for a missing binding, that is the first in the order below.
  * A value out of range gives that flag's default, with a warning that names the flag and not the
  * value. Each flag is checked on its own: whether the questions include the display signal is
  * not checked here, because what a search does then is the search service's decision (#212). A
