@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "prepare": "vp config",
+    "prepare": "vp config --no-agent",
     "lint:styles": "stylelint \"**/*.{css,scss}\" --allow-empty-input",
     "lint:styles:fix": "stylelint \"**/*.{css,scss}\" --allow-empty-input --fix",
     "knip": "knip",
