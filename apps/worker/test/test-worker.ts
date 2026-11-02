@@ -118,7 +118,7 @@ export interface TestWorkerOptions {
    * exactly these, instead of Miniflare's simulator, which holds none (plan, Q13). Left out, the
    * Worker keeps the simulator, so every flag gives its default.
    */
-  readonly flags?: Readonly<Record<string, boolean | number>>;
+  readonly flags?: Readonly<Record<string, boolean | number | string>>;
 }
 
 const FAKE_FLAGSHIP = "fake-flagship";
@@ -130,7 +130,7 @@ const FAKE_FLAGSHIP = "fake-flagship";
  * Production code reads FLAGS the same way either way, through the configuration module
  * (src/flags.ts).
  *
- * It answers the two details getters that the module calls (`FlagReader`), over a service
+ * It answers the three details getters that the module calls (`FlagReader`), over a service
  * binding's RPC, as the simulator does (Q13): a flag it holds gives its value, a value of the
  * wrong type gives the caller's default with TYPE_MISMATCH, and a flag it doesn't hold gives the
  * default with FLAG_NOT_FOUND. The flags are its `FLAG_VALUES` var, a JSON object.
@@ -161,6 +161,10 @@ export default class FakeFlagship extends WorkerEntrypoint {
 
   async getNumberDetails(key, defaultValue) {
     return this.details(key, defaultValue, "number");
+  }
+
+  async getStringDetails(key, defaultValue) {
+    return this.details(key, defaultValue, "string");
   }
 
   // A Worker needs a fetch handler. Nothing requests this one.

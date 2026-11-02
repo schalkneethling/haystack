@@ -2,8 +2,8 @@
 // "Secrets and configuration", Q3 and Q13 in plans/haystack-v1-implementation-plan.md.
 //
 // Flags are the settings that change without a deploy (plan, decision 20). Each is read once per
-// sweep run, or once per request, with a constant key, and passed on, so the run or the request
-// sees one value throughout. Each
+// sweep run, once per request, or once per search, with a constant key, and passed on, so the
+// run, the request or the search sees one value throughout. Each
 // flag's default is a constant here, so the defaults are reviewed in code. They are what a
 // Flagship outage runs with, so they are the safe values.
 //
@@ -15,8 +15,10 @@
 // The flags are read through the details getters, which report those three cases as an
 // `errorCode`, so a flag that was never created, or was created in another app, is logged rather
 // than quietly giving its default, which turns the sweep on.
+import { SEARCH_DISPLAY_SIGNALS, SEARCH_QUESTIONS, SEARCH_REQUEST_MODES } from "./db/schema.ts";
 import { SWEEP_BATCH_SIZE, SWEEP_BATCH_SIZE_LIMIT } from "./enrichment/enrich-pending.ts";
 import { errorCode } from "./error-code.ts";
+import { RELEVANCE_SCORE_MAX } from "./search/jev-search.ts";
 
 /**
  * The part of a details getter's answer this module reads (`FlagshipEvaluationDetails` in
@@ -40,6 +42,7 @@ export interface FlagDetails<T> {
 export interface FlagReader {
   getBooleanDetails(flagKey: string, defaultValue: boolean): Promise<FlagDetails<boolean>>;
   getNumberDetails(flagKey: string, defaultValue: number): Promise<FlagDetails<number>>;
+  getStringDetails(flagKey: string, defaultValue: string): Promise<FlagDetails<string>>;
 }
 
 /**
@@ -143,25 +146,83 @@ function valueOf(flag: string, details: FlagDetails<unknown>, mayBeMissing = fal
   return details.value;
 }
 
+// The name of a thrown error, such as Error, TypeError or FlagshipError: "Error", alone or after a
+// capitalized word, which a value such as `batched` or `0.5` can't be.
+const THROWN_ERROR_NAME = /^(?:[A-Z][A-Za-z0-9]{0,58})?Error$/;
+
+// What errorCode gives for a thrown value that isn't an Error. It is Haystack's own string.
+const NOT_AN_ERROR = "unknown error";
+
+// An error from the binding, with the key of the flag whose read threw it. The readers run their
+// reads in one `Promise.all`, which rejects with the first error alone, so without the key the
+// log line couldn't say which read failed.
+class FlagReadError extends Error {
+  readonly flag: string;
+
+  constructor(flag: string, cause: unknown) {
+    super("Flag read failed", { cause });
+    this.name = "FlagReadError";
+    this.flag = flag;
+  }
+}
+
+// One read through the binding, whose error, thrown or rejected, becomes a FlagReadError for
+// `flag`. The getter is called inside the `try`, so a missing binding, which throws a TypeError
+// before any promise exists, is tagged too: every read throws then, and the line names the first.
+async function readFlag<T>(
+  flag: string,
+  read: (flag: string) => Promise<FlagDetails<T>>,
+): Promise<FlagDetails<T>> {
+  try {
+    return await read(flag);
+  } catch (error) {
+    throw new FlagReadError(flag, error);
+  }
+}
+
+// The error from the binding, logged by the key of the flag whose read threw it, and by its code
+// or name, as errorCode gives it, as long as that is a plain code, such as FLAG_NOT_FOUND or
+// ECONNRESET, an error's name, or errorCode's own string, and otherwise as UNRECOGNIZED. The
+// binding is an outside service, so a thrown error's `code` or `name`, like a getter's
+// `errorCode`, could carry a flag's value. The key is one of this module's constants. Every read
+// goes through readFlag, so the error is a FlagReadError; anything else is logged without a key
+// rather than thrown, because the readers never throw.
+function logUnavailable(error: unknown): void {
+  const tagged = error instanceof FlagReadError;
+  const code = errorCode(tagged ? error.cause : error);
+  console.error("Flags unavailable, using the defaults:", {
+    ...(tagged && { flag: error.flag }),
+    code:
+      code === NOT_AN_ERROR || FLAG_ERROR_CODE.test(code) || THROWN_ERROR_NAME.test(code)
+        ? code
+        : "UNRECOGNIZED",
+  });
+}
+
 /**
  * Reads the sweep's flags, once for the run. Never throws: an error from the binding gives every
- * default, and is logged by its code or name only, so a Flagship problem can't stop the
- * scheduled run (Q13). So does a binding that is missing, which `Env` can't rule out at runtime,
- * because the getters are called inside the same `try`. A flag the getter couldn't evaluate
- * gives its default and is logged with the getter's code, except a missing batch size: the plan
- * creates that flag only to lower the batch without a deploy ("Deploys"), while a missing switch
- * turns the sweep on. A value outside its range gives that flag's default.
+ * default, and is logged by the flag's key and the error's code or name only, so a Flagship
+ * problem can't stop the scheduled run (Q13). So does a binding that is missing, which `Env`
+ * can't rule out at runtime, because the getters are called inside the same `try`. A flag the
+ * getter couldn't evaluate gives its default and is logged with the getter's code, except a
+ * missing batch size: the plan creates that flag only to lower the batch without a deploy
+ * ("Deploys"), while a missing switch turns the sweep on. A value outside its range gives that
+ * flag's default.
  */
 export async function readSweepFlags(flags: FlagReader): Promise<SweepFlags> {
   let enabled: FlagDetails<unknown>;
   let batchSize: FlagDetails<unknown>;
   try {
     [enabled, batchSize] = await Promise.all([
-      flags.getBooleanDetails(SWEEP_ENABLED_FLAG, SWEEP_FLAG_DEFAULTS.enabled),
-      flags.getNumberDetails(SWEEP_BATCH_SIZE_FLAG, SWEEP_FLAG_DEFAULTS.batchSize),
+      readFlag(SWEEP_ENABLED_FLAG, (key) =>
+        flags.getBooleanDetails(key, SWEEP_FLAG_DEFAULTS.enabled),
+      ),
+      readFlag(SWEEP_BATCH_SIZE_FLAG, (key) =>
+        flags.getNumberDetails(key, SWEEP_FLAG_DEFAULTS.batchSize),
+      ),
     ]);
   } catch (error) {
-    console.error("Flags unavailable, using the defaults:", { code: errorCode(error) });
+    logUnavailable(error);
     return SWEEP_FLAG_DEFAULTS;
   }
   return {
@@ -176,18 +237,20 @@ export async function readSweepFlags(flags: FlagReader): Promise<SweepFlags> {
 
 /**
  * Reads the search page's switch, once for the request. Never throws: an error from the binding,
- * or a missing binding, gives the default, off, and is logged by its code or name only, as
- * readSweepFlags does, so a Flagship problem can't fail a page. A value that isn't a boolean
- * gives the default too. A missing flag is not logged, because it is the expected state until
- * #218 creates it, and it gives the default, off, which is the safe state, while logging it would
- * add a line to every page load.
+ * or a missing binding, gives the default, off, and is logged by the flag's key and the error's
+ * code or name only, as readSweepFlags does, so a Flagship problem can't fail a page. A value
+ * that isn't a boolean gives the default too. A missing flag is not logged, because it is the
+ * expected state until #218 creates it, and it gives the default, off, which is the safe state,
+ * while logging it would add a line to every page load.
  */
 export async function readSearchFlags(flags: FlagReader): Promise<SearchFlags> {
   let enabled: FlagDetails<unknown>;
   try {
-    enabled = await flags.getBooleanDetails(SEARCH_ENABLED_FLAG, SEARCH_FLAG_DEFAULTS.enabled);
+    enabled = await readFlag(SEARCH_ENABLED_FLAG, (key) =>
+      flags.getBooleanDetails(key, SEARCH_FLAG_DEFAULTS.enabled),
+    );
   } catch (error) {
-    console.error("Flags unavailable, using the defaults:", { code: errorCode(error) });
+    logUnavailable(error);
     return SEARCH_FLAG_DEFAULTS;
   }
   return {
@@ -197,6 +260,172 @@ export async function readSearchFlags(flags: FlagReader): Promise<SearchFlags> {
       // so that a flag deleted or renamed in the Flagship app is logged, as `sweep-enabled` is.
       valueOf(SEARCH_ENABLED_FLAG, enabled, true),
       SEARCH_FLAG_DEFAULTS.enabled,
+    ),
+  };
+}
+
+/**
+ * Which Jev questions a search asks: a string flag, `both`, `noul` or `score`, recorded as
+ * `search_runs.questions`. After Phase 12 chooses a signal, it can ask only that one, which gives
+ * back the batch capacity the other question uses (plan, "Ranking and thresholds").
+ */
+export const SEARCH_QUESTIONS_FLAG = "search-questions";
+
+/** Which signal ranks the results a search shows: a string flag, `noul` or `score`. */
+export const SEARCH_DISPLAY_SIGNAL_FLAG = "search-display-signal";
+
+/**
+ * The Noul threshold: a number flag from 0 to 1, the Noul's own scale. The Noul list holds the
+ * answers with `noul >= threshold`.
+ */
+export const SEARCH_NOUL_THRESHOLD_FLAG = "search-noul-threshold";
+
+/**
+ * The Score threshold: a number flag on the scale of the `score` that the API returns, from 0 to
+ * RELEVANCE_SCORE_MAX, which comes from the relevance question's levels (jev-search.ts, #255).
+ * Haystack keeps that scale rather than dividing by the maximum, so a threshold compares
+ * directly with `search_answers.score`, which stores the API's number unchanged (#210). The Score
+ * list holds the answers with `score >= threshold`.
+ */
+export const SEARCH_SCORE_THRESHOLD_FLAG = "search-score-threshold";
+
+/** How a search asks Jev: a string flag, `pair` (one request per bookmark) or `batched`. */
+export const SEARCH_REQUEST_MODE_FLAG = "search-request-mode";
+
+/** The search settings, as one search uses them, named as `search_runs`' columns are. */
+export interface SearchSettings {
+  readonly questions: (typeof SEARCH_QUESTIONS)[number];
+  // Not checked against `questions`, which may leave it out (#212 decides what happens then).
+  readonly displaySignal: (typeof SEARCH_DISPLAY_SIGNALS)[number];
+  // From 0 to 1.
+  readonly noulThreshold: number;
+  // From 0 to RELEVANCE_SCORE_MAX.
+  readonly scoreThreshold: number;
+  readonly requestMode: (typeof SEARCH_REQUEST_MODES)[number];
+}
+
+/**
+ * The defaults, which search runs with until Phase 12 changes a flag, and during a Flagship
+ * outage: both questions, so that every search logs both signals for Phase 12; the Score signal;
+ * and batched mode, because pair mode spends one request per bookmark against Jev's rate limit
+ * (Q1).
+ *
+ * The thresholds are starting values, proposed in #209, which Phase 12 replaces:
+ * - Noul 0.5, where yes becomes more likely than no. A Noul near 0.5 means that Jev is unsure,
+ *   not that the bookmark is somewhat relevant, so this is the lowest value at which Jev leans
+ *   towards "it helps".
+ * - Score 1.5, halfway between level 1, "Same general area, but would not help", and level 2,
+ *   "Partially addresses the need". A result is shown when its probability leans towards the
+ *   levels that help, which keeps the partial matches, because an empty list for a query that
+ *   has one looks like "nothing matches".
+ */
+export const SEARCH_SETTING_DEFAULTS: SearchSettings = Object.freeze({
+  questions: "both",
+  displaySignal: "score",
+  noulThreshold: 0.5,
+  scoreThreshold: 1.5,
+  requestMode: "batched",
+});
+
+// A live string setting, or its default for a value that isn't one of the allowed values, such
+// as `Batched`, which the getter returns like any other string.
+function checkedChoice<T extends string>(
+  flag: string,
+  value: unknown,
+  allowed: readonly T[],
+  fallback: T,
+): T {
+  const match = allowed.find((option) => option === value);
+  if (match !== undefined) {
+    return match;
+  }
+  console.warn("Flag ignored, using its default:", { flag });
+  return fallback;
+}
+
+// A live threshold, or its default for a value outside 0 to `max`, such as a Noul of 75 typed as
+// a percentage, which would hide every result. NaN and the infinities fail the comparisons too.
+function checkedThreshold(flag: string, value: unknown, max: number, fallback: number): number {
+  if (typeof value === "number" && value >= 0 && value <= max) {
+    return value;
+  }
+  console.warn("Flag ignored, using its default:", { flag });
+  return fallback;
+}
+
+/**
+ * Reads the search settings, all five together, once for each search, so that the search sees
+ * one consistent configuration and records it on its `search_runs` row. Never throws: an error
+ * from the binding, or a missing binding, gives every default, even when the other reads worked,
+ * and is logged by the key of the flag whose read threw and the error's code or name only, as
+ * readSweepFlags does, so a Flagship problem can't fail a search. When more than one read throws,
+ * the line names the one that failed first, because `Promise.all` rejects with that error; when
+ * they fail at once, as all five do for a missing binding, that is the first in the order below.
+ * A value out of range gives that flag's default, with a warning that names the flag and not the
+ * value. Each flag is checked on its own: whether the questions include the display signal is
+ * not checked here, because what a search does then is the search service's decision (#212). A
+ * missing flag is not logged: each is created only when Phase 12 needs
+ * a value other than its default (#225), as `sweep-batch-size` is, so its absence is the expected
+ * state, and a warning on every search would bury the ones that matter. A flag that the getter
+ * couldn't evaluate for another reason is logged with the getter's code.
+ */
+export async function readSearchSettings(flags: FlagReader): Promise<SearchSettings> {
+  const defaults = SEARCH_SETTING_DEFAULTS;
+  let questions: FlagDetails<unknown>;
+  let displaySignal: FlagDetails<unknown>;
+  let noulThreshold: FlagDetails<unknown>;
+  let scoreThreshold: FlagDetails<unknown>;
+  let requestMode: FlagDetails<unknown>;
+  try {
+    [questions, displaySignal, noulThreshold, scoreThreshold, requestMode] = await Promise.all([
+      readFlag(SEARCH_QUESTIONS_FLAG, (key) => flags.getStringDetails(key, defaults.questions)),
+      readFlag(SEARCH_DISPLAY_SIGNAL_FLAG, (key) =>
+        flags.getStringDetails(key, defaults.displaySignal),
+      ),
+      readFlag(SEARCH_NOUL_THRESHOLD_FLAG, (key) =>
+        flags.getNumberDetails(key, defaults.noulThreshold),
+      ),
+      readFlag(SEARCH_SCORE_THRESHOLD_FLAG, (key) =>
+        flags.getNumberDetails(key, defaults.scoreThreshold),
+      ),
+      readFlag(SEARCH_REQUEST_MODE_FLAG, (key) =>
+        flags.getStringDetails(key, defaults.requestMode),
+      ),
+    ]);
+  } catch (error) {
+    logUnavailable(error);
+    return defaults;
+  }
+  return {
+    questions: checkedChoice(
+      SEARCH_QUESTIONS_FLAG,
+      valueOf(SEARCH_QUESTIONS_FLAG, questions, true),
+      SEARCH_QUESTIONS,
+      defaults.questions,
+    ),
+    displaySignal: checkedChoice(
+      SEARCH_DISPLAY_SIGNAL_FLAG,
+      valueOf(SEARCH_DISPLAY_SIGNAL_FLAG, displaySignal, true),
+      SEARCH_DISPLAY_SIGNALS,
+      defaults.displaySignal,
+    ),
+    noulThreshold: checkedThreshold(
+      SEARCH_NOUL_THRESHOLD_FLAG,
+      valueOf(SEARCH_NOUL_THRESHOLD_FLAG, noulThreshold, true),
+      1,
+      defaults.noulThreshold,
+    ),
+    scoreThreshold: checkedThreshold(
+      SEARCH_SCORE_THRESHOLD_FLAG,
+      valueOf(SEARCH_SCORE_THRESHOLD_FLAG, scoreThreshold, true),
+      RELEVANCE_SCORE_MAX,
+      defaults.scoreThreshold,
+    ),
+    requestMode: checkedChoice(
+      SEARCH_REQUEST_MODE_FLAG,
+      valueOf(SEARCH_REQUEST_MODE_FLAG, requestMode, true),
+      SEARCH_REQUEST_MODES,
+      defaults.requestMode,
     ),
   };
 }
