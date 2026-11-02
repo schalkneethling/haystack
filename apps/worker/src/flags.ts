@@ -281,11 +281,11 @@ export const SEARCH_DISPLAY_SIGNAL_FLAG = "search-display-signal";
 export const SEARCH_NOUL_THRESHOLD_FLAG = "search-noul-threshold";
 
 /**
- * The Score threshold: a number flag from 0 to RELEVANCE_SCORE_MAX, which is 3 and comes from the
- * relevance question's levels (#255), the scale of the `score` that the API returns. Haystack
- * keeps that scale rather than dividing by the maximum, so a threshold compares directly with
- * `search_answers.score`, which stores the API's number unchanged (#210). The Score list holds the
- * answers with `score >= threshold`.
+ * The Score threshold: a number flag on the scale of the `score` that the API returns, from 0 to
+ * RELEVANCE_SCORE_MAX, which comes from the relevance question's levels (jev-search.ts, #255).
+ * Haystack keeps that scale rather than dividing by the maximum, so a threshold compares
+ * directly with `search_answers.score`, which stores the API's number unchanged (#210). The Score
+ * list holds the answers with `score >= threshold`.
  */
 export const SEARCH_SCORE_THRESHOLD_FLAG = "search-score-threshold";
 

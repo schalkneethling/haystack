@@ -647,14 +647,23 @@ describe("askSearch", () => {
 // The Score threshold's range ends at RELEVANCE_SCORE_MAX (flags.ts, #255), so it has to follow
 // the relevance question's levels: a level added or removed moves it.
 describe("RELEVANCE_SCORE_MAX", () => {
-  const top = { "0": 0, "1": 0, "2": 0, "3": 1 };
+  // All the probability on the last level, built from the levels, so that a change to their
+  // number fails on the score's range, not on the probabilities' keys.
+  const top = Object.fromEntries(
+    Array.from({ length: RELEVANCE_SCORE_MAX + 1 }, (_, level) => [
+      String(level),
+      level === RELEVANCE_SCORE_MAX ? 1 : 0,
+    ]),
+  );
   const answer = (score: number) => ({ type: "score", score, confidence: 0.9, probabilities: top });
 
-  it("is the number of the relevance question's last level", () => {
-    expect(RELEVANCE_SCORE_MAX).toBe(relevanceQuestion("b_0").criteria.length - 1);
+  it("is 3 with the relevance question's four levels", () => {
+    expect(relevanceQuestion("b_0").criteria).toHaveLength(4);
     expect(RELEVANCE_SCORE_MAX).toBe(3);
   });
 
+  // RelevanceAnswer gets its maximum from the number of levels on its own path (scoreAnswer in
+  // jev-client.ts), so this is the check that ties the two together.
   it("is the highest score a relevance answer can have", () => {
     expect(v.safeParse(RelevanceAnswer, answer(RELEVANCE_SCORE_MAX)).success).toBe(true);
     expect(v.safeParse(RelevanceAnswer, answer(RELEVANCE_SCORE_MAX + 0.001)).success).toBe(false);
