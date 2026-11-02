@@ -152,13 +152,45 @@ const THROWN_ERROR_NAME = /^(?:[A-Z][A-Za-z0-9]{0,58})?Error$/;
 // What errorCode gives for a thrown value that isn't an Error. It is Haystack's own string.
 const NOT_AN_ERROR = "unknown error";
 
-// The error from the binding, logged by its code or name, as errorCode gives it, as long as that
-// is a plain code, such as FLAG_NOT_FOUND or ECONNRESET, an error's name, or errorCode's own
-// string, and otherwise as UNRECOGNIZED. The binding is an outside service, so a thrown error's
-// `code` or `name`, like a getter's `errorCode`, could carry a flag's value.
+// An error from the binding, with the key of the flag whose read threw it. The readers run their
+// reads in one `Promise.all`, which rejects with the first error alone, so without the key the
+// log line couldn't say which read failed.
+class FlagReadError extends Error {
+  readonly flag: string;
+
+  constructor(flag: string, cause: unknown) {
+    super("Flag read failed", { cause });
+    this.name = "FlagReadError";
+    this.flag = flag;
+  }
+}
+
+// One read through the binding, whose error, thrown or rejected, becomes a FlagReadError for
+// `flag`. The getter is called inside the `try`, so a missing binding, which throws a TypeError
+// before any promise exists, is tagged too: every read throws then, and the line names the first.
+async function readFlag<T>(
+  flag: string,
+  read: (flag: string) => Promise<FlagDetails<T>>,
+): Promise<FlagDetails<T>> {
+  try {
+    return await read(flag);
+  } catch (error) {
+    throw new FlagReadError(flag, error);
+  }
+}
+
+// The error from the binding, logged by the key of the flag whose read threw it, and by its code
+// or name, as errorCode gives it, as long as that is a plain code, such as FLAG_NOT_FOUND or
+// ECONNRESET, an error's name, or errorCode's own string, and otherwise as UNRECOGNIZED. The
+// binding is an outside service, so a thrown error's `code` or `name`, like a getter's
+// `errorCode`, could carry a flag's value. The key is one of this module's constants. Every read
+// goes through readFlag, so the error is a FlagReadError; anything else is logged without a key
+// rather than thrown, because the readers never throw.
 function logUnavailable(error: unknown): void {
-  const code = errorCode(error);
+  const tagged = error instanceof FlagReadError;
+  const code = errorCode(tagged ? error.cause : error);
   console.error("Flags unavailable, using the defaults:", {
+    ...(tagged && { flag: error.flag }),
     code:
       code === NOT_AN_ERROR || FLAG_ERROR_CODE.test(code) || THROWN_ERROR_NAME.test(code)
         ? code
@@ -168,9 +200,9 @@ function logUnavailable(error: unknown): void {
 
 /**
  * Reads the sweep's flags, once for the run. Never throws: an error from the binding gives every
- * default, and is logged by its code or name only, so a Flagship problem can't stop the
- * scheduled run (Q13). So does a binding that is missing, which `Env` can't rule out at runtime,
- * because the getters are called inside the same `try`. A flag the getter couldn't evaluate
+ * default, and is logged by the flag's key and the error's code or name only, so a Flagship
+ * problem can't stop the scheduled run (Q13). So does a binding that is missing, which `Env`
+ * can't rule out at runtime, because the getters are called inside the same `try`. A flag the getter couldn't evaluate
  * gives its default and is logged with the getter's code, except a missing batch size: the plan
  * creates that flag only to lower the batch without a deploy ("Deploys"), while a missing switch
  * turns the sweep on. A value outside its range gives that flag's default.
@@ -180,8 +212,12 @@ export async function readSweepFlags(flags: FlagReader): Promise<SweepFlags> {
   let batchSize: FlagDetails<unknown>;
   try {
     [enabled, batchSize] = await Promise.all([
-      flags.getBooleanDetails(SWEEP_ENABLED_FLAG, SWEEP_FLAG_DEFAULTS.enabled),
-      flags.getNumberDetails(SWEEP_BATCH_SIZE_FLAG, SWEEP_FLAG_DEFAULTS.batchSize),
+      readFlag(SWEEP_ENABLED_FLAG, (key) =>
+        flags.getBooleanDetails(key, SWEEP_FLAG_DEFAULTS.enabled),
+      ),
+      readFlag(SWEEP_BATCH_SIZE_FLAG, (key) =>
+        flags.getNumberDetails(key, SWEEP_FLAG_DEFAULTS.batchSize),
+      ),
     ]);
   } catch (error) {
     logUnavailable(error);
@@ -199,8 +235,8 @@ export async function readSweepFlags(flags: FlagReader): Promise<SweepFlags> {
 
 /**
  * Reads the search page's switch, once for the request. Never throws: an error from the binding,
- * or a missing binding, gives the default, off, and is logged by its code or name only, as
- * readSweepFlags does, so a Flagship problem can't fail a page. A value that isn't a boolean
+ * or a missing binding, gives the default, off, and is logged by the flag's key and the error's
+ * code or name only, as readSweepFlags does, so a Flagship problem can't fail a page. A value that isn't a boolean
  * gives the default too. A missing flag is not logged, because it is the expected state until
  * #218 creates it, and it gives the default, off, which is the safe state, while logging it would
  * add a line to every page load.
@@ -208,7 +244,9 @@ export async function readSweepFlags(flags: FlagReader): Promise<SweepFlags> {
 export async function readSearchFlags(flags: FlagReader): Promise<SearchFlags> {
   let enabled: FlagDetails<unknown>;
   try {
-    enabled = await flags.getBooleanDetails(SEARCH_ENABLED_FLAG, SEARCH_FLAG_DEFAULTS.enabled);
+    enabled = await readFlag(SEARCH_ENABLED_FLAG, (key) =>
+      flags.getBooleanDetails(key, SEARCH_FLAG_DEFAULTS.enabled),
+    );
   } catch (error) {
     logUnavailable(error);
     return SEARCH_FLAG_DEFAULTS;
@@ -323,8 +361,9 @@ function checkedThreshold(flag: string, value: unknown, max: number, fallback: n
  * Reads the search settings, all five together, once for each search, so that the search sees
  * one consistent configuration and records it on its `search_runs` row. Never throws: an error
  * from the binding, or a missing binding, gives every default, even when the other reads worked,
- * and is logged by its code or name only, as readSweepFlags does, so a Flagship problem can't
- * fail a search. That line can't name a flag, because `Promise.all` doesn't say which read threw.
+ * and is logged by the key of the flag whose read threw and the error's code or name only, as
+ * readSweepFlags does, so a Flagship problem can't fail a search. When more than one read throws,
+ * as all five do for a missing binding, the line names the first in the order below.
  * A value out of range gives that flag's default, with a warning that names the flag and not the
  * value. Each flag is checked on its own: whether the questions include the display signal is
  * not checked here, because what a search does then is the search service's decision (#212). A
@@ -342,11 +381,19 @@ export async function readSearchSettings(flags: FlagReader): Promise<SearchSetti
   let requestMode: FlagDetails<unknown>;
   try {
     [questions, displaySignal, noulThreshold, scoreThreshold, requestMode] = await Promise.all([
-      flags.getStringDetails(SEARCH_QUESTIONS_FLAG, defaults.questions),
-      flags.getStringDetails(SEARCH_DISPLAY_SIGNAL_FLAG, defaults.displaySignal),
-      flags.getNumberDetails(SEARCH_NOUL_THRESHOLD_FLAG, defaults.noulThreshold),
-      flags.getNumberDetails(SEARCH_SCORE_THRESHOLD_FLAG, defaults.scoreThreshold),
-      flags.getStringDetails(SEARCH_REQUEST_MODE_FLAG, defaults.requestMode),
+      readFlag(SEARCH_QUESTIONS_FLAG, (key) => flags.getStringDetails(key, defaults.questions)),
+      readFlag(SEARCH_DISPLAY_SIGNAL_FLAG, (key) =>
+        flags.getStringDetails(key, defaults.displaySignal),
+      ),
+      readFlag(SEARCH_NOUL_THRESHOLD_FLAG, (key) =>
+        flags.getNumberDetails(key, defaults.noulThreshold),
+      ),
+      readFlag(SEARCH_SCORE_THRESHOLD_FLAG, (key) =>
+        flags.getNumberDetails(key, defaults.scoreThreshold),
+      ),
+      readFlag(SEARCH_REQUEST_MODE_FLAG, (key) =>
+        flags.getStringDetails(key, defaults.requestMode),
+      ),
     ]);
   } catch (error) {
     logUnavailable(error);

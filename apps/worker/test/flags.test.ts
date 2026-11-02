@@ -132,6 +132,7 @@ describe("readSweepFlags", () => {
 
     expect(await readSweepFlags(flags)).toEqual({ enabled: true, batchSize: 3 });
     expect(error).toHaveBeenCalledWith("Flags unavailable, using the defaults:", {
+      flag: SWEEP_BATCH_SIZE_FLAG,
       code: "FlagshipError",
     });
   });
@@ -141,6 +142,11 @@ describe("readSweepFlags", () => {
     const missing = undefined as unknown as FlagReader;
 
     expect(await readSweepFlags(missing)).toEqual({ enabled: true, batchSize: 3 });
+    // Both reads throw, and the line names the first.
+    expect(error).toHaveBeenCalledExactlyOnceWith("Flags unavailable, using the defaults:", {
+      flag: SWEEP_ENABLED_FLAG,
+      code: "TypeError",
+    });
   });
 
   it.each([4, 0, 2.5, -1, Number.NaN, Number.POSITIVE_INFINITY])(
@@ -213,6 +219,7 @@ describe("readSearchFlags", () => {
 
     expect(await readSearchFlags(flags)).toEqual({ enabled: false });
     expect(error).toHaveBeenCalledWith("Flags unavailable, using the defaults:", {
+      flag: SEARCH_ENABLED_FLAG,
       code: "FlagshipError",
     });
   });
@@ -223,6 +230,7 @@ describe("readSearchFlags", () => {
     expect(await readSearchFlags(missing)).toEqual({ enabled: false });
     // Calling a getter on no binding throws a TypeError, which is logged by its name.
     expect(error).toHaveBeenCalledWith("Flags unavailable, using the defaults:", {
+      flag: SEARCH_ENABLED_FLAG,
       code: "TypeError",
     });
   });
@@ -369,17 +377,40 @@ describe("readSearchSettings", () => {
     };
 
     expect(await readSearchSettings(flags)).toEqual(SEARCH_SETTING_DEFAULTS);
-    expect(error).toHaveBeenCalledWith("Flags unavailable, using the defaults:", {
+    // Both thresholds' reads throw, and the line names the first.
+    expect(error).toHaveBeenCalledExactlyOnceWith("Flags unavailable, using the defaults:", {
+      flag: SEARCH_NOUL_THRESHOLD_FLAG,
       code: "FlagshipError",
     });
     expect(JSON.stringify(error.mock.calls)).not.toContain("unavailable for");
+  });
+
+  it("names the flag whose read threw, not the first flag", async () => {
+    const live = fakeFlags({});
+    const flags: FlagReader = {
+      ...live,
+      getNumberDetails: async (key, defaultValue) => {
+        if (key === SEARCH_SCORE_THRESHOLD_FLAG) {
+          throw Object.assign(new Error("Flagship failed"), { code: "ECONNRESET" });
+        }
+        return live.getNumberDetails(key, defaultValue);
+      },
+    };
+
+    expect(await readSearchSettings(flags)).toEqual(SEARCH_SETTING_DEFAULTS);
+    expect(error).toHaveBeenCalledExactlyOnceWith("Flags unavailable, using the defaults:", {
+      flag: SEARCH_SCORE_THRESHOLD_FLAG,
+      code: "ECONNRESET",
+    });
   });
 
   it("gives every default when the binding is missing, and logs it as an outage", async () => {
     const missing = undefined as unknown as FlagReader;
 
     expect(await readSearchSettings(missing)).toEqual(SEARCH_SETTING_DEFAULTS);
-    expect(error).toHaveBeenCalledWith("Flags unavailable, using the defaults:", {
+    // All five reads throw, and the line names the first.
+    expect(error).toHaveBeenCalledExactlyOnceWith("Flags unavailable, using the defaults:", {
+      flag: SEARCH_QUESTIONS_FLAG,
       code: "TypeError",
     });
   });
@@ -508,12 +539,18 @@ describe("the log line for a thrown error", () => {
     ["a name that isn't an error's", named("Pair"), "UNRECOGNIZED"],
     ["a name with a space", named("Flag search-questions Error"), "UNRECOGNIZED"],
   ])("logs %s by what is allowed of it", async (_case, thrown, code) => {
-    for (const read of [readSweepFlags, readSearchFlags, readSearchSettings]) {
+    // Every read throws, so each reader's line names its first flag.
+    for (const [read, flag] of [
+      [readSweepFlags, SWEEP_ENABLED_FLAG],
+      [readSearchFlags, SEARCH_ENABLED_FLAG],
+      [readSearchSettings, SEARCH_QUESTIONS_FLAG],
+    ] as const) {
       error.mockClear();
 
       await read(throwing(thrown));
 
       expect(error).toHaveBeenCalledExactlyOnceWith("Flags unavailable, using the defaults:", {
+        flag,
         code,
       });
     }
