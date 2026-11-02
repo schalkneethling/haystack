@@ -3,6 +3,7 @@
 // (jev-fixture.ts), which fails a test that makes a request it did not plan for, so no test calls
 // TypeSafe. See "Question design" and "Jev client" in plans/haystack-v1-implementation-plan.md.
 import { delay, HttpResponse, type JsonBodyType } from "msw";
+import * as v from "valibot";
 import {
   afterAll,
   afterEach,
@@ -16,6 +17,9 @@ import {
 import type { JevConfig, JevTiming } from "../src/enrichment/jev-client.ts";
 import {
   askSearch,
+  RELEVANCE_SCORE_MAX,
+  RelevanceAnswer,
+  relevanceQuestion,
   SEARCH_TIMING,
   type SearchAsk,
   type SearchBookmark,
@@ -637,5 +641,22 @@ describe("askSearch", () => {
       expect(String(error)).not.toContain(KEY);
       expect(fixture.requests).toEqual([]);
     });
+  });
+});
+
+// The Score threshold's range ends at RELEVANCE_SCORE_MAX (flags.ts, #255), so it has to follow
+// the relevance question's levels: a level added or removed moves it.
+describe("RELEVANCE_SCORE_MAX", () => {
+  const top = { "0": 0, "1": 0, "2": 0, "3": 1 };
+  const answer = (score: number) => ({ type: "score", score, confidence: 0.9, probabilities: top });
+
+  it("is the number of the relevance question's last level", () => {
+    expect(RELEVANCE_SCORE_MAX).toBe(relevanceQuestion("b_0").criteria.length - 1);
+    expect(RELEVANCE_SCORE_MAX).toBe(3);
+  });
+
+  it("is the highest score a relevance answer can have", () => {
+    expect(v.safeParse(RelevanceAnswer, answer(RELEVANCE_SCORE_MAX)).success).toBe(true);
+    expect(v.safeParse(RelevanceAnswer, answer(RELEVANCE_SCORE_MAX + 0.001)).success).toBe(false);
   });
 });
