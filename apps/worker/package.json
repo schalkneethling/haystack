@@ -31,7 +31,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",
-    "@cloudflare/vite-plugin": "^1.64.0",
+    "@cloudflare/vite-plugin": "^1.65.0",
     "@guidepup/guidepup": "^0.36.4",
     "@guidepup/playwright": "^0.20.0",
     "@guidepup/setup": "^0.29.3",
@@ -45,6 +45,6 @@
     "msw": "^3.0.3",
     "varlock": "^1.23.0",
     "vite": "catalog:",
-    "wrangler": "4.151.3"
+    "wrangler": "4.153.0"
   }
 }
