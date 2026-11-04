@@ -14,7 +14,8 @@ export default defineConfig({
   workers: 1,
   fullyParallel: false,
   testDir: "./e2e",
-  testMatch: "**/*.voiceover.ts",
+  // TEMPORARY (#237 exploration): only the search tests.
+  testMatch: ["**/search.voiceover.ts", "**/search-live-region.voiceover.ts"],
   // Each test starts VoiceOver and moves it into the page, which takes tens of seconds.
   timeout: 5 * 60 * 1000,
   // VoiceOver sometimes fails to start ("Unable to activate application"). In the trial runs,
