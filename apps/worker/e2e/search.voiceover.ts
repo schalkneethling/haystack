@@ -128,7 +128,7 @@ test("the field reads its label, and moving by heading after a search reads the 
   }
 });
 
-test.fail("the count is spoken after a search", NOT_SPOKEN_YET, async ({ page, voiceOver }) => {
+test("the count is spoken after a search", NOT_SPOKEN_YET, async ({ page, voiceOver }) => {
   await searchWith(page, voiceOver, FOUND, "2 saved links match your search.");
   await expectSpoken(voiceOver, COUNT);
 });
@@ -136,7 +136,7 @@ test.fail("the count is spoken after a search", NOT_SPOKEN_YET, async ({ page, v
 // The page's clock is Playwright's, paused (installPausedClock), and the test moves it on by the
 // script's delay itself, so the held search never reaches the script's 30-second limit while
 // VoiceOver speaks.
-test.fail(
+test(
   "the processing message is spoken while a search runs",
   NOT_SPOKEN_YET,
   async ({ page, voiceOver }) => {
@@ -151,7 +151,7 @@ test.fail(
   },
 );
 
-test.fail(
+test(
   "the notice that results may be incomplete is spoken with the count",
   NOT_SPOKEN_YET,
   async ({ page, voiceOver }) => {
@@ -165,7 +165,7 @@ test.fail(
   },
 );
 
-test.fail(
+test(
   "the error state is spoken after a failed search",
   NOT_SPOKEN_YET,
   async ({ page, voiceOver }) => {
