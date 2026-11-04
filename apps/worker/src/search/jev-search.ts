@@ -211,7 +211,8 @@ function answerTo<Answer>(
  *
  * A response that leaves out, or malforms, the answer to any question that was asked makes the
  * whole request an `invalid-response`, which is permanent: no answer is returned for any
- * bookmark, and it isn't retried. Splitting the set and asking again is #211's. Retries and the
+ * bookmark, and it isn't retried. searchInChunks (chunked-search.ts, #211) doesn't split such a
+ * request either, because its size isn't what failed, so its bookmarks are left unanswered. Retries and the
  * other failures are askJevQuestions', with SEARCH_TIMING's attempts unless `timing` says
  * otherwise, and every attempt waits on `gate` first when one is given: search's limiter
  * (jev-limiter.ts, #211). Rejects with searchRequestParts' RangeErrors and the client's

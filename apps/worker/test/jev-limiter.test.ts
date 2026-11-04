@@ -165,12 +165,63 @@ describe("JevLimiter", () => {
     expect(await limiter.acquire(1)).toBe(true);
     const controller = new AbortController();
     const aborted = limiter.acquire(1, controller.signal);
-    const after = send(limiter, clock, [["after", 1]]);
     await clock.advance(100);
     controller.abort();
     expect(await aborted).toBe(false);
-    // The aborted request took no place, so the next one goes when the first is a second old.
-    expect(await after.wait()).toEqual([{ label: "after", at: 1000, tokens: 1 }]);
+    // The aborted request gave its place back, so a request that asks after it goes as soon as
+    // the first is a second old.
+    expect(await send(limiter, clock, [["after", 1]]).wait()).toEqual([
+      { label: "after", at: 1000, tokens: 1 },
+    ]);
+  });
+
+  // Cloudflare can cancel a request's pending work when its client disconnects, and a cancelled
+  // request's timer never fires, so it never comes back to the limiter. The limiter is the
+  // isolate's, shared by every search, so a request that never comes back mustn't hold up the
+  // ones after it. Here the clock's first sleep never wakes, which is that request's timer.
+  describe("when a request never comes back", () => {
+    // `clock`, except that its first sleep never wakes.
+    function losingFirstSleep(clock: FakeClock): FakeClock {
+      let lost = false;
+      return {
+        ...clock,
+        sleep: (milliseconds, signal) => {
+          if (!lost) {
+            lost = true;
+            return new Promise<void>(() => {
+              // Never settles, as a cancelled request's timer never fires.
+            });
+          }
+          return clock.sleep(milliseconds, signal);
+        },
+      };
+    }
+
+    it.each([
+      ["at the head of the line", ["lost", "next"]],
+      ["waiting behind another", ["first", "lost", "next"]],
+    ])("still lets the next one through on time when it is %s", async (_, line) => {
+      const clock = fakeClock();
+      const limiter = new JevLimiter(
+        { requestsPerSecond: 1, tokensPerSecond: 100_000 },
+        losingFirstSleep(clock),
+      );
+      // A 429 makes the head wait too, so that its sleep is the first.
+      if (line[0] === "lost") {
+        limiter.throttled(1000);
+      }
+      const admitted: Record<string, number> = {};
+      for (const label of line) {
+        void limiter.acquire(1).then(() => {
+          admitted[label] = clock.now();
+        });
+      }
+      await clock.advance(10_000);
+      // One request a second, and the lost one keeps its second, so the next one goes a second
+      // after it would have, and never waits for good.
+      expect(admitted.next).toBe(2000);
+      expect(admitted.lost).toBeUndefined();
+    });
   });
 
   it("refuses a token count that isn't a whole number from 0", async () => {

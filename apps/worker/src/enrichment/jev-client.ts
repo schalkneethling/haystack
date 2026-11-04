@@ -359,12 +359,17 @@ async function attempt(url: URL, init: RequestInit, timeoutMs: number): Promise<
     if (!response.ok) {
       const { status, headers } = response;
       // A `400`'s code says whether the request was too long, which search splits (#211). The
-      // body's start is read here, inside the time limit, and one that stops arriving is a
-      // timeout or a network failure like any other.
+      // body's start is read here, inside the time limit. It is read only for the code, so a body
+      // that breaks or stops arriving gives no code, and the `400` stays the permanent failure it
+      // was before the body was read, rather than becoming a retried network failure or timeout.
       let code: JevErrorCode | undefined;
       if (status === 400 && response.body !== null) {
-        const read = await readText(response.body, ERROR_BODY_READ_LIMIT_BYTES);
-        code = read.complete ? errorCode(read.text) : undefined;
+        try {
+          const read = await readText(response.body, ERROR_BODY_READ_LIMIT_BYTES);
+          code = read.complete ? errorCode(read.text) : undefined;
+        } catch {
+          code = undefined;
+        }
       } else {
         discard(response);
       }

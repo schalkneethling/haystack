@@ -7,11 +7,20 @@
 // tokens. The limiter holds both, so that a burst of searches waits its turn here rather than
 // cascading into `429` responses, and the client's own backoff on `429` and `529` stays as it is.
 //
-// It keeps a log of what it let through in the last second: each request's moment and its
-// estimated tokens. A request may go when, with it, the last second holds no more requests than
-// `requestsPerSecond` and no more tokens than `tokensPerSecond`. Otherwise it sleeps until the
-// oldest entries that are in its way are a second old. Requests go in the order they asked, so a
-// large one isn't overtaken for good by smaller ones that would fit sooner.
+// It keeps a log of each request's send time and its estimated tokens. A request reserves its send
+// time when it asks, at once and without waiting on anything: the earliest moment, no earlier than
+// any time already reserved, at which the second up to it holds no more requests than
+// `requestsPerSecond` and no more tokens than `tokensPerSecond`, the request included. It then
+// sleeps on its own timer until that moment. Because each reservation comes after every earlier
+// one, requests go in the order they asked, so a large one isn't overtaken for good by smaller
+// ones that would fit sooner.
+//
+// No request ever waits on another request's promise. The limiter is the isolate's, shared by
+// every search, and Cloudflare can cancel a request's pending work when its client disconnects, so
+// a request may never come back from its sleep. It then leaves only its reservation, which counts
+// for its second like any other and then expires, and the requests after it go at their own times.
+// A request that is aborted while it sleeps gives its reservation back. The requests that reserved
+// after it keep their times, which are later than they need be but never early.
 //
 // A request of more tokens than a second's ceiling, such as one with the long-context option of
 // 262k tokens, which Phase 11 never sends, could never fit. It goes alone, once no other request's
@@ -20,7 +29,9 @@
 //
 // After a `429`, every request waits for as long as the response asked, or LIMITER_DEFAULT_PAUSE_MS
 // when it asked for no time, and never longer than JEV_MAX_RETRY_DELAY_MS: the client stops a
-// request that is asked to wait longer, and the others shouldn't wait for longer than that.
+// request that is asked to wait longer, and the others shouldn't wait for longer than that. A
+// request whose reserved time falls inside such a pause gives its reservation back when it wakes,
+// and reserves again after the pause.
 //
 // The ceilings are Haystack's own constants, not the account's limits, which #202 deliberately
 // didn't record. They start conservative and are tuned from what real searches see. The limiter
@@ -69,7 +80,7 @@ export const LIMITER_DEFAULT_PAUSE_MS = 1000;
 
 const WINDOW_MS = 1000;
 
-// A request the limiter let through: when, and until when its tokens count.
+// A request's place in the log: when it is, or will be, sent, and until when its tokens count.
 interface Entry {
   readonly at: number;
   readonly tokens: number;
@@ -79,10 +90,9 @@ interface Entry {
 export class JevLimiter {
   readonly #limits: JevRateLimits;
   readonly #clock: LimiterClock;
+  // Sent and reserved requests, in the order of their send times.
   #log: Entry[] = [];
   #pausedUntil = Number.NEGATIVE_INFINITY;
-  // Settles when the request ahead in line has gone or given up.
-  #line: Promise<void> = Promise.resolve();
 
   constructor(limits: JevRateLimits, clock: LimiterClock = SYSTEM_CLOCK) {
     this.#limits = limits;
@@ -91,41 +101,32 @@ export class JevLimiter {
 
   /**
    * Resolves true when a request of `tokens`, its estimate, may be sent, and counts it from then
-   * on. Resolves false, and counts nothing, once `signal` is aborted. Throws a RangeError for a
-   * token count that isn't a whole number from 0, which is a bug in the caller.
+   * on. Resolves false, and gives its place back, once `signal` is aborted. Throws a RangeError
+   * for a token count that isn't a whole number from 0, which is a bug in the caller.
    */
   async acquire(tokens: number, signal?: AbortSignal): Promise<boolean> {
     if (!Number.isInteger(tokens) || tokens < 0) {
       throw new RangeError(`tokens is ${tokens}, which isn't a whole number from 0`);
     }
-    const ahead = this.#line;
-    let leave!: () => void;
-    this.#line = new Promise((resolve) => {
-      leave = resolve;
-    });
-    try {
-      await waitFor(ahead, signal);
-      for (;;) {
-        if (signal?.aborted) {
-          return false;
-        }
-        const wait = this.#waitMs(tokens);
-        if (wait <= 0) {
-          break;
-        }
+    for (;;) {
+      if (signal?.aborted) {
+        return false;
+      }
+      const entry = this.#reserve(tokens);
+      const wait = entry.at - this.#clock.now();
+      if (wait > 0) {
         await this.#clock.sleep(wait, signal);
       }
-      const now = this.#clock.now();
-      this.#log.push({
-        at: now,
-        tokens,
-        tokensCountUntil: now + WINDOW_MS * Math.max(1, tokens / this.#limits.tokensPerSecond),
-      });
+      if (signal?.aborted) {
+        this.#release(entry);
+        return false;
+      }
+      // A 429 since the reservation: wait for the pause, behind everything reserved so far.
+      if (this.#clock.now() < this.#pausedUntil) {
+        this.#release(entry);
+        continue;
+      }
       return true;
-    } finally {
-      // A request that gave up while still in line lets the next one go only once the one ahead
-      // of it has, so the order holds.
-      void ahead.then(leave);
     }
   }
 
@@ -150,22 +151,42 @@ export class JevLimiter {
     };
   }
 
-  // How long a request of `tokens` has to wait from now, or 0 when it may go.
-  #waitMs(tokens: number): number {
+  // Reserves the earliest send time for a request of `tokens` and logs it, synchronously.
+  #reserve(tokens: number): Entry {
     const now = this.#clock.now();
     this.#log = this.#log.filter(
       ({ at, tokensCountUntil }) => at + WINDOW_MS > now || tokensCountUntil > now,
     );
-    const waits = [this.#pausedUntil - now];
-    // The requests of the last second, oldest first, since the log is kept in that order.
-    const recent = this.#log.filter(({ at }) => at + WINDOW_MS > now);
+    let at = Math.max(now, this.#pausedUntil, this.#log.at(-1)?.at ?? now);
+    for (let wait = this.#waitMs(tokens, at); wait > 0; wait = this.#waitMs(tokens, at)) {
+      at += wait;
+    }
+    const entry: Entry = {
+      at,
+      tokens,
+      tokensCountUntil: at + WINDOW_MS * Math.max(1, tokens / this.#limits.tokensPerSecond),
+    };
+    this.#log.push(entry);
+    return entry;
+  }
+
+  #release(entry: Entry): void {
+    this.#log = this.#log.filter((other) => other !== entry);
+  }
+
+  // How much later than `at` a request of `tokens` has to go, or 0 when it may go at `at`. Every
+  // entry in the log is at or before `at`, so only the second that ends at `at` matters.
+  #waitMs(tokens: number, at: number): number {
+    const waits = [0];
     const { requestsPerSecond, tokensPerSecond } = this.#limits;
+    // The requests of the second up to `at`, oldest first, since the log is in that order.
+    const recent = this.#log.filter((entry) => entry.at + WINDOW_MS > at);
     if (recent.length >= requestsPerSecond) {
       const oldestInTheWay = recent[recent.length - requestsPerSecond];
-      waits.push(oldestInTheWay!.at + WINDOW_MS - now);
+      waits.push(oldestInTheWay!.at + WINDOW_MS - at);
     }
     const counting = this.#log
-      .filter(({ tokensCountUntil }) => tokensCountUntil > now)
+      .filter(({ tokensCountUntil }) => tokensCountUntil > at)
       .sort((a, b) => a.tokensCountUntil - b.tokensCountUntil);
     // A request over the ceiling goes only when nothing else counts, so it needs room for all of
     // a second's tokens.
@@ -176,32 +197,15 @@ export class JevLimiter {
         break;
       }
       counted -= entry.tokens;
-      waits.push(entry.tokensCountUntil - now);
+      waits.push(entry.tokensCountUntil - at);
     }
     return Math.max(...waits);
   }
 }
 
-// Resolves when `promise` settles, or when `signal` is aborted, whichever comes first.
-function waitFor(promise: Promise<void>, signal: AbortSignal | undefined): Promise<void> {
-  if (signal === undefined) {
-    return promise;
-  }
-  return new Promise((resolve) => {
-    const done = () => {
-      signal.removeEventListener("abort", done);
-      resolve();
-    };
-    signal.addEventListener("abort", done, { once: true });
-    if (signal.aborted) {
-      done();
-    }
-    void promise.then(done);
-  });
-}
-
 /**
  * The limiter that search's requests in this isolate share: batched mode's chunks (#211) and pair
- * mode's requests (#213).
+ * mode's requests (#213). It holds only numbers, never a request's promise, so a request that is
+ * cancelled can't hold up the others (see the module's comment).
  */
 export const ISOLATE_JEV_LIMITER = new JevLimiter(SEARCH_JEV_LIMITS);

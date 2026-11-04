@@ -15,6 +15,12 @@
 // Any other chunk that fails after its attempts is recorded as failed, and the answers of the
 // chunks that succeeded are kept, so the caller can show them and log the run as `partial`. When
 // every chunk fails, there are no answers, and the outcome is `failed`, never an empty `ok`.
+//
+// A signal ends the search, as #212's deadline does. A chunk that has sent nothing by then is
+// recorded as failed with the reason `aborted`, and the chunks already answered are kept, so a
+// search cut short is `partial`, not lost. A chunk whose attempt is under way runs to its answer
+// or its time limit, because the client doesn't give the signal to `fetch`.
+//
 // Nothing here reads the database or ranks the answers (#212).
 import type { searchRuns } from "../db/schema.ts";
 import type { JevConfig, JevFailure, JevTiming } from "../enrichment/jev-client.ts";
@@ -32,12 +38,22 @@ import { chunkBookmarks, estimateSearchRequest } from "./search-chunks.ts";
 /** Whether every bookmark was answered: the `search_runs.outcome` column. */
 export type SearchOutcome = (typeof searchRuns.$inferSelect)["outcome"];
 
-/** A request that failed after its attempts, and the bookmarks it asked about. */
+/**
+ * A chunk that was never sent, because the search's signal was aborted before its first attempt.
+ * Its reason is a fixed value, safe to log.
+ */
+export interface SearchChunkAborted {
+  readonly ok: false;
+  readonly reason: "aborted";
+  readonly attempts: 0;
+}
+
+/** A request that failed after its attempts, or was never sent, and the bookmarks it asked about. */
 export interface SearchChunkFailure {
   // In the order the caller gave them.
   readonly bookmarkIds: readonly string[];
   // Its reason, class, status and code are fixed values, safe to log.
-  readonly failure: JevFailure;
+  readonly failure: JevFailure | SearchChunkAborted;
 }
 
 /** What a search of a whole collection got from Jev. */
@@ -53,7 +69,10 @@ export interface ChunkedSearchResult {
   readonly unanswered: readonly string[];
   /** Each request that failed, in the order of its bookmarks. A split request isn't one. */
   readonly failures: readonly SearchChunkFailure[];
-  /** Each model that answered, as the responses name it, once each, in order of first answer. */
+  /**
+   * Each model that answered, as the responses name it, once each, in the order of the chunks
+   * whose responses first name it, not the order the responses arrived in.
+   */
   readonly models: readonly string[];
   /** The sum of `usage.input_tokens` over the responses that answered. */
   readonly inputTokens: number;
@@ -66,7 +85,10 @@ export interface ChunkedSearchOptions {
   readonly limiter?: JevLimiter;
   /** Each request's attempts. SEARCH_TIMING by default. */
   readonly timing?: JevTiming;
-  /** Stops the search: askJevQuestions' `signal`, given to every request. */
+  /**
+   * Ends the search: askJevQuestions' `signal`, given to every request. A chunk not yet sent when
+   * it is aborted is a failure with the reason `aborted`, and the search still resolves.
+   */
   readonly signal?: AbortSignal;
 }
 
@@ -84,7 +106,8 @@ interface ChunkOutcome {
  * what it answered, which bookmarks it didn't, and what that cost. An empty collection sends
  * nothing. Rejects with searchRequestParts' RangeError for a bookmark ID given twice, with
  * chunkBookmarks' for a bookmark that fits no request, and with the client's configuration errors,
- * before anything is sent; and with the signal's reason when it is aborted.
+ * before anything is sent. An aborted `signal` doesn't reject it: the chunks not yet sent are
+ * failures with the reason `aborted`.
  */
 export async function searchInChunks(
   config: JevConfig,
@@ -100,7 +123,24 @@ export async function searchInChunks(
   const askChunk = async (bookmarks: readonly SearchBookmark[]): Promise<ChunkOutcome> => {
     const chunk: SearchAsk = { query: ask.query, bookmarks, questions: ask.questions };
     const gate = limiter.gate(estimateSearchRequest(chunk).requestTokens);
-    const result = await inFlight(() => askSearch(config, chunk, timing, signal, gate));
+    let result;
+    try {
+      result = await inFlight(() => askSearch(config, chunk, timing, signal, gate));
+    } catch (error) {
+      // The client throws the signal's reason when it is aborted before the first attempt. The
+      // reason is the caller's, so it isn't kept, and the chunk is a failure like any other.
+      if (signal?.aborted !== true || error !== signal.reason) {
+        throw error;
+      }
+      const aborted: SearchChunkAborted = { ok: false, reason: "aborted", attempts: 0 };
+      return {
+        answers: [],
+        failures: [{ bookmarkIds: bookmarks.map(({ id }) => id), failure: aborted }],
+        models: [],
+        inputTokens: 0,
+        attempts: 0,
+      };
+    }
     if (result.ok) {
       return {
         answers: result.answer,

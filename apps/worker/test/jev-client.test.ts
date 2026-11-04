@@ -1,6 +1,7 @@
 // The Jev client (#122): retries, how failures are classified, and where the key goes. Every
 // request is answered by the Jev fixture (jev-fixture.ts), which fails a test that makes a
 // request it did not plan for. See "Jev client" and Q3 in plans/haystack-v1-implementation-plan.md.
+import type { UnderlyingDefaultSource } from "node:stream/web";
 import { delay, HttpResponse, type JsonBodyType } from "msw";
 import * as v from "valibot";
 import {
@@ -691,7 +692,6 @@ describe("askJev", () => {
   });
 });
 
-// Search's answers are validated with it (jev-search.test.ts, #210).
 // The gate is how search's limiter (search/jev-limiter.ts, #211) holds every attempt of a request,
 // retries included, under its ceilings, and learns of a `429`.
 describe("askJevQuestions with a gate", () => {
@@ -807,6 +807,55 @@ describe("a 400's error code", () => {
     });
   });
 
+  // The body is read only for the code, so a body that breaks or stops arriving changes nothing:
+  // the 400 is permanent, as it was before the client read it, and isn't retried.
+  const permanent400 = {
+    ok: false,
+    failure: "permanent",
+    reason: "status",
+    status: 400,
+    attempts: 1,
+  };
+
+  // MSW's mocked connection can't carry a body that breaks or stops arriving: it fails the whole
+  // `fetch` before the headers arrive, or closes the socket of an aborted request, which undici
+  // refuses. So these two tests replace `fetch` itself with a 400 whose body breaks after its
+  // first bytes, or stops arriving and errors when the request's signal aborts, as a real body
+  // does when the attempt's time limit passes.
+  it.each([
+    [
+      "breaks",
+      (): UnderlyingDefaultSource<Uint8Array> => ({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"detail":'));
+        },
+        pull(controller) {
+          controller.error(new Error("The connection broke"));
+        },
+      }),
+    ],
+    [
+      "stops arriving",
+      (signal: AbortSignal | null | undefined): UnderlyingDefaultSource<Uint8Array> => ({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"detail":"max_tokens_'));
+          signal?.addEventListener("abort", () => {
+            controller.error(signal.reason);
+          });
+        },
+      }),
+    ],
+  ])("is absent, and the 400 stays permanent, when the body %s", async (_, source) => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(
+        async (_input, init) =>
+          new Response(new ReadableStream(source(init?.signal)), { status: 400 }),
+      );
+    expect(await ask()).toEqual(permanent400);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   // A 413 is only a body over 32 MiB, so it is never "too large" for the chunker, whatever its
   // body says. A 400 for another rule has no code that a caller acts on.
   it.each([
@@ -830,6 +879,7 @@ describe("a 400's error code", () => {
   });
 });
 
+// Search's answers are validated with it (jev-search.test.ts, #210).
 describe("scoreAnswer", () => {
   // The API accepts from 1 to 10 levels, so any other count is a bug in the caller.
   it.each([0, 11, 2.5, Number.NaN])("throws for %s levels", (levelCount) => {

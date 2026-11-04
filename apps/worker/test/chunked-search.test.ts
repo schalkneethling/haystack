@@ -208,7 +208,7 @@ describe("searchInChunks", () => {
       const result = await searchInChunks(
         config,
         { query: QUERY, bookmarks, questions: "both" },
-        { timing },
+        { limiter: openLimiter(), timing },
       );
       expect(result).toMatchObject({
         outcome: "ok",
@@ -412,6 +412,52 @@ describe("searchInChunks", () => {
     expect(result.outcome).toBe("ok");
     expect(most).toBe(SEARCH_JEV_CONCURRENCY);
     expect(fixture.requests).toHaveLength(chunks.length);
+  });
+
+  // #212 ends a search at a deadline with a signal. The chunks answered by then are kept, so the
+  // run is `partial`, and each chunk not yet sent is a failure of its own, with a fixed reason.
+  it("keeps the answers it has when its signal ends it, and lists the rest as unanswered", async () => {
+    const clock = fakeClock();
+    // One request a second, so the second and third chunks are still waiting at the deadline.
+    const limiter = new JevLimiter({ ...SEARCH_JEV_LIMITS, requestsPerSecond: 1 }, clock);
+    const bookmarks = collection(120);
+    const chunks = chunkBookmarks({ query: QUERY, bookmarks, questions: "both" });
+    expect(chunks.length).toBe(3);
+    let answered = 0;
+    fixture.respond(async (request) => {
+      const response = await answerAll(request);
+      answered += 1;
+      return response;
+    });
+    const deadline = new AbortController();
+    const search = searchInChunks(
+      config,
+      { query: QUERY, bookmarks, questions: "both" },
+      { limiter, timing, signal: deadline.signal },
+    );
+    await vi.waitFor(() => {
+      expect(answered).toBe(1);
+    });
+    await clock.advance(500);
+    deadline.abort(new Error("The search's deadline passed"));
+    await expect(search).resolves.toMatchObject({ outcome: "partial" });
+    const result = await search;
+    const unsent = chunks.slice(1);
+    expect(result).toEqual({
+      outcome: "partial",
+      answers: ids(chunks[0]!).map((id) => expectedAnswer(id)),
+      unanswered: unsent.flatMap((chunk) => ids(chunk)),
+      failures: unsent.map((chunk) => ({
+        bookmarkIds: ids(chunk),
+        failure: { ok: false, reason: "aborted", attempts: 0 },
+      })),
+      models: ["jev-1.14.0"],
+      inputTokens: 100 * chunks[0]!.length,
+      attempts: 1,
+    });
+    // The failures say nothing about the query.
+    expect(JSON.stringify(result.failures)).not.toContain(QUERY);
+    expect(fixture.requests).toHaveLength(1);
   });
 
   it("sends every chunk through the limiter it is given", async () => {
