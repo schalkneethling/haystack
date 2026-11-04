@@ -2,7 +2,8 @@
 // sweep" in plans/haystack-v1-implementation-plan.md. Enrichment asks one question per request
 // (askJev), because it asks its two questions at different steps: the `kind` question may only be
 // asked after the sensitivity answer allows it. Search asks many questions in one request
-// (askJevQuestions, from search/jev-search.ts, #210).
+// (askJevQuestions, from search/jev-search.ts, #210), and waits on its limiter before each
+// attempt (search/jev-limiter.ts, #211).
 //
 // The request and response fields, the status codes and the retry advice come from TypeSafe's API
 // reference (https://docs.typesafe.ai/api/system-one.md) and its errors page
@@ -23,6 +24,7 @@
 //   to another address.
 // - Nothing here logs. A failure is a fixed code and a status, which are safe to log.
 import * as v from "valibot";
+import { readText } from "./bounded-read.ts";
 import { checkedBaseUrl, configurationError } from "./configuration.ts";
 import { type FailureClass, statusFailureClass } from "./failure-class.ts";
 
@@ -127,12 +129,20 @@ export type JevFailureReason = "timeout" | "network" | "status" | "invalid-respo
  */
 export type JevFailureClass = FailureClass;
 
+/**
+ * An error code from a `400`'s body that a caller acts on. `max_tokens_exceeded` is a request
+ * longer than the model's context length, which search splits (#211).
+ */
+export type JevErrorCode = "max_tokens_exceeded";
+
 export interface JevFailure {
   readonly ok: false;
   readonly failure: JevFailureClass;
   readonly reason: JevFailureReason;
   // The status of the last response, for a `status` failure.
   readonly status?: number;
+  // The error code a `400`'s body names, when it is one in JevErrorCode.
+  readonly code?: JevErrorCode;
   // How many requests the question made.
   readonly attempts: number;
 }
@@ -284,8 +294,57 @@ type AttemptOutcome =
       readonly failure: JevFailureClass;
       readonly reason: JevFailureReason;
       readonly status?: number;
+      readonly code?: JevErrorCode;
       readonly headers?: Headers;
     };
+
+/**
+ * How much of a `400`'s body is read for its error code. The API reference says a `400`'s
+ * `detail` is "bounded", and the code is one word in it, so 4 KiB is many times what it needs,
+ * while a body that is something else, such as a proxy's HTML page, isn't downloaded whole. A
+ * body cut at the limit doesn't parse, so it has no code.
+ */
+const ERROR_BODY_READ_LIMIT_BYTES = 4 * 1024;
+
+// `max_tokens_exceeded` as a word of its own, not part of a longer name.
+const MAX_TOKENS_EXCEEDED = /\bmax_tokens_exceeded\b/u;
+
+// How deep into an object `detail` the code is looked for.
+const DETAIL_DEPTH = 3;
+
+// Whether `value`, or any string in it down to `depth` levels of objects and arrays, names
+// `max_tokens_exceeded`.
+function namesMaxTokensExceeded(value: unknown, depth: number): boolean {
+  if (typeof value === "string") {
+    return MAX_TOKENS_EXCEEDED.test(value);
+  }
+  if (depth === 0 || typeof value !== "object" || value === null) {
+    return false;
+  }
+  return Object.values(value).some((inner) => namesMaxTokensExceeded(inner, depth - 1));
+}
+
+/**
+ * The error code that a `400`'s body names, when it is one a caller acts on. Request rules and
+ * errors (https://docs.typesafe.ai/api/errors.md, read on 2026-11-04) says a `400` "With
+ * `max_tokens_exceeded`" is a request longer than the model's context length, and the API
+ * reference gives the body as `detail`, "string or object", without saying where in it the code
+ * goes. Neither shows an example, so the code is read wherever `detail` names it as a word. A
+ * body that doesn't parse, or has no `detail`, has no code. Nothing else from the body is kept.
+ */
+function errorCode(body: string): JevErrorCode | undefined {
+  let json: unknown;
+  try {
+    json = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  if (typeof json !== "object" || json === null || !Object.hasOwn(json, "detail")) {
+    return undefined;
+  }
+  const { detail } = json as { readonly detail: unknown };
+  return namesMaxTokensExceeded(detail, DETAIL_DEPTH) ? "max_tokens_exceeded" : undefined;
+}
 
 function discard(response: Response): void {
   response.body?.cancel().catch(() => {
@@ -298,8 +357,17 @@ async function attempt(url: URL, init: RequestInit, timeoutMs: number): Promise<
   try {
     const response = await fetch(url, { ...init, signal });
     if (!response.ok) {
-      discard(response);
       const { status, headers } = response;
+      // A `400`'s code says whether the request was too long, which search splits (#211). The
+      // body's start is read here, inside the time limit, and one that stops arriving is a
+      // timeout or a network failure like any other.
+      let code: JevErrorCode | undefined;
+      if (status === 400 && response.body !== null) {
+        const read = await readText(response.body, ERROR_BODY_READ_LIMIT_BYTES);
+        code = read.complete ? errorCode(read.text) : undefined;
+      } else {
+        discard(response);
+      }
       return {
         ok: false,
         // 429 and 529 are the statuses the errors page says to retry. A 408 and any other 5xx are
@@ -308,6 +376,7 @@ async function attempt(url: URL, init: RequestInit, timeoutMs: number): Promise<
         failure: statusFailureClass(status),
         reason: "status",
         status,
+        ...(code === undefined ? {} : { code }),
         headers,
       };
     }
@@ -362,6 +431,23 @@ function sleep(milliseconds: number, signal: AbortSignal | undefined): Promise<v
     const timer = setTimeout(done, milliseconds);
     signal?.addEventListener("abort", done, { once: true });
   });
+}
+
+/**
+ * What a request waits on before each of its attempts, so that a caller can keep its requests
+ * under a rate (#211). Search's limiter gives one to each request (search/jev-limiter.ts).
+ */
+export interface JevRequestGate {
+  /**
+   * Resolves when the next attempt may be sent. It resolves early, without letting the attempt
+   * through, when `signal` is aborted, and the client then sends nothing more.
+   */
+  wait(signal?: AbortSignal): Promise<void>;
+  /**
+   * Told that Jev answered `429`, with the wait the response asked for in milliseconds, from
+   * `retry-after-ms` or `Retry-After`, or undefined when it asked for none.
+   */
+  throttled(retryAfterMs: number | undefined): void;
 }
 
 /**
@@ -507,6 +593,12 @@ export function askJev<Answer>(
  * turns the response's `answers` into the caller's answer. A 2xx response for which it returns
  * undefined, because an answer is missing or malformed, is an `invalid-response` for the whole
  * request. That is permanent, so it isn't retried, as a single question's invalid answer isn't.
+ *
+ * With a `gate`, every attempt, retries included, waits on it first, and each `429` is reported
+ * to it with the wait the response asked for (#211). A `signal` aborted during that wait sends
+ * nothing more: before the first attempt, its reason is thrown, as for a signal already aborted;
+ * after a failed attempt, that failure is returned, as after a backoff. A `400` whose body names
+ * `max_tokens_exceeded` has it as the failure's `code` (errorCode).
  */
 export async function askJevQuestions<Answer>(
   config: JevConfig,
@@ -515,11 +607,24 @@ export async function askJevQuestions<Answer>(
   read: JevAnswerReader<Answer>,
   timing: JevTiming = JEV_TIMING,
   signal?: AbortSignal,
+  gate?: JevRequestGate,
 ): Promise<JevResult<Answer>> {
   signal?.throwIfAborted();
   const { url, init } = jevRequest(config, state, questions);
   const attemptLimit = checkedAttemptLimit(timing);
+  let last: JevFailure | undefined;
   for (let attempts = 1; ; attempts += 1) {
+    if (gate !== undefined) {
+      await gate.wait(signal);
+      // Stopped while waiting: as before the first attempt, or after a backoff, nothing more is
+      // sent.
+      if (signal?.aborted) {
+        if (last !== undefined) {
+          return last;
+        }
+        signal.throwIfAborted();
+      }
+    }
     const outcome = await attempt(url, init, timing.attemptTimeoutMs);
     if (outcome.ok) {
       const parsed = parseResponse(outcome.body, read);
@@ -532,8 +637,13 @@ export async function askJevQuestions<Answer>(
       failure: outcome.failure,
       reason: outcome.reason,
       ...(outcome.status === undefined ? {} : { status: outcome.status }),
+      ...(outcome.code === undefined ? {} : { code: outcome.code }),
       attempts,
     };
+    last = failure;
+    if (outcome.status === 429) {
+      gate?.throttled(serverDelayMs(outcome.headers));
+    }
     // An `account` failure would get the same answer again, as a permanent one would. A run that
     // has stopped wants no more paid attempts.
     if (outcome.failure !== "transient" || attempts >= attemptLimit || signal?.aborted) {

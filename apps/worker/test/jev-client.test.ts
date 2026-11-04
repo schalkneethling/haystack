@@ -15,10 +15,13 @@ import {
 } from "vite-plus/test";
 import {
   askJev,
+  askJevQuestions,
   assertJevConfig,
   JEV_ATTEMPT_LIMIT,
   JEV_MAX_RETRY_DELAY_MS,
   type JevConfig,
+  type JevQuestions,
+  type JevRequestGate,
   type JevResult,
   type JevTiming,
   NoulAnswer,
@@ -29,6 +32,7 @@ import {
   JEV_LOOPBACK_ORIGIN,
   JEV_ORIGIN,
   type JevFixture,
+  type JevResolver,
   networkError,
   startJevFixture,
   status,
@@ -688,6 +692,144 @@ describe("askJev", () => {
 });
 
 // Search's answers are validated with it (jev-search.test.ts, #210).
+// The gate is how search's limiter (search/jev-limiter.ts, #211) holds every attempt of a request,
+// retries included, under its ceilings, and learns of a `429`.
+describe("askJevQuestions with a gate", () => {
+  const question: JevQuestions = {
+    billing: { type: "noul", instructions: "Is this message about billing?" },
+  };
+  const read = (answers: Readonly<Record<string, unknown>>) => {
+    const parsed = v.safeParse(NoulAnswer, answers.billing);
+    return parsed.success ? parsed.output : undefined;
+  };
+
+  // A gate that records each call among the requests the fixture receives, in order.
+  function recordingGate(events: string[], onWait?: (count: number) => void): JevRequestGate {
+    let waits = 0;
+    return {
+      wait: async () => {
+        waits += 1;
+        events.push("wait");
+        onWait?.(waits);
+      },
+      throttled: (retryAfterMs) => {
+        events.push(`throttled ${String(retryAfterMs)}`);
+      },
+    };
+  }
+
+  function sent(events: string[], resolver: JevResolver): JevResolver {
+    return (request) => {
+      events.push("sent");
+      return resolver(request);
+    };
+  }
+
+  function askWith(gate: JevRequestGate, signal?: AbortSignal) {
+    return askJevQuestions(config, "I was charged twice.", question, read, timing, signal, gate);
+  }
+
+  it("waits on the gate before every attempt, retries included", async () => {
+    const events: string[] = [];
+    fixture.respond(sent(events, status(503)), sent(events, answer(noulResponse)));
+    expect(await askWith(recordingGate(events))).toMatchObject({ ok: true, attempts: 2 });
+    expect(events).toEqual(["wait", "sent", "wait", "sent"]);
+  });
+
+  it("tells the gate of each 429 and the wait it asked for, and of no other status", async () => {
+    const events: string[] = [];
+    fixture.respond(
+      sent(events, status(429, { "retry-after-ms": "5" })),
+      sent(events, status(529)),
+      sent(events, status(429)),
+    );
+    expect(await askWith(recordingGate(events))).toMatchObject({ ok: false, status: 429 });
+    expect(events).toEqual([
+      "wait",
+      "sent",
+      "throttled 5",
+      "wait",
+      "sent",
+      "wait",
+      "sent",
+      "throttled undefined",
+    ]);
+  });
+
+  it("sends nothing, and throws the signal's reason, when the first wait is aborted", async () => {
+    const controller = new AbortController();
+    const events: string[] = [];
+    const gate = recordingGate(events, () => {
+      controller.abort(new Error("stopped"));
+    });
+    await expect(askWith(gate, controller.signal)).rejects.toThrow("stopped");
+    expect(fixture.requests).toEqual([]);
+  });
+
+  it("returns the last failure, and sends nothing more, when a later wait is aborted", async () => {
+    const controller = new AbortController();
+    const events: string[] = [];
+    const gate = recordingGate(events, (count) => {
+      if (count === 2) {
+        controller.abort();
+      }
+    });
+    fixture.respond(sent(events, status(503)));
+    expect(await askWith(gate, controller.signal)).toEqual({
+      ok: false,
+      failure: "transient",
+      reason: "status",
+      status: 503,
+      attempts: 1,
+    });
+    expect(events).toEqual(["wait", "sent", "wait"]);
+  });
+});
+
+// Request rules and errors (https://docs.typesafe.ai/api/errors.md, read on 2026-11-04) says a
+// `400` "With `max_tokens_exceeded`" is a request longer than the model's context length, and the
+// API reference gives a `400`'s `detail` as a string or an object, without saying where the code
+// goes. So the code is read wherever `detail` names it, and these are both shapes.
+describe("a 400's error code", () => {
+  const tooLong: [string, JsonBodyType][] = [
+    ["a string detail", { detail: "max_tokens_exceeded: the request is 70,412 tokens" }],
+    ["an object detail", { detail: { code: "max_tokens_exceeded", message: "Too long" } }],
+  ];
+  it.each(tooLong)("is max_tokens_exceeded when %s names it", async (_, body) => {
+    fixture.respond(() => HttpResponse.json(body, { status: 400 }));
+    expect(await ask()).toEqual({
+      ok: false,
+      failure: "permanent",
+      reason: "status",
+      status: 400,
+      code: "max_tokens_exceeded",
+      attempts: 1,
+    });
+  });
+
+  // A 413 is only a body over 32 MiB, so it is never "too large" for the chunker, whatever its
+  // body says. A 400 for another rule has no code that a caller acts on.
+  it.each([
+    ["a 413 whose body names the code", 413, { detail: "max_tokens_exceeded" }],
+    ["a 400 for another rule", 400, { detail: "invalid UTF-8" }],
+    ["a 400 whose code is only part of a word", 400, { detail: "not_max_tokens_exceeded_here" }],
+    ["a 400 whose body isn't JSON", 400, "max_tokens_exceeded"],
+  ] as const)("is absent for %s", async (_, code, body) => {
+    fixture.respond(() =>
+      typeof body === "string"
+        ? HttpResponse.text(body, { status: code })
+        : HttpResponse.json(body, { status: code }),
+    );
+    expect(await ask()).toEqual({
+      ok: false,
+      failure: "permanent",
+      reason: "status",
+      status: code,
+      attempts: 1,
+    });
+  });
+});
+
 describe("scoreAnswer", () => {
   // The API accepts from 1 to 10 levels, so any other count is a bug in the caller.
   it.each([0, 11, 2.5, Number.NaN])("throws for %s levels", (levelCount) => {
