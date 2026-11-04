@@ -2128,7 +2128,8 @@ _The order, decided by Schalk on 2026-10-28 (#201)._ Search is deployed after Ph
 ```
 Phase 10 (#204–#208, #237) ─┐
 Phase 11 (#209–#215)       ─┼─→ Phase 14: deploy (#218) → production check (#219) ─┬─→ Phase 12 (#220–#225): flags, no deploy
-Phase 13 (#216–#217)       ─┘                                                        └─→ custom domain (#226), once Q6 is answered
+Phase 13 (#216–#217)       ─┘                                                        ├─→ custom domain (#226), once Q6 is answered
+                                                                                     └─→ Orca trial (#271), before Phase 12, or earlier for #237
 ```
 
 #### Phase 10: Search page shell
@@ -2160,13 +2161,16 @@ Acceptance: in Chrome, a spoken query fills the input and searches after confirm
 
 #### Phase 14: Search release
 
-Phase 14 has two parts, and only the first comes before Phase 12.
+Phase 14 has three parts. The release comes before Phase 12, and so does the Orca trial, though nothing in Phase 12 waits on it.
 
 **The release (#218, #219).** #218 is blocked by #237, which makes VoiceOver speak the search page's result count. Deploy Milestone 3, after Phases 10, 11 and 13, with the safe starting values above, and without waiting for Phase 12. #218 also creates the boolean flag `search-enabled` in the Flagship app and turns it on, which makes the search page the home page and adds "Search" to the header (#235, see "Secrets and configuration"). Then run the Playwright suite against production, and check by hand that a link saved from the extension is enriched and then found by searching. #219 checks that the flag serves on, and that `/` is the search page.
 Acceptance: the end-to-end flow works in production: save from the extension, enrichment, then search.
 
 **The custom domain (#226).** Once Q6 is resolved, move to the custom domain: update the Google OAuth redirect URIs and rebuild the extension with the new origin. It starts from the checked release, waits only for Q6, and neither waits for Phase 12 nor holds it up.
 Acceptance: sign-in, the extension and the end-to-end flow work on the new origin.
+
+**The Orca trial (#271).** _Scheduled by Schalk on 2026-11-04._ Try Orca on Linux, in Firefox, as a second screen reader in CI, in a workflow that doesn't block merges and is kept apart from the VoiceOver tests. It starts from the checked release and comes before Phase 12. Nothing waits on it, neither #237 nor the release. The exception to its place is #237: one of #271's tests records whether Orca speaks the result count while focus stays in the search field, which helps tell a VoiceOver or WebKit problem apart from a problem with the page's markup. So if #237 stalls, #271 moves ahead of it as a diagnostic.
+Acceptance: as listed in #271, ending with a decision, from at least 20 runs, on whether to keep the Orca job, port more tests to it, or drop it.
 
 #### Phase 12: Evaluation harness
 
