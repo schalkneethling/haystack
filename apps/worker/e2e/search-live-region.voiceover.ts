@@ -106,15 +106,21 @@ async function applyVariant(page: Page, variant: Variant): Promise<void> {
   }
 }
 
-async function heardAfterEnter(voiceOver: VoiceOverPlaywright): Promise<string[]> {
+/**
+ * What VoiceOver said after Enter, and whether it said the count. The flag is kept apart from
+ * the phrases, because waitForSpoken's error quotes the pattern, which would match it.
+ */
+async function heardAfterEnter(
+  voiceOver: VoiceOverPlaywright,
+): Promise<{ heard: string[]; spoken: boolean }> {
   const before = await voiceOver.spokenPhraseLog();
   if (COUNT.test(before.join(" "))) {
-    return before;
+    return { heard: before, spoken: true };
   }
   try {
-    return [...before, ...(await waitForSpoken(voiceOver, COUNT))];
-  } catch (error) {
-    return [...before, `NOT HEARD: ${String(error)}`];
+    return { heard: [...before, ...(await waitForSpoken(voiceOver, COUNT))], spoken: true };
+  } catch {
+    return { heard: before, spoken: false };
   }
 }
 
@@ -144,9 +150,11 @@ for (const variant of VARIANTS) {
       await page.keyboard.press("Enter");
       await expect(page.locator(SEARCH_STATUS)).toContainText("2 saved links match your search.");
       await expect(field).toBeFocused();
-      const heard = await heardAfterEnter(voiceOver);
-      console.log(`[${variant.name}] try ${attempt} heard: ${JSON.stringify(heard)}`);
-      expect(heard.join(" ")).toMatch(COUNT);
+      const { heard, spoken } = await heardAfterEnter(voiceOver);
+      console.log(
+        `[${variant.name}] try ${attempt} ${spoken ? "SPOKEN" : "NOT SPOKEN"}: ${JSON.stringify(heard)}`,
+      );
+      expect(spoken, `VoiceOver said ${JSON.stringify(heard)}`).toBe(true);
     });
   }
 }
