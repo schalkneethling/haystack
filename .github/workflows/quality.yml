@@ -26,6 +26,15 @@ jobs:
         with:
           node-version: "24"
           cache: true
+          run-install: false
+
+      # Dependabot bumps vite-plus but not the vite alias that must name the same version, which
+      # otherwise fails late, in the type check (commit eaa3bad). This runs before the install,
+      # needs only Node.js, and says what to change.
+      - name: Check the vite alias matches vite-plus
+        run: node scripts/check-vite-alias.ts
+
+      - run: vp install --frozen-lockfile
 
       # The same browser as `vp run e2e:install` locally (headless shell only), plus its Linux
       # system libraries. --fail-if-no-match makes a renamed package fail here, not later.

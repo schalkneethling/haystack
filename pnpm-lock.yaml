@@ -187,6 +187,9 @@ importers:
       '@schalkneethling/stylelint-plugin-css-property-type-validator':
         specifier: 0.1.0-beta.1
         version: 0.1.0-beta.1(stylelint@17.16.0(supports-color@10.2.2)(typescript@7.0.2))
+      '@types/node':
+        specifier: ^25.9.9
+        version: 25.9.9
       html-validate:
         specifier: ^11.17.0
         version: 11.17.0(vitest@5.0.5)
