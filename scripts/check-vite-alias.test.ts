@@ -102,7 +102,7 @@ describe("evaluateWorkspace", () => {
 describe("annotation", () => {
   it("points at pnpm-workspace.yaml and the given line", () => {
     expect(annotation("Fix it.", 6)).toBe(
-      "::error file=pnpm-workspace.yaml,line=5,title=vite alias out of step::Fix it.",
+      "::error file=pnpm-workspace.yaml,line=6,title=vite alias out of step::Fix it.",
     );
   });
 
