@@ -36,7 +36,8 @@ describe("evaluateWorkspace", () => {
 
   it("fails as on 2026-10-30, where Dependabot bumped vite-plus only, and says what to set", () => {
     const outcome = evaluateWorkspace(workspace("1.4.0", OLD));
-    expect(outcome).toMatchObject({ ok: false, line: 6 });
+    // Line 5 is the vite entry, the one to change; line 6 is vite-plus.
+    expect(outcome).toMatchObject({ ok: false, line: 5 });
     expect(outcome.message).toContain(`the vite alias is "${OLD}"`);
     expect(outcome.message).toContain(`Set \`vite: ${NEW}\` in the catalog`);
     expect(outcome.message).toContain("run `vp install`");
@@ -69,6 +70,28 @@ describe("evaluateWorkspace", () => {
     expect(outcome.message).toBe("pnpm-workspace.yaml has no `vite-plus` entry in its catalog.");
   });
 
+  it("reads a file with Windows line endings", () => {
+    const text = workspace("1.4.0", NEW).replace(/\n/g, "\r\n");
+    expect(evaluateWorkspace(text)).toMatchObject({ ok: true });
+  });
+
+  it("reads a file that starts with a byte order mark", () => {
+    const text = `\uFEFFcatalog:\n  vite: ${NEW}\n  vite-plus: 1.4.0\n`;
+    expect(evaluateWorkspace(text)).toMatchObject({ ok: true });
+  });
+
+  it("ignores a vite key nested under another catalog entry", () => {
+    const text = ["catalog:", "  vite-plus: 1.4.0", "  other:", `    vite: ${NEW}`, ""].join("\n");
+    const outcome = evaluateWorkspace(text);
+    expect(outcome).toMatchObject({ ok: false });
+    expect(outcome.message).toContain("has no `vite` entry");
+  });
+
+  it("ignores a vite key outside the catalog", () => {
+    const text = ["catalog:", "  vite-plus: 1.4.0", "other:", `  vite: ${NEW}`, ""].join("\n");
+    expect(evaluateWorkspace(text).message).toContain("has no `vite` entry");
+  });
+
   it("reports a file with no catalog", () => {
     expect(evaluateWorkspace("packages:\n  - apps/*\n").message).toBe(
       "pnpm-workspace.yaml has no `vite-plus` entry in its catalog.",
@@ -79,7 +102,7 @@ describe("evaluateWorkspace", () => {
 describe("annotation", () => {
   it("points at pnpm-workspace.yaml and the given line", () => {
     expect(annotation("Fix it.", 6)).toBe(
-      "::error file=pnpm-workspace.yaml,line=6,title=vite alias out of step::Fix it.",
+      "::error file=pnpm-workspace.yaml,line=5,title=vite alias out of step::Fix it.",
     );
   });
 
@@ -112,7 +135,7 @@ describe("main", () => {
   it("prints an annotation inside GitHub Actions", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(main(workspace("1.4.0", OLD), { GITHUB_ACTIONS: "true" })).toBe(1);
-    expect(error.mock.calls[0]?.[0]).toMatch(/^::error file=pnpm-workspace\.yaml,line=6,/);
+    expect(error.mock.calls[0]?.[0]).toMatch(/^::error file=pnpm-workspace\.yaml,line=5,/);
     error.mockRestore();
   });
 });

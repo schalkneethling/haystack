@@ -27,7 +27,7 @@ const CORE_PACKAGE = "@voidzero-dev/vite-plus-core";
  */
 const EXACT_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
-/** What the check decided. `line` is the catalog's `vite-plus` line, when found. */
+/** What the check decided. `line` is the catalog line to change, when found. */
 export type CheckOutcome =
   | { ok: true; message: string }
   | { ok: false; message: string; line?: number };
@@ -54,20 +54,27 @@ function scalar(raw: string): string {
 function readCatalog(text: string): Map<string, Entry> {
   const entries = new Map<string, Entry>();
   let inCatalog = false;
-  text.split("\n").forEach((rawLine, index) => {
-    if (/^catalog:\s*(?:#.*)?$/.test(rawLine)) {
-      inCatalog = true;
-      return;
-    }
-    if (!inCatalog || rawLine.trim() === "" || /^\s*#/.test(rawLine)) return;
-    if (!/^\s/.test(rawLine)) {
-      inCatalog = false;
-      return;
-    }
-    const match = /^\s+("[^"]+"|'[^']+'|[^\s:]+)\s*:\s*(.*)$/.exec(rawLine);
-    if (match?.[1] === undefined || match[2] === undefined) return;
-    entries.set(scalar(match[1]), { value: scalar(match[2]), line: index + 1 });
-  });
+  // The indentation of the first entry. Deeper lines belong to a nested mapping, not the catalog.
+  let entryIndent: number | undefined;
+  text
+    .replace(/^\uFEFF/, "")
+    .split(/\r?\n/)
+    .forEach((rawLine, index) => {
+      if (/^catalog:\s*(?:#.*)?$/.test(rawLine)) {
+        inCatalog = true;
+        return;
+      }
+      if (!inCatalog || rawLine.trim() === "" || /^\s*#/.test(rawLine)) return;
+      if (!/^\s/.test(rawLine)) {
+        inCatalog = false;
+        return;
+      }
+      const match = /^(\s+)("[^"]+"|'[^']+'|[^\s:]+)\s*:\s*(.*)$/.exec(rawLine);
+      if (match?.[1] === undefined || match[2] === undefined || match[3] === undefined) return;
+      entryIndent ??= match[1].length;
+      if (match[1].length !== entryIndent) return;
+      entries.set(scalar(match[2]), { value: scalar(match[3]), line: index + 1 });
+    });
   return entries;
 }
 
@@ -96,7 +103,8 @@ export function evaluateWorkspace(text: string): CheckOutcome {
   }
   return {
     ok: false,
-    line: vitePlus.line,
+    // The line to change: the alias when it exists, otherwise vite-plus, next to where it goes.
+    line: (catalog.get("vite") ?? vitePlus).line,
     message:
       `pnpm-workspace.yaml pins vite-plus ${version}, but ` +
       `${actual === undefined ? "the catalog has no `vite` entry" : `the vite alias is "${actual}"`}. ` +
