@@ -44,6 +44,9 @@ apps/worker/backups/
 # Claude Code local settings
 .claude/settings.local.json
 
+# Agent worktrees: full checkouts of other branches, created under .claude/worktrees/
+.claude/worktrees/
+
 # Playwright output
 test-results/
 playwright-report/
