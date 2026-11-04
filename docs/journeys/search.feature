@@ -276,9 +276,12 @@ Feature: Searching my saved links
     The count is written to a live region, which a screen reader should read
     without the page moving focus. VoiceOver doesn't speak it yet: on CI it
     said only "browser" and the text field's hint, with the count written
-    100 ms and then 500 ms after the results. #237 is to make it speak.
-    search.voiceover.ts has a test of it marked as failing, which shows the
-    problem but doesn't cover this journey.
+    100 ms and then 500 ms after the results. #237 is to make it speak. A
+    region that already holds text, aria-live="polite" without the role, and
+    aria-atomic="true" weren't spoken either, so what's left waits for
+    Schalk's decision (plan, "Search page"). search.voiceover.ts has a test
+    of it marked as failing, which shows the problem but doesn't cover this
+    journey.
 
     Given I use VoiceOver
     And my search finds "Vitest browser mode guide" and "Playwright locators"

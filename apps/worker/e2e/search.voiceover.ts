@@ -9,8 +9,11 @@
 // after the results, was never spoken on CI (run 40849016780), and written 500 ms after them,
 // the delete dialog's delay, it wasn't either (run 40854364804): in every try VoiceOver said only
 // "browser" and the text field's hint. The processing message, the incomplete notice and the
-// error state are written the same way, to the same region, so each is expected to fail for the
-// same reason. So each message has a test of its own, marked as failing with `test.fail`, which
+// error state are written the same way, to the same region, and without their marks none of the
+// four was spoken either (run 41914276764). In the same run, a region that already holds text,
+// `aria-live="polite"` without the role, and `aria-atomic="true"` weren't spoken either, so
+// what's left needs the owner's decision (plan, "Search page"). So each message has a test of
+// its own, marked as failing with `test.fail`, which
 // Playwright passes while the test fails, and reports as a failure once it passes, so the mark
 // can't outlive the fix. Playwright marks a whole test, not one step, which is why each message
 // has a test of its own, and why none of them is a step of the first test. A failing test passes
@@ -50,7 +53,7 @@ const NOT_SPOKEN_YET = {
   annotation: {
     type: "issue",
     description:
-      "#237: VoiceOver doesn't speak the live region's messages yet (runs 40849016780 and 40854364804)",
+      "#237: VoiceOver doesn't speak the live region's messages yet (runs 40849016780, 40854364804 and 41914276764)",
   },
 };
 
@@ -128,7 +131,7 @@ test("the field reads its label, and moving by heading after a search reads the 
   }
 });
 
-test("the count is spoken after a search", NOT_SPOKEN_YET, async ({ page, voiceOver }) => {
+test.fail("the count is spoken after a search", NOT_SPOKEN_YET, async ({ page, voiceOver }) => {
   await searchWith(page, voiceOver, FOUND, "2 saved links match your search.");
   await expectSpoken(voiceOver, COUNT);
 });
@@ -136,7 +139,7 @@ test("the count is spoken after a search", NOT_SPOKEN_YET, async ({ page, voiceO
 // The page's clock is Playwright's, paused (installPausedClock), and the test moves it on by the
 // script's delay itself, so the held search never reaches the script's 30-second limit while
 // VoiceOver speaks.
-test(
+test.fail(
   "the processing message is spoken while a search runs",
   NOT_SPOKEN_YET,
   async ({ page, voiceOver }) => {
@@ -151,7 +154,7 @@ test(
   },
 );
 
-test(
+test.fail(
   "the notice that results may be incomplete is spoken with the count",
   NOT_SPOKEN_YET,
   async ({ page, voiceOver }) => {
@@ -165,7 +168,7 @@ test(
   },
 );
 
-test(
+test.fail(
   "the error state is spoken after a failed search",
   NOT_SPOKEN_YET,
   async ({ page, voiceOver }) => {
