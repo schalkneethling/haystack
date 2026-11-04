@@ -1,0 +1,9 @@
+// The repository scripts, which run in Node before dependencies are installed, as the vite alias
+// check does in CI. They are checked with Node's types, as evals/ is.
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["."]
+}
