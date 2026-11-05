@@ -28,8 +28,8 @@ import { assertJevConfig, type JevConfig, type JevTiming } from "../enrichment/j
 import type { EnrichmentStatePolicy } from "../enrichment/state.ts";
 import type { SearchSettings } from "../flags.ts";
 import {
-  type ChunkedSearchResult,
-  type SearchChunkFailure,
+  type SearchRequestsResult,
+  type SearchRequestFailure,
   type SearchOutcome,
   searchInChunks,
 } from "./chunked-search.ts";
@@ -108,7 +108,7 @@ export const SEARCH_RESPONSE_MARGIN_MS = 5_000;
 /**
  * The default deadline, which the web route keeps: how long after it starts, before the candidates
  * are read, a search stops asking Jev. It is 20 seconds, the page's 30 less an attempt's
- * time limit (SEARCH_TIMING's 5 seconds) and SEARCH_RESPONSE_MARGIN_MS. At the deadline, a chunk
+ * time limit (SEARCH_TIMING's 5 seconds) and SEARCH_RESPONSE_MARGIN_MS. At the deadline, a request
  * waiting on the limiter, a backoff or a connection sends nothing, and a split chunk's halves are
  * not sent, so each is unanswered, and the search is `partial`, or `failed` when nothing was
  * answered. An attempt already under way runs to its answer or its time limit, because the client
@@ -137,7 +137,7 @@ export class SearchRejectedError extends Error {
 }
 
 // The reason a search's deadline aborts its signal with. searchInChunks recognises it as the
-// signal's own reason, and records the chunks not yet sent as `aborted`.
+// signal's own reason, and records the requests not yet sent as `aborted`.
 class SearchDeadlineError extends Error {
   constructor() {
     super("The search's deadline passed");
@@ -151,7 +151,7 @@ class SearchDeadlineError extends Error {
  * and a status are fixed values (JevFailure), as `last_error`'s are (#126). Null when nothing
  * failed.
  */
-function runError(failures: readonly SearchChunkFailure[]): string | null {
+function runError(failures: readonly SearchRequestFailure[]): string | null {
   const codes = failures.map(({ failure }) =>
     "status" in failure && failure.status !== undefined
       ? `${failure.reason}:${failure.status}`
@@ -222,7 +222,7 @@ export async function searchBookmarks(
   const started = clock.now();
   const deadline = startDeadline(clock, deadlineMs);
   let candidates: SearchCandidate[];
-  let asked: ChunkedSearchResult;
+  let asked: SearchRequestsResult;
   try {
     candidates = await readSearchCandidates(db, userId, policy);
     // The mode the run records is the mode that asked, so the log says which one produced it.
@@ -260,7 +260,7 @@ export async function searchBookmarks(
       requestMode: used.requestMode,
       // The model that answered; the configured one when nothing was answered. Every request asks
       // the configured model, so a search has one answering model, unless TypeSafe moved an alias
-      // between its chunks, and then the first chunk's is recorded.
+      // between its requests, and then the first request's is recorded.
       jevModel: asked.models[0] ?? jev.JEV_MODEL,
       questions: used.questions,
       displaySignal: used.displaySignal,

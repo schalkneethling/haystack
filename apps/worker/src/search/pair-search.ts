@@ -9,34 +9,38 @@
 // meets the requests-per-second limit, because it sends one request for each bookmark, and the
 // shared limiter spreads those requests over time.
 //
-// A bookmark never needs splitting or a budget check: the longest bookmark with the longest query
-// fits one request by far (search-chunks.ts), so a request that Jev still finds too long fails
-// like any other permanent status, and its bookmark is unanswered.
+// A bookmark is never split: the longest allowed bookmark with the longest query fits one request
+// (search-chunks.ts), so a request that Jev still finds too long fails like any other permanent
+// status, and its bookmark is unanswered. A bookmark that fits no request at all is refused before
+// anything is sent, as in batched mode.
 import type { JevConfig } from "../enrichment/jev-client.ts";
 import {
-  type ChunkedSearchOptions,
-  type ChunkedSearchResult,
+  type SearchRequestsOptions,
+  type SearchRequestsResult,
   searchInRequests,
 } from "./chunked-search.ts";
-import type { SearchAsk } from "./jev-search.ts";
+import type { SearchAsk, SearchBookmark } from "./jev-search.ts";
+import { chunkBookmarks } from "./search-chunks.ts";
 
 /**
  * Asks Jev about each bookmark of `ask` in a request of its own, and returns what searchInChunks
  * returns: the answers in the order given, the bookmarks it didn't answer and why, the models
  * that answered, the summed `usage.input_tokens` and the number of requests sent. An empty
- * collection sends nothing. Rejects as searchInChunks does, for a bookmark ID given twice and for
- * the client's configuration errors, before anything is sent, and an aborted `signal` leaves the
- * bookmarks not yet sent unanswered with the reason `aborted`, as it leaves a chunk.
+ * collection sends nothing. Rejects as searchInChunks does, for a bookmark ID given twice, a
+ * bookmark that fits no request and the client's configuration errors, before anything is sent, and an aborted `signal` leaves the
+ * bookmarks not yet sent unanswered with the reason `aborted`, as it leaves a chunk in batched mode.
  */
 export function searchInPairs(
   config: JevConfig,
   ask: SearchAsk,
-  options: ChunkedSearchOptions = {},
-): Promise<ChunkedSearchResult> {
-  return searchInRequests(
-    config,
-    ask,
-    ({ bookmarks }) => bookmarks.map((bookmark) => [bookmark]),
-    options,
-  );
+  options: SearchRequestsOptions = {},
+): Promise<SearchRequestsResult> {
+  return searchInRequests(config, ask, groupInPairs, options);
+}
+
+// One request for each bookmark. Each goes through chunkBookmarks, as batched mode's do, so a
+// bookmark that fits no request throws the same RangeError before anything is sent, instead of
+// being sent and refused.
+function groupInPairs({ bookmarks, ...ask }: SearchAsk): SearchBookmark[][] {
+  return bookmarks.flatMap((bookmark) => chunkBookmarks({ ...ask, bookmarks: [bookmark] }));
 }

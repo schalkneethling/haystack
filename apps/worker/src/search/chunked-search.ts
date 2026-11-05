@@ -44,10 +44,10 @@ import { chunkBookmarks, estimateSearchRequest } from "./search-chunks.ts";
 export type SearchOutcome = (typeof searchRuns.$inferSelect)["outcome"];
 
 /**
- * A chunk that was never sent, because the search's signal was aborted before its first attempt.
+ * A request that was never sent, because the search's signal was aborted before its first attempt.
  * Its reason is a fixed value, safe to log.
  */
-export interface SearchChunkAborted {
+export interface SearchRequestAborted {
   readonly ok: false;
   readonly reason: "aborted";
   readonly attempts: 0;
@@ -56,15 +56,15 @@ export interface SearchChunkAborted {
 /**
  * A request that failed after its attempts, or was never sent, and the bookmarks it asked about.
  */
-export interface SearchChunkFailure {
+export interface SearchRequestFailure {
   // In the order the caller gave them.
   readonly bookmarkIds: readonly string[];
   // Its reason, class, status and code are fixed values, safe to log.
-  readonly failure: JevFailure | SearchChunkAborted;
+  readonly failure: JevFailure | SearchRequestAborted;
 }
 
 /** What a search of a whole collection got from Jev. */
-export interface ChunkedSearchResult {
+export interface SearchRequestsResult {
   /**
    * `ok` when every bookmark was answered, an empty collection included; `partial` when some
    * were; `failed` when a collection of at least one bookmark got no answer at all.
@@ -75,9 +75,9 @@ export interface ChunkedSearchResult {
   /** The ID of every bookmark that has no answer, in the order the caller gave them. */
   readonly unanswered: readonly string[];
   /** Each request that failed, in the order of its bookmarks. A split request isn't one. */
-  readonly failures: readonly SearchChunkFailure[];
+  readonly failures: readonly SearchRequestFailure[];
   /**
-   * Each model that answered, as the responses name it, once each, in the order of the chunks
+   * Each model that answered, as the responses name it, once each, in the order of the requests
    * whose responses first name it, not the order the responses arrived in.
    */
   readonly models: readonly string[];
@@ -87,13 +87,13 @@ export interface ChunkedSearchResult {
   readonly attempts: number;
 }
 
-export interface ChunkedSearchOptions {
+export interface SearchRequestsOptions {
   /** The limiter every attempt waits on. The isolate's, which all of search shares, by default. */
   readonly limiter?: JevLimiter;
   /** Each request's attempts. SEARCH_TIMING by default. */
   readonly timing?: JevTiming;
   /**
-   * Ends the search: askJevQuestions' `signal`, given to every request. A chunk not yet sent when
+   * Ends the search: askJevQuestions' `signal`, given to every request. A request not yet sent when
    * it is aborted is a failure with the reason `aborted`, and the search still resolves.
    */
   readonly signal?: AbortSignal;
@@ -102,7 +102,7 @@ export interface ChunkedSearchOptions {
 // What became of one chunk, or of the halves it was split into.
 interface ChunkOutcome {
   readonly answers: readonly BookmarkAnswers[];
-  readonly failures: readonly SearchChunkFailure[];
+  readonly failures: readonly SearchRequestFailure[];
   readonly models: readonly string[];
   readonly inputTokens: number;
   readonly attempts: number;
@@ -119,8 +119,8 @@ interface ChunkOutcome {
 export function searchInChunks(
   config: JevConfig,
   ask: SearchAsk,
-  options: ChunkedSearchOptions = {},
-): Promise<ChunkedSearchResult> {
+  options: SearchRequestsOptions = {},
+): Promise<SearchRequestsResult> {
   return searchInRequests(config, ask, chunkBookmarks, options);
 }
 
@@ -135,8 +135,8 @@ export async function searchInRequests(
   config: JevConfig,
   ask: SearchAsk,
   group: (ask: SearchAsk) => readonly (readonly SearchBookmark[])[],
-  { limiter = ISOLATE_JEV_LIMITER, timing = SEARCH_TIMING, signal }: ChunkedSearchOptions = {},
-): Promise<ChunkedSearchResult> {
+  { limiter = ISOLATE_JEV_LIMITER, timing = SEARCH_TIMING, signal }: SearchRequestsOptions = {},
+): Promise<SearchRequestsResult> {
   if (new Set(ask.bookmarks.map(({ id }) => id)).size !== ask.bookmarks.length) {
     throw new RangeError("A search request names a bookmark more than once");
   }
@@ -155,7 +155,7 @@ export async function searchInRequests(
       if (signal?.aborted !== true || error !== signal.reason) {
         throw error;
       }
-      const aborted: SearchChunkAborted = { ok: false, reason: "aborted", attempts: 0 };
+      const aborted: SearchRequestAborted = { ok: false, reason: "aborted", attempts: 0 };
       return {
         answers: [],
         failures: [{ bookmarkIds: bookmarks.map(({ id }) => id), failure: aborted }],

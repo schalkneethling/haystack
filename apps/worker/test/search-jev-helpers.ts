@@ -15,7 +15,7 @@ import { JEV_ORIGIN, type JevResolver } from "./jev-fixture.ts";
 export const config: JevConfig = {
   JEV_BASE_URL: JEV_ORIGIN,
   JEV_MODEL: "jev-1.14.0",
-  TYPESAFE_API_KEY: "ts-chunked-search-key-91c4",
+  TYPESAFE_API_KEY: "ts-collection-search-key-91c4",
 };
 
 // SEARCH_TIMING with shorter waits, and its own attempt limit, so the retry tests expect the

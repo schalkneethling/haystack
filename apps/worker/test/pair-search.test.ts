@@ -93,7 +93,7 @@ describe("searchInPairs", () => {
 
   it("asks the questions that batched mode asks, with the same wording", async () => {
     const bookmarks = collection(2);
-    respondEach(answerAll, 3);
+    respondEach(answerAll, 2);
     await searchInChunks(
       config,
       { query: QUERY, bookmarks, questions: "both" },
@@ -130,6 +130,25 @@ describe("searchInPairs", () => {
       );
       expect(result.answers).toEqual(ids(bookmarks).map((id) => expectedAnswer(id, questions)));
     }
+  });
+
+  // Batched mode refuses such a bookmark before anything is sent, so pair mode does too, and the
+  // service logs neither.
+  it("refuses a bookmark that fits no request before anything is sent, as batched mode does", async () => {
+    const bookmarks = [
+      ...collection(2),
+      { ...collection(1, "huge")[0]!, matchText: "x".repeat(1_000_000) },
+    ];
+    for (const search of [searchInChunks, searchInPairs]) {
+      await expect(
+        search(
+          config,
+          { query: QUERY, bookmarks, questions: "both" },
+          { limiter: openLimiter(), timing },
+        ),
+      ).rejects.toThrow(RangeError);
+    }
+    expect(fixture.requests).toEqual([]);
   });
 
   it("refuses a bookmark given twice before anything is sent", async () => {
@@ -311,6 +330,11 @@ describe("searchInPairs", () => {
         { limiter: openLimiter(), timing },
       );
       expect(result).toMatchObject({ outcome: "failed", unanswered: ids(bookmarks), attempts: 2 });
+      // The response was read as too long, not just failed.
+      expect(result.failures.map(({ failure }) => (failure as { code?: string }).code)).toEqual([
+        "max_tokens_exceeded",
+        "max_tokens_exceeded",
+      ]);
       expect(fixture.requests).toHaveLength(2);
     });
   });
