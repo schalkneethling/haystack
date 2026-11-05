@@ -204,6 +204,26 @@ export async function seedBookmarks(
   return rows.map((row) => row.id);
 }
 
+export interface BulkEnrichment {
+  bookmarkId: string;
+  schemaVersion: number;
+  matchText: string;
+}
+
+/**
+ * Seeds an enrichment of kind `article` for each of the bookmarks, in one statement, for the same
+ * reason as seedBookmarks: a search test needs enough of them to fill several chunks.
+ */
+export async function seedEnrichments(db: D1Like, enrichments: BulkEnrichment[]): Promise<void> {
+  const rows = enrichments.map((enrichment) => ({ id: crypto.randomUUID(), ...enrichment }));
+  await db
+    .prepare(
+      "INSERT INTO enrichments (id, bookmark_id, schema_version, provider, model, kind, kind_probabilities, data, match_text, match_text_version, created_at) SELECT json_extract(value, '$.id'), json_extract(value, '$.bookmarkId'), json_extract(value, '$.schemaVersion'), 'seed', 'seed', 'article', '{}', '{}', json_extract(value, '$.matchText'), 1, ?1 FROM json_each(?2)",
+    )
+    .bind(Date.now(), JSON.stringify(rows))
+    .run();
+}
+
 // The text columns take any string, so that a test can show what each CHECK constraint refuses.
 export interface SeededSearchRunFields {
   channel?: string;
