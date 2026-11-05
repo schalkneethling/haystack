@@ -193,6 +193,20 @@ describe("postSearch, with a fake service", () => {
     expect(context).not.toHaveProperty("limiter");
   });
 
+  // The page says how the query was entered (#217), and the route passes that on for the web.
+  it("gives the service the input mode the body names, for the web", async () => {
+    const service = fakeService();
+    await postSearch(
+      searchRequest({ query: QUERY, inputMode: "web-speech" }),
+      fakeContext(),
+      db,
+      owner.userId,
+      env,
+      service,
+    );
+    expect(service.mock.calls[0]?.[2]).toEqual({ channel: "web", inputMode: "web-speech" });
+  });
+
   // The endpoint adds nothing: the service's result, in the service's order, and no row of its
   // own in the search tables.
   it("answers with the service's result in the service's order, and leaves the search tables alone", async () => {
@@ -346,6 +360,10 @@ describe("postSearch, with a fake service", () => {
       JSON.stringify({ query: "a".repeat(SEARCH_QUERY_CAP + 1) }),
       "SEARCH_QUERY_INVALID",
     ],
+    // `whisper` is reserved for the backlog, and the page can't send it, so it is refused as any
+    // unknown mode is. The query is fine here, so the code names the request, not the query.
+    ["the input mode whisper", '{"query":"a","inputMode":"whisper"}', "SEARCH_REQUEST_INVALID"],
+    ["an unknown input mode", '{"query":"a","inputMode":"keyboard"}', "SEARCH_REQUEST_INVALID"],
   ])("answers %s with 400, and never calls the service", async (_, body, code) => {
     const service = fakeService();
     const response = await postSearch(
@@ -360,6 +378,17 @@ describe("postSearch, with a fake service", () => {
     expect(await response.json()).toEqual({ code });
     expect(service).not.toHaveBeenCalled();
   });
+
+  // This uses the real service, so a run that the refusal failed to stop would show in the tables.
+  it.each(['{"query":"a","inputMode":"whisper"}', '{"query":"a","inputMode":"keyboard"}'])(
+    "stores no search run for the body %s",
+    async (body) => {
+      const before = await tableCounts();
+      const response = await postSearch(searchRequest(body), fakeContext(), db, owner.userId, env);
+      expect(response.status).toBe(400);
+      expect(await tableCounts()).toEqual(before);
+    },
+  );
 
   it("answers a body past its cap with 413, without calling the service", async () => {
     const service = fakeService();
