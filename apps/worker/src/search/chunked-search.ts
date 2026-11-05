@@ -48,7 +48,9 @@ export interface SearchChunkAborted {
   readonly attempts: 0;
 }
 
-/** A request that failed after its attempts, or was never sent, and the bookmarks it asked about. */
+/**
+ * A request that failed after its attempts, or was never sent, and the bookmarks it asked about.
+ */
 export interface SearchChunkFailure {
   // In the order the caller gave them.
   readonly bookmarkIds: readonly string[];

@@ -157,6 +157,41 @@ describe("JevLimiter", () => {
       const sent = await send(limiter, clock, requests(1, 1)).wait();
       expect(sent.map(({ at }) => at)).toEqual([4000]);
     });
+
+    // A request that reserved its time before the 429 is already asleep, and its time may fall
+    // inside the pause. It checks the pause when it wakes, and goes after it instead.
+    it("holds a request that was already waiting, when its time falls inside the pause", async () => {
+      const clock = fakeClock();
+      const limiter = new JevLimiter(SEARCH_JEV_LIMITS, clock);
+      const first = await send(limiter, clock, requests(10, 1)).wait(0);
+      expect(first.map(({ at }) => at)).toEqual(Array<number>(10).fill(0));
+      // The 11th reserves 1000, the first moment the second holds room for it, and sleeps.
+      const eleventh = send(limiter, clock, [["eleventh", 1]]);
+      await clock.advance(500);
+      limiter.throttled(3000);
+      expect(await eleventh.wait()).toEqual([{ label: "eleventh", at: 3500, tokens: 1 }]);
+    });
+
+    // Order holds except across a pause: a request that wakes inside it goes behind every
+    // reservation made so far, which is safe, because each still goes no earlier than its own.
+    it("sends a request that wakes inside the pause behind the ones reserved after it", async () => {
+      const clock = fakeClock();
+      const limiter = new JevLimiter({ requestsPerSecond: 1, tokensPerSecond: 100_000 }, clock);
+      const line = send(limiter, clock, [
+        ["first", 1],
+        ["A", 1],
+        ["B", 1],
+        ["C", 1],
+      ]);
+      await clock.advance(500);
+      limiter.throttled(1000);
+      expect((await line.wait()).map(({ label, at }) => [label, at])).toEqual([
+        ["first", 0],
+        ["B", 2000],
+        ["C", 3000],
+        ["A", 4000],
+      ]);
+    });
   });
 
   it("lets nothing through for an aborted wait, and doesn't count it", async () => {
@@ -173,6 +208,22 @@ describe("JevLimiter", () => {
     expect(await send(limiter, clock, [["after", 1]]).wait()).toEqual([
       { label: "after", at: 1000, tokens: 1 },
     ]);
+  });
+
+  // A request aborted in the middle of the line gives its place back, but the one that reserved
+  // after it keeps its time: later than it needs to be, never early.
+  it("keeps the time of a request that reserved behind an aborted one", async () => {
+    const clock = fakeClock();
+    const limiter = new JevLimiter({ requestsPerSecond: 1, tokensPerSecond: 100_000 }, clock);
+    const controller = new AbortController();
+    const first = send(limiter, clock, [["first", 1]]);
+    const aborted = limiter.acquire(1, controller.signal);
+    const after = send(limiter, clock, [["after", 1]]);
+    await clock.advance(100);
+    controller.abort();
+    expect(await aborted).toBe(false);
+    expect(await first.wait(0)).toEqual([{ label: "first", at: 0, tokens: 1 }]);
+    expect(await after.wait()).toEqual([{ label: "after", at: 2000, tokens: 1 }]);
   });
 
   // Cloudflare can cancel a request's pending work when its client disconnects, and a cancelled
@@ -221,6 +272,22 @@ describe("JevLimiter", () => {
       // after it would have, and never waits for good.
       expect(admitted.next).toBe(2000);
       expect(admitted.lost).toBeUndefined();
+    });
+
+    // The lost request's reservation counts for its second and then expires, so a request that
+    // asks long after it goes at once.
+    it("lets a request through at once when it asks after the lost one's second", async () => {
+      const clock = fakeClock();
+      const limiter = new JevLimiter(
+        { requestsPerSecond: 1, tokensPerSecond: 100_000 },
+        losingFirstSleep(clock),
+      );
+      limiter.throttled(1000);
+      void limiter.acquire(1);
+      await clock.advance(10_000);
+      expect(await send(limiter, clock, [["later", 1]]).wait(0)).toEqual([
+        { label: "later", at: 10_000, tokens: 1 },
+      ]);
     });
   });
 

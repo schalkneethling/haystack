@@ -13,7 +13,9 @@
 // `requestsPerSecond` and no more tokens than `tokensPerSecond`, the request included. It then
 // sleeps on its own timer until that moment. Because each reservation comes after every earlier
 // one, requests go in the order they asked, so a large one isn't overtaken for good by smaller
-// ones that would fit sooner.
+// ones that would fit sooner. The order holds except across a `429` pause: a request that wakes
+// inside the pause goes behind every reservation made so far (below). Each request still goes no
+// earlier than the ceilings allow.
 //
 // No request ever waits on another request's promise. The limiter is the isolate's, shared by
 // every search, and Cloudflare can cancel a request's pending work when its client disconnects, so
