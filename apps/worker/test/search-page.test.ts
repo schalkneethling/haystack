@@ -1,6 +1,6 @@
 // The search page at `/` (#206), with the `search-enabled` flag on (#235). The browser tests
 // answer /api/search with a stub (e2e/search-answers.ts), so these check what the Worker serves
-// itself: the page, and that the real route answers no search until #214. search-switch.test.ts
+// itself: the page. The route is checked in search-api.test.ts. search-switch.test.ts
 // checks the flag off. A delete from a result returns here (#208); the dialog that deletes in
 // place is checked in the browser, in e2e/search-delete.e2e.ts.
 import { normalizeUrl, SEARCH_QUERY_CAP } from "@haystack/schemas";
@@ -261,32 +261,5 @@ describe("POST /bookmarks/:id/delete from a search result", () => {
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe("/auth/sign-in?return_to=%2F");
     expect(await bookmarkIds()).toEqual([bookmarkId]);
-  });
-});
-
-// The page's script asks for JSON, as a script must (plan, "Site sign-in"), so it gets a status
-// it can act on rather than a redirect.
-describe("POST /api/search, until #214", () => {
-  function postSearch(headers: Record<string, string>) {
-    return server.fetch("/api/search", {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json", ...headers },
-      body: JSON.stringify({ query: "a tool for testing" }),
-      redirect: "manual",
-    });
-  }
-
-  it("answers 401 without a session, which the page calls signed out", async () => {
-    expect((await postSearch({ origin })).status).toBe(401);
-  });
-
-  // So a deploy before the real route cannot show results that no search produced.
-  it("answers 404 with a session, so no search is made", async () => {
-    expect((await postSearch({ origin, cookie: owner.cookie })).status).toBe(404);
-  });
-
-  it("rejects a request from another site", async () => {
-    const response = await postSearch({ origin: "https://evil.example", cookie: owner.cookie });
-    expect(response.status).toBe(403);
   });
 });

@@ -1,9 +1,11 @@
 // Answers the search page's requests to /api/search in the browser, with `page.route`, as
-// held-lookups.ts holds the address form's lookups (#105). The real route answers no search until
-// #214, and the stub lives here rather than in the Worker, because a path that only tests use
-// does not belong in production code (plan, "Testing strategy"). Every answer is checked against
-// the web answer's schema first, so the page is tested against the shape the real route will
-// give. A result's ID is made up, unless the test saved the bookmark (`saveResults`), which a
+// held-lookups.ts holds the address form's lookups (#105). The route is real since #214 (the tests
+// of it are in search.e2e.ts, "against the Worker's own /api/search", and search-api.test.ts), but
+// a stub lets a test control the answer and its timing: a held search, a network error, a
+// timeout, an answer of the wrong shape. The stub lives here rather than in the Worker, because a
+// path that only tests use does not belong in production code (plan, "Testing strategy"). Every
+// answer is checked against the web answer's schema first, so the page is tested against the shape
+// the real route gives. A result's ID is made up, unless the test saved the bookmark (`saveResults`), which a
 // test that deletes a result needs (#208).
 import { SearchAnswer } from "@haystack/schemas";
 import { expect, type Page, type Request, type Route } from "@playwright/test";
