@@ -11,6 +11,7 @@ import { answerSearches, SEARCH_STATUS } from "./search-answers.ts";
 import {
   endListening,
   failWith,
+  failWithoutEnd,
   hear,
   hearNoMatch,
   latestRecognition,
@@ -41,9 +42,15 @@ function voiceStatus(page: Page) {
   return page.getByRole("status").and(page.locator(VOICE_STATUS));
 }
 
-/** Opens the search page with the stub, and presses the button, which makes a recognition. */
-async function pressToListen(page: Page): Promise<void> {
+/**
+ * Opens the search page with the stub, types `typed` in the field when given, before listening,
+ * because typing while it listens cancels it, and presses the button, which makes a recognition.
+ */
+async function pressToListen(page: Page, typed?: string): Promise<void> {
   await page.goto("/");
+  if (typed !== undefined) {
+    await field(page).fill(typed);
+  }
   await voiceButton(page).click();
   await expect.poll(() => recognitionCount(page)).toBe(1);
 }
@@ -119,8 +126,22 @@ test.describe("with speech recognition", () => {
         - button "${VOICE_NAME}" [pressed=false]
         - button "Search"
       `);
-      // The listening message's live region is in the page from the start, and empty.
+    });
+
+    // The voice input's live region is made on the first press, so a person who never presses
+    // the button has no second live region on the page. The browser fires `start` in a later
+    // task, so the region is in the page, empty, before its first message.
+    test("the voice input's live region is added, empty, on the first press, before any message", async ({
+      page,
+    }) => {
+      await page.goto("/");
+      await expect(voiceButton(page)).toBeVisible();
+      await expect(page.locator(VOICE_STATUS)).toHaveCount(0);
+      await voiceButton(page).click();
+      await expect(voiceStatus(page)).toHaveCount(1);
       await expect(voiceStatus(page)).toBeEmpty();
+      await startListening(page);
+      await expect(voiceStatus(page)).toHaveText(VOICE_MESSAGES.listening);
     });
 
     test("the button is reached by Tab after the field, shows the focus ring, and works with Space and Enter", async ({
@@ -257,8 +278,7 @@ test.describe("with speech recognition", () => {
       ["network", VOICE_MESSAGES.network, true],
     ] as const satisfies readonly (readonly [RecognitionErrorCode, string, boolean])[]) {
       test(`the ${error} error ends listening and says "${message}"`, async ({ page }) => {
-        await pressToListen(page);
-        await field(page).fill("kept as typed");
+        await pressToListen(page, "kept as typed");
         if (listened) {
           await startListening(page);
           await expect(voiceButton(page)).toHaveAttribute("aria-pressed", "true");
@@ -273,8 +293,7 @@ test.describe("with speech recognition", () => {
     test("a result with nothing recognized says so, like no speech, and leaves the field alone", async ({
       page,
     }) => {
-      await pressToListen(page);
-      await field(page).fill("kept as typed");
+      await pressToListen(page, "kept as typed");
       await startListening(page);
       await hearNoMatch(page);
       await expect(voiceButton(page)).toHaveAttribute("aria-pressed", "false");
@@ -285,8 +304,7 @@ test.describe("with speech recognition", () => {
     test("an empty transcript says so, like no speech, and leaves the field alone", async ({
       page,
     }) => {
-      await pressToListen(page);
-      await field(page).fill("kept as typed");
+      await pressToListen(page, "kept as typed");
       await startListening(page);
       await hear(page, "   ");
       await expect(voiceStatus(page).locator(".alert")).toHaveText(VOICE_MESSAGES.noSpeech);
@@ -321,5 +339,95 @@ test.describe("with speech recognition", () => {
       await startListening(page);
       await expect(voiceStatus(page)).toHaveText(VOICE_MESSAGES.listening);
     });
+
+    // Search runs for what is in the field when the person submits, so a result that arrives
+    // after that would replace the query whose results the page shows (search.js keeps the field
+    // holding that query). Submitting or typing while the browser listens cancels listening.
+    test("submitting while it listens cancels listening, and a late result changes nothing", async ({
+      page,
+    }) => {
+      const searches = await answerSearches(page, () => [{ title: "Typed result" }]);
+      await pressToListen(page);
+      await startListening(page);
+      await field(page).fill("typed query");
+      await field(page).press("Enter");
+      await expect(page.locator(SEARCH_STATUS)).toHaveText("1 saved link matches your search.");
+      expect((await latestRecognition(page))?.calls).toContain("abort");
+      await expect(voiceButton(page)).toHaveAttribute("aria-pressed", "false");
+      await expect(voiceStatus(page)).toBeEmpty();
+
+      await hear(page, "spoken words");
+      await expect(field(page)).toHaveValue("typed query");
+      await expect(voiceStatus(page)).toBeEmpty();
+      expect(searches.map(({ body }) => body)).toEqual([{ query: "typed query" }]);
+    });
+
+    test("typing while it listens cancels listening, and a late result changes nothing", async ({
+      page,
+    }) => {
+      await pressToListen(page);
+      await startListening(page);
+      await field(page).pressSequentially("typed");
+      expect((await latestRecognition(page))?.calls).toContain("abort");
+      await expect(voiceButton(page)).toHaveAttribute("aria-pressed", "false");
+      await expect(voiceStatus(page)).toBeEmpty();
+      await hear(page, "spoken words");
+      await expect(field(page)).toHaveValue("typed");
+      await expect(voiceStatus(page)).toBeEmpty();
+    });
+
+    // Before `start`, the browser may be asking for the microphone, and its prompt is the place
+    // to cancel. A press then would stop a recognition while the button still reads "not
+    // pressed", so it is ignored.
+    test("a press before the browser listens is ignored, and a press while it listens stops it", async ({
+      page,
+    }) => {
+      await pressToListen(page);
+      await voiceButton(page).click();
+      expect((await latestRecognition(page))?.calls).toEqual(["start"]);
+      expect(await recognitionCount(page)).toBe(1);
+      await startListening(page);
+      await voiceButton(page).click();
+      expect((await latestRecognition(page))?.calls).toEqual(["start", "stop"]);
+    });
+
+    test("a press after an error that hasn't ended yet listens again", async ({ page }) => {
+      await pressToListen(page);
+      await failWithoutEnd(page, "not-allowed");
+      await expect(voiceButton(page)).toHaveAttribute("aria-pressed", "false");
+      await voiceButton(page).click();
+      await expect.poll(() => recognitionCount(page)).toBe(2);
+    });
+
+    // An error ends listening at once, so a new press can start another recognition before the
+    // first one's `end` arrives. That late `end` belongs to the first, and changes nothing.
+    test("a late end of an earlier recognition leaves the new one listening", async ({ page }) => {
+      await pressToListen(page);
+      await startListening(page);
+      await failWithoutEnd(page, "network");
+      await voiceButton(page).click();
+      await expect.poll(() => recognitionCount(page)).toBe(2);
+      await startListening(page);
+      await expect(voiceStatus(page)).toHaveText(VOICE_MESSAGES.listening);
+
+      await endListening(page, { instance: 0 });
+      await expect(voiceButton(page)).toHaveAttribute("aria-pressed", "true");
+      await expect(voiceStatus(page)).toHaveText(VOICE_MESSAGES.listening);
+    });
+  });
+});
+
+test.describe("with a speech recognition whose start throws", () => {
+  test("pressing the button says it isn't working, and leaves it not pressed", async ({ page }) => {
+    await stubSpeechRecognition(page, ["SpeechRecognition", "webkitSpeechRecognition"], {
+      startThrows: true,
+    });
+    await page.goto("/");
+    await voiceButton(page).click();
+    await expect(voiceStatus(page).locator(".alert")).toHaveText(VOICE_MESSAGES.unavailable);
+    await expect(voiceButton(page)).toHaveAttribute("aria-pressed", "false");
+    // A second press tries again, rather than finding a recognition that never started.
+    await voiceButton(page).click();
+    await expect.poll(() => recognitionCount(page)).toBe(2);
   });
 });

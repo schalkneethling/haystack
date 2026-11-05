@@ -11,13 +11,18 @@
 //   2026-11-05). Without either, nothing is added: no button, no message and no privacy note.
 // - The button is a toggle, named "Search by voice", with `aria-pressed`. It is pressed while
 //   the browser listens, which the recognition's `start` event says, so it never claims to listen
-//   while the browser is still asking for the microphone. Pressing it while it is pressed stops
+//   while the browser is still asking for the microphone. A press before then is ignored,
+//   because the browser's prompt is the place to cancel. Pressing it while it is pressed stops
 //   listening, which still returns what was heard. The `end` event, which the specification
 //   fires whatever ended the session, gives it back. Focus stays on it throughout, so Tab moves
 //   on to Search.
+// - Typing in the field or submitting the form while the browser listens cancels listening
+//   (`abort()`), so a result that arrives later never replaces what the person typed or the
+//   query whose results the page shows.
 // - Messages go to a live region of their own, next to the field: that it is listening, what to
-//   do with what was heard, and why it stopped. The page's other live region is in the message
-//   bar, above the form, and holds the search's own messages.
+//   do with what was heard, and why it stopped. It is added on the first press, so a person who
+//   never presses the button has no second live region. The page's other live region is in the
+//   message bar, above the form, and holds the search's own messages.
 // - The privacy note under the field says where the audio goes, and describes the button, so a
 //   screen reader reads it with the button, before the person speaks.
 
@@ -32,6 +37,7 @@
  *   maxAlternatives: number,
  *   start(): void,
  *   stop(): void,
+ *   abort(): void,
  * }} Recognition
  * @typedef {new () => Recognition} RecognitionConstructor
  */
@@ -193,9 +199,12 @@ function enhance(field, form, row, Recognizer) {
   button.setAttribute("aria-describedby", PRIVACY_ID);
   button.append(icon());
 
-  // In the page from the start, empty, because a screen reader announces a change only to a live
-  // region that already exists. The role is on a `<div>` that holds the message, as on the
-  // page's other live region.
+  // The live region, which the first press adds, empty, before the row's privacy note. A screen
+  // reader announces a change only to a live region that already exists, and the browser fires
+  // `start` in a later task than the press, so the region is in the page before its first
+  // message. Made only then, it is absent for a person who never presses the button, so the
+  // search's own region is the page's only one for them. The role is on a `<div>` that holds
+  // the message, as on the page's other live region.
   const status = document.createElement("div");
   status.id = STATUS_ID;
   status.className = "status voice-status";
@@ -207,10 +216,12 @@ function enhance(field, form, row, Recognizer) {
   privacy.textContent = MESSAGES.privacy;
 
   field.after(button);
-  row.after(status, privacy);
+  row.after(privacy);
 
   /** @type {Recognition | null} */
   let recognition = null;
+  // Whether the browser listens: from the recognition's `start` event to its error or `end`.
+  let listening = false;
 
   /** @param {string} text */
   function say(text) {
@@ -234,9 +245,20 @@ function enhance(field, form, row, Recognizer) {
     status.replaceChildren();
   }
 
-  /** @param {boolean} listening */
-  function showListening(listening) {
-    button.setAttribute("aria-pressed", String(listening));
+  /** @param {boolean} isListening */
+  function showListening(isListening) {
+    listening = isListening;
+    button.setAttribute("aria-pressed", String(isListening));
+  }
+
+  // Cancels a recognition that is running, so nothing it returns later reaches the field.
+  function cancel() {
+    if (recognition !== null) {
+      recognition.abort();
+      recognition = null;
+    }
+    showListening(false);
+    clear();
   }
 
   function listen() {
@@ -321,24 +343,21 @@ function enhance(field, form, row, Recognizer) {
   }
 
   button.addEventListener("click", () => {
+    if (!status.isConnected) {
+      privacy.before(status);
+    }
     if (recognition === null) {
       listen();
-    } else {
+    } else if (listening) {
       // Stops listening, and the browser still returns what it heard so far, then ends.
       recognition.stop();
     }
+    // Otherwise the browser hasn't started listening, and may be asking for the microphone,
+    // whose prompt is the place to cancel, so the press is ignored.
   });
 
-  // What was heard is the field's text only until the person changes it or searches, so the
-  // message about it goes then, as does an error's once the person types instead.
-  field.addEventListener("input", () => {
-    if (recognition === null) {
-      clear();
-    }
-  });
-  form.addEventListener("submit", () => {
-    if (recognition === null) {
-      clear();
-    }
-  });
+  // The field's text is the person's from the moment they change it or search, so a recognition
+  // still running is cancelled, and the message about what was heard, or an error's, goes.
+  field.addEventListener("input", cancel);
+  form.addEventListener("submit", cancel);
 }

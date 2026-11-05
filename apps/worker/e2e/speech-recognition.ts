@@ -64,6 +64,15 @@ declare global {
   }
 }
 
+/** How the stub behaves, beyond the names it is installed under. */
+export interface StubOptions {
+  /**
+   * Whether `start()` throws, as a browser's can for a reason the page can't see. Off by
+   * default.
+   */
+  readonly startThrows?: boolean;
+}
+
 /**
  * Installs the stub under `names` (both by default), and removes the browser's own constructor
  * under the other name, so the page sees exactly what a browser with those names has.
@@ -71,49 +80,63 @@ declare global {
 export async function stubSpeechRecognition(
   page: Page,
   names: readonly RecognitionName[] = ["SpeechRecognition", "webkitSpeechRecognition"],
+  { startThrows = false }: StubOptions = {},
 ): Promise<void> {
-  await page.addInitScript((installed) => {
-    const instances: SpeechStub["instances"] = [];
-    class StubRecognition extends EventTarget {
-      lang = "";
-      continuous = false;
-      interimResults = false;
-      maxAlternatives = 1;
-      readonly calls: string[] = [];
-      constructor() {
-        super();
-        instances.push(this);
-      }
-      start() {
-        // A real recognition throws when it is started twice, so a page that does is caught.
-        if (this.calls.includes("start")) {
-          throw new DOMException("The recognition has already started.", "InvalidStateError");
+  await page.addInitScript(
+    ({ installed, throwsOnStart }) => {
+      const instances: SpeechStub["instances"] = [];
+      class StubRecognition extends EventTarget {
+        lang = "";
+        continuous = false;
+        interimResults = false;
+        maxAlternatives = 1;
+        readonly calls: string[] = [];
+        // Whether a session started by `start()` is still running: until its `end` event.
+        running = false;
+        constructor() {
+          super();
+          instances.push(this);
+          this.addEventListener("end", () => {
+            this.running = false;
+          });
         }
-        this.calls.push("start");
+        start() {
+          this.calls.push("start");
+          if (throwsOnStart) {
+            throw new DOMException("The stub refuses to start.", "InvalidStateError");
+          }
+          // The specification throws `InvalidStateError` only while a session is still running,
+          // and allows a restart after its `end` event, so a page that starts one twice is caught.
+          if (this.running) {
+            throw new DOMException("The recognition has already started.", "InvalidStateError");
+          }
+          this.running = true;
+        }
+        stop() {
+          this.calls.push("stop");
+        }
+        abort() {
+          this.calls.push("abort");
+        }
+        record() {
+          const { lang, continuous, interimResults, maxAlternatives, calls } = this;
+          return { lang, continuous, interimResults, maxAlternatives, calls: [...calls] };
+        }
       }
-      stop() {
-        this.calls.push("stop");
+      for (const name of ["SpeechRecognition", "webkitSpeechRecognition"]) {
+        Reflect.deleteProperty(window, name);
       }
-      abort() {
-        this.calls.push("abort");
+      for (const name of installed) {
+        Object.defineProperty(window, name, {
+          configurable: true,
+          writable: true,
+          value: StubRecognition,
+        });
       }
-      record() {
-        const { lang, continuous, interimResults, maxAlternatives, calls } = this;
-        return { lang, continuous, interimResults, maxAlternatives, calls: [...calls] };
-      }
-    }
-    for (const name of ["SpeechRecognition", "webkitSpeechRecognition"]) {
-      Reflect.deleteProperty(window, name);
-    }
-    for (const name of installed) {
-      Object.defineProperty(window, name, {
-        configurable: true,
-        writable: true,
-        value: StubRecognition,
-      });
-    }
-    window.speechStub = { instances };
-  }, names);
+      window.speechStub = { instances };
+    },
+    { installed: names, throwsOnStart: startThrows },
+  );
 }
 
 /** Removes both constructors, as in a browser without speech recognition. */
@@ -135,31 +158,43 @@ export function latestRecognition(page: Page): Promise<RecognitionRecord | null>
 }
 
 /**
- * Fires `events` on the latest recognition, in order. Each is an event's type and the
- * properties a browser gives that event, such as an error event's `error`.
+ * Which recognition a helper fires its events on: the index of the page's recognitions, in the
+ * order the page made them. Left out, it is the latest.
+ */
+export interface Target {
+  readonly instance?: number;
+}
+
+/**
+ * Fires `events` on a recognition, in order. Each is an event's type and the properties a
+ * browser gives that event, such as an error event's `error`.
  */
 function fire(
   page: Page,
   events: readonly (readonly [string, Record<string, unknown>?])[],
+  { instance = -1 }: Target = {},
 ): Promise<void> {
-  return page.evaluate((list) => {
-    const recognition = window.speechStub?.instances.at(-1);
-    if (recognition === undefined) {
-      throw new Error("The page has made no recognition");
-    }
-    for (const [type, properties = {}] of list) {
-      const event = new Event(type);
-      for (const [key, value] of Object.entries(properties)) {
-        Object.defineProperty(event, key, { value });
+  return page.evaluate(
+    ([list, index]) => {
+      const recognition = window.speechStub?.instances.at(index);
+      if (recognition === undefined) {
+        throw new Error(`The page has made no recognition ${index}`);
       }
-      recognition.dispatchEvent(event);
-    }
-  }, events);
+      for (const [type, properties = {}] of list) {
+        const event = new Event(type);
+        for (const [key, value] of Object.entries(properties)) {
+          Object.defineProperty(event, key, { value });
+        }
+        recognition.dispatchEvent(event);
+      }
+    },
+    [events, instance] as const,
+  );
 }
 
 /** The recognition service has begun to listen: its `start` event. */
-export function startListening(page: Page): Promise<void> {
-  return fire(page, [["start"]]);
+export function startListening(page: Page, target?: Target): Promise<void> {
+  return fire(page, [["start"]], target);
 }
 
 /**
@@ -182,8 +217,17 @@ export async function hear(page: Page, transcript: string): Promise<void> {
 }
 
 /** The service failed with `error`, then ended, as the specification orders the two events. */
-export function failWith(page: Page, error: RecognitionErrorCode): Promise<void> {
-  return fire(page, [["error", { error, message: "" }], ["end"]]);
+export function failWith(page: Page, error: RecognitionErrorCode, target?: Target): Promise<void> {
+  return fire(page, [["error", { error, message: "" }], ["end"]], target);
+}
+
+/** The service failed with `error`, without the `end` that follows it, which a test sends later. */
+export function failWithoutEnd(
+  page: Page,
+  error: RecognitionErrorCode,
+  target?: Target,
+): Promise<void> {
+  return fire(page, [["error", { error, message: "" }]], target);
 }
 
 /** The service returned a final result with no hypothesis it was confident in, then ended. */
@@ -192,6 +236,6 @@ export function hearNoMatch(page: Page): Promise<void> {
 }
 
 /** The service ended without a result, as it does after `stop()` with nothing heard. */
-export function endListening(page: Page): Promise<void> {
-  return fire(page, [["end"]]);
+export function endListening(page: Page, target?: Target): Promise<void> {
+  return fire(page, [["end"]], target);
 }

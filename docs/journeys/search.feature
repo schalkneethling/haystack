@@ -585,6 +585,19 @@ Feature: Searching my saved links
     Then the message about what was heard goes
 
   @playwright:apps/worker/e2e/search-voice.e2e.ts
+  Scenario: Typing or searching while the browser listens
+    What I type or search for is mine, so the browser stops listening, and
+    anything it would have heard later never replaces it. Before the browser
+    starts listening, while it may still be asking me for the microphone,
+    pressing "Search by voice" again does nothing: the browser's own prompt
+    is where I cancel.
+
+    Given I pressed "Search by voice" and the browser is listening
+    When I type in the field, or search for what I typed
+    Then the browser stops listening, the button is no longer pressed, and the page says nothing about it
+    And the field keeps what I typed, and the results are for it
+
+  @playwright:apps/worker/e2e/search-voice.e2e.ts
   @playwright:apps/worker/e2e/design.e2e.ts
   Scenario Outline: Searching by voice fails
     Each failure ends listening and says why next to the field, in the alert
