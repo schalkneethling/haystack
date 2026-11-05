@@ -28,7 +28,6 @@ import { SEARCH_TIMING } from "../src/search/jev-search.ts";
 import {
   SEARCH_DEADLINE_MS,
   SEARCH_RESPONSE_MARGIN_MS,
-  SearchRejectedError,
   searchBookmarks,
   type SearchContext,
   type SearchSource,
@@ -219,6 +218,11 @@ function answerBy(signals: Record<string, Signals> = {}): JevResolver {
       usage: { input_tokens: 100 * Object.keys(body.state.bookmarks).length, output_tokens: 5 },
     });
   };
+}
+
+// Queues `count` copies of `resolver`, for a test that doesn't know the order of its requests.
+function respondEach(resolver: JevResolver, count: number): void {
+  fixture.respond(...Array<JevResolver>(count).fill(resolver));
 }
 
 function sent(index = 0): SentBody {
@@ -498,13 +502,132 @@ describe("searchBookmarks", () => {
     ]);
   });
 
-  it("rejects pair mode until it exists, and sends and logs nothing", async () => {
-    await saveEnriched("only");
-    const rejected = search({ settings: { ...SEARCH_SETTING_DEFAULTS, requestMode: "pair" } });
-    await expect(rejected).rejects.toBeInstanceOf(SearchRejectedError);
-    await expect(rejected).rejects.toMatchObject({ code: "SEARCH_REQUEST_MODE_UNSUPPORTED" });
-    expect(fixture.requests).toEqual([]);
-    expect(await runs()).toEqual([]);
+  describe("in pair mode", () => {
+    const pairSettings = { ...SEARCH_SETTING_DEFAULTS, requestMode: "pair" } as const;
+
+    it("sends one request for each candidate, logs the run as pair, and returns the same results as batched mode", async () => {
+      const best = await saveEnriched("best");
+      const middle = await saveEnriched("middle");
+      const worst = await saveEnriched("worst");
+      const signals = {
+        best: { noul: 0.9, score: 2.9 },
+        middle: { noul: 0.7, score: 2.5 },
+      };
+      respondEach(answerBy(signals), 3);
+      const pair = await search({ settings: pairSettings });
+
+      // One request each, with one bookmark in the state, and the query as it is sent in batched mode.
+      expect(fixture.requests).toHaveLength(3);
+      for (const index of [0, 1, 2]) {
+        expect(Object.keys(sent(index).state.bookmarks)).toHaveLength(1);
+        expect(sent(index).state.query).toBe(QUERY);
+      }
+      expect(sentMatchTexts()).toEqual(["best", "middle", "worst"]);
+      expect(resultIds(pair)).toEqual([best, middle]);
+      expect(await runs()).toEqual([
+        expect.objectContaining({
+          id: pair.runId,
+          request_mode: "pair",
+          outcome: "ok",
+          error: null,
+          jev_model: ANSWERING_MODEL,
+          input_tokens: 300,
+        }),
+      ]);
+      // Every candidate is logged, the one below both thresholds too.
+      expect(new Set((await answerRows(pair.runId)).map(({ bookmark_id }) => bookmark_id))).toEqual(
+        new Set([best, middle, worst]),
+      );
+
+      // Batched mode, given the same answers, returns the same results.
+      fixture.reset();
+      fixture.respond(answerBy(signals));
+      const batched = await search();
+      expect(batched.results).toEqual(pair.results);
+      expect(batched.outcome).toBe(pair.outcome);
+    });
+
+    it("returns the answered results of a partial failure, and the failed outcome when every request fails", async () => {
+      const answered = await saveEnriched("answered");
+      await saveEnriched("refused");
+      const answer = answerBy({ answered: { noul: 0.9, score: 2.9 } });
+      respondEach(async (request) => {
+        const body = (await request.clone().json()) as SentBody;
+        const asked = Object.values(body.state.bookmarks).map(({ match_text }) => match_text);
+        return asked.includes("refused")
+          ? HttpResponse.json({ detail: "fixture error" }, { status: 400 })
+          : answer(request);
+      }, 2);
+      const partial = await search({ settings: pairSettings });
+      expect(partial).toEqual({
+        runId: expect.any(String),
+        outcome: "partial",
+        results: [expect.objectContaining({ id: answered })],
+      });
+      expect(await runs()).toEqual([
+        expect.objectContaining({
+          request_mode: "pair",
+          outcome: "partial",
+          error: "status:400",
+          input_tokens: 100,
+        }),
+      ]);
+      expect((await answerRows(partial.runId)).map(({ bookmark_id }) => bookmark_id)).toEqual([
+        answered,
+      ]);
+
+      fixture.reset();
+      respondEach(status(400), 2);
+      const failed = await search({ settings: pairSettings });
+      expect(failed).toEqual({ runId: expect.any(String), outcome: "failed", results: [] });
+      expect((await runs()).at(-1)).toMatchObject({
+        request_mode: "pair",
+        outcome: "failed",
+        error: "status:400",
+        jev_model: CONFIGURED_MODEL,
+        input_tokens: 0,
+      });
+    });
+
+    it("ends at the same deadline, keeping what Jev answered and logging the rest as unanswered", async () => {
+      await saveEnriched("first");
+      await saveEnriched("second");
+      await saveEnriched("third");
+      const clock = fakeClock();
+      // A request's tokens count for far longer than the deadline at 1 token a second, so the
+      // second and third requests wait past it.
+      const limiter = new JevLimiter({ requestsPerSecond: 10, tokensPerSecond: 1 }, clock);
+      let answered = 0;
+      const answer = answerBy();
+      fixture.respond(async (request) => {
+        const response = await answer(request);
+        answered += 1;
+        return response;
+      });
+      let settled = false;
+      const searching = search({ settings: pairSettings, limiter, clock }).finally(() => {
+        settled = true;
+      });
+      await vi.waitFor(() => {
+        expect(answered).toBe(1);
+      });
+      await clock.advance(SEARCH_DEADLINE_MS - 1);
+      expect(settled).toBe(false);
+      await clock.advance(1);
+      const result = await searching;
+      expect(result.outcome).toBe("partial");
+      expect(fixture.requests).toHaveLength(1);
+      expect(await runs()).toEqual([
+        expect.objectContaining({
+          request_mode: "pair",
+          outcome: "partial",
+          error: "aborted",
+          latency_ms: SEARCH_DEADLINE_MS,
+          input_tokens: 100,
+        }),
+      ]);
+      expect(await answerRows(result.runId)).toHaveLength(1);
+    });
   });
 
   it("asks only about bookmarks that have at least one enrichment", async () => {
@@ -765,29 +888,29 @@ describe("searchBookmarks", () => {
       });
     }
     await saveEnriched("only");
-    // A failed search, one whose 400's body the client reads, a successful one, then rejected ones.
+    // A failed search, one whose 400's body the client reads, a successful one, a pair-mode one
+    // whose 400's body the client reads, then a rejected one.
     fixture.respond(
       status(500),
       status(500),
       status(500),
       () => HttpResponse.json({ detail: `${BODY_MARKER} bad request` }, { status: 400 }),
       answerBy(),
+      () => HttpResponse.json({ detail: `${BODY_MARKER} bad request` }, { status: 400 }),
     );
     await search();
     await search();
     await search();
+    await search({ settings: { ...SEARCH_SETTING_DEFAULTS, requestMode: "pair" } });
     await expect(search({}, `${QUERY} ${"x".repeat(SEARCH_QUERY_CAP)}`)).rejects.toMatchObject({
       code: "SEARCH_QUERY_INVALID",
     });
-    await expect(
-      search({ settings: { ...SEARCH_SETTING_DEFAULTS, requestMode: "pair" } }),
-    ).rejects.toMatchObject({ code: "SEARCH_REQUEST_MODE_UNSUPPORTED" });
 
     // The service logs each search it ran, so the check below has lines to look at.
     expect(lines.length).toBeGreaterThanOrEqual(2);
     const logged = JSON.stringify(lines);
     const errors = JSON.stringify((await runs()).map(({ error }) => error));
-    expect(errors).toBe(JSON.stringify(["status:500", "status:400", null]));
+    expect(errors).toBe(JSON.stringify(["status:500", "status:400", null, "status:400"]));
     for (const secret of [QUERY, "fixture error", BODY_MARKER, KEY]) {
       expect(logged).not.toContain(secret);
       expect(errors).not.toContain(secret);

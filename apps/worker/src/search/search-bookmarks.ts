@@ -7,10 +7,11 @@
 // and, as explicit arguments, the database, the Jev configuration, the search settings that the
 // caller read from Flagship once for this search (readSearchSettings in flags.ts) and the policy
 // that decides which bookmarks are Held. It
-// 1. rejects a query outside the shared schema's bounds, and pair mode until #213 builds it,
-//    before anything is read, sent or logged;
+// 1. rejects a query outside the shared schema's bounds before anything is read, sent or logged;
 // 2. reads the candidates (search-candidates.ts);
-// 3. asks Jev about them in batched mode (searchInChunks, #211), ending at its deadline;
+// 3. asks Jev about them in the settings' request mode, ending at its deadline: batched mode, a
+//    request for each chunk of them (searchInChunks, #211), or pair mode, a request for each one
+//    (searchInPairs, #213), through the same limiter and with the same shape of answer;
 // 4. ranks the answers by the display signal (search-ranking.ts);
 // 5. logs the run and every answer (search-log.ts), whatever the outcome;
 // 6. returns the outcome, the run's ID and the shown results.
@@ -39,6 +40,7 @@ import {
   SYSTEM_CLOCK,
 } from "./jev-limiter.ts";
 import { SEARCH_TIMING } from "./jev-search.ts";
+import { searchInPairs } from "./pair-search.ts";
 import { readSearchCandidates, type SearchCandidate } from "./search-candidates.ts";
 import { writeSearchLog } from "./search-log.ts";
 import { rankAnswers, signalMatches, usedSearchSettings } from "./search-ranking.ts";
@@ -118,7 +120,7 @@ export const SEARCH_RESPONSE_MARGIN_MS = 5_000;
 export const SEARCH_DEADLINE_MS = 20_000;
 
 /** Why a search was refused before anything was read, sent or logged. */
-export type SearchRejection = "SEARCH_QUERY_INVALID" | "SEARCH_REQUEST_MODE_UNSUPPORTED";
+export type SearchRejection = "SEARCH_QUERY_INVALID";
 
 /**
  * A search refused before anything was read, sent or logged. Its `code` is safe to log, and its
@@ -181,11 +183,11 @@ function startDeadline(clock: LimiterClock, deadlineMs: number): Deadline {
  * outcome, the run's ID and the shown results.
  *
  * Throws a SearchRejectedError, having read, sent and logged nothing, for a query that the
- * shared schema refuses (empty once trimmed, or longer than SEARCH_QUERY_CAP once trimmed), for
- * one longer than SEARCH_QUERY_CAP as given, spaces included, because that is what is stored, and
- * for the `pair` request mode, which #213 adds. Throws the client's configuration errors, such as
- * TYPESAFE_API_KEY_EMPTY, the same way. A Jev failure doesn't throw: it is the `partial` or
- * `failed` outcome, logged like any other. An error from the database does throw.
+ * shared schema refuses (empty once trimmed, or longer than SEARCH_QUERY_CAP once trimmed), and
+ * for one longer than SEARCH_QUERY_CAP as given, spaces included, because that is what is stored.
+ * Throws the client's configuration errors, such as TYPESAFE_API_KEY_EMPTY, the same way. A Jev
+ * failure doesn't throw: it is the `partial` or `failed` outcome, logged like any other. An error
+ * from the database does throw.
  *
  * The query is sent to Jev trimmed, as the schema returns it, and logged exactly as it was given,
  * because Phase 12 joins its runs to its labeled queries by the exact text (#204).
@@ -214,12 +216,6 @@ export async function searchBookmarks(
       `A search query must have 1 to ${SEARCH_QUERY_CAP} characters, and at least one that isn't a space`,
     );
   }
-  if (settings.requestMode === "pair") {
-    throw new SearchRejectedError(
-      "SEARCH_REQUEST_MODE_UNSUPPORTED",
-      "The pair request mode isn't built yet (#213), so search runs only in batched mode",
-    );
-  }
   assertJevConfig(jev);
   const used = usedSearchSettings(settings);
   // The deadline and the latency both start here, so the candidates' read counts towards both.
@@ -229,7 +225,9 @@ export async function searchBookmarks(
   let asked: ChunkedSearchResult;
   try {
     candidates = await readSearchCandidates(db, userId, policy);
-    asked = await searchInChunks(
+    // The mode the run records is the mode that asked, so the log says which one produced it.
+    const searchIn = used.requestMode === "pair" ? searchInPairs : searchInChunks;
+    asked = await searchIn(
       jev,
       {
         query: parsed.output,

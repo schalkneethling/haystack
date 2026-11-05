@@ -21,6 +21,11 @@
 // search cut short is `partial`, not lost. A chunk whose attempt is under way runs to its answer
 // or its time limit, because the client doesn't give the signal to `fetch`.
 //
+// Pair mode (#213, pair-search.ts) is this same search with one request for each bookmark instead
+// of one for each chunk: searchInRequests takes how the bookmarks are grouped into requests, and
+// everything after that, the limiter, the concurrency limit, the signal, the failures and the
+// shape of the result, is shared, so the two modes can't drift apart.
+//
 // Nothing here reads the database or ranks the answers (#212).
 import type { searchRuns } from "../db/schema.ts";
 import type { JevConfig, JevFailure, JevTiming } from "../enrichment/jev-client.ts";
@@ -111,15 +116,31 @@ interface ChunkOutcome {
  * before anything is sent. An aborted `signal` doesn't reject it: the chunks not yet sent are
  * failures with the reason `aborted`.
  */
-export async function searchInChunks(
+export function searchInChunks(
   config: JevConfig,
   ask: SearchAsk,
+  options: ChunkedSearchOptions = {},
+): Promise<ChunkedSearchResult> {
+  return searchInRequests(config, ask, chunkBookmarks, options);
+}
+
+/**
+ * The search that both request modes are: asks about the bookmarks of `ask` in the requests that
+ * `group` makes of them, in the order of the bookmarks, each request waiting its turn at the
+ * limiter, under the concurrency limit. A request that Jev finds too long is split in half, and
+ * one bookmark can't be split further. What it rejects with is searchInChunks', and `group`'s own
+ * errors, after the check for a bookmark given twice.
+ */
+export async function searchInRequests(
+  config: JevConfig,
+  ask: SearchAsk,
+  group: (ask: SearchAsk) => readonly (readonly SearchBookmark[])[],
   { limiter = ISOLATE_JEV_LIMITER, timing = SEARCH_TIMING, signal }: ChunkedSearchOptions = {},
 ): Promise<ChunkedSearchResult> {
   if (new Set(ask.bookmarks.map(({ id }) => id)).size !== ask.bookmarks.length) {
     throw new RangeError("A search request names a bookmark more than once");
   }
-  const chunks = chunkBookmarks(ask);
+  const chunks = group(ask);
   const inFlight = concurrencyLimit(SEARCH_JEV_CONCURRENCY);
 
   const askChunk = async (bookmarks: readonly SearchBookmark[]): Promise<ChunkOutcome> => {
