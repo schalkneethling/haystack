@@ -84,7 +84,10 @@ export const JEV_TIMING: JevTiming = {
   backoffInitialMs: JEV_BACKOFF_INITIAL_MS,
 };
 
-/** What the API accepts as `state`, `instructions` or a criterion: a string, an object or an array. */
+/**
+ * What the API accepts as `state`, `instructions` or a criterion: a string, an object or an
+ * array.
+ */
 export type JevContent = string | object;
 
 /** A yes/no question. A high answer must mean yes. */
