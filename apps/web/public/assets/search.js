@@ -358,10 +358,11 @@ function enhance(form, field, button, list, template, status, emptyState, transc
   // query: an answer already on its way when the abort comes can still reach the script.
   /** @type {{ query: string, controller: AbortController } | null} */
   let inFlight = null;
-  // The input mode that Try again gives the search it repeats, for the submit it causes. Set just
-  // before that submit, and cleared by it, so no other search takes it.
-  /** @type {InputMode | null} */
-  let repeatedMode = null;
+  // The query that Try again restored, with how it was entered. Searching it again, with the field
+  // unchanged, repeats that mode. The person's first edit forgets it, as voice input forgets the
+  // transcript, so a query they then type is typed.
+  /** @type {{ query: string, inputMode: InputMode } | null} */
+  let restored = null;
   // Which search run found each result, and the bookmark's ID, by the result's `li`. Each search
   // replaces the list, so a result is always recorded against the run that showed it, never a
   // later one's.
@@ -439,9 +440,9 @@ function enhance(form, field, button, list, template, status, emptyState, transc
       // results the page shows. Focus moves to the Search button before the search empties the
       // region, so it does not fall to the page with Try again. The form is then submitted, so
       // the search goes through the submit handler's rules, as a press of Search does, and the
-      // handler gives it the mode of the search that failed.
+      // handler gives it the mode of the search that failed, through `restored`.
       field.value = query;
-      repeatedMode = inputMode;
+      restored = { query, inputMode };
       button.focus();
       form.requestSubmit();
     });
@@ -589,15 +590,34 @@ function enhance(form, field, button, list, template, status, emptyState, transc
     void send(query, inputMode);
   }
 
+  /**
+   * How the query in the field was entered. Text that voice input placed is spoken, whatever came
+   * before it. Otherwise it is the mode of the query Try again restored, when it is that query.
+   * Anything else is typed. Both sides are trimmed, because the query is.
+   * @param {string} query The trimmed query in the field.
+   * @returns {InputMode}
+   */
+  function inputModeOf(query) {
+    if (transcriptInField() === query) {
+      return "web-speech";
+    }
+    if (restored !== null && restored.query === query) {
+      return restored.inputMode;
+    }
+    return "typed";
+  }
+
+  // The person's first edit forgets the restored query, as voice input forgets the transcript.
+  field.addEventListener("input", () => {
+    restored = null;
+  });
+
   // A press of Search or Enter in the field submits the form. The browser's own submission is
-  // stopped, and the query that is already being searched for is not sent again. A query was
-  // spoken when it is still the transcript that voice input placed, and typed otherwise. Both
-  // sides are trimmed, because the query is.
+  // stopped, and the query that is already being searched for is not sent again.
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     const query = field.value.trim();
-    const inputMode = repeatedMode ?? (transcriptInField() === query ? "web-speech" : "typed");
-    repeatedMode = null;
+    const inputMode = inputModeOf(query);
     if (query !== "" && inFlight?.query === query) {
       return;
     }

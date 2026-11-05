@@ -37,8 +37,9 @@ Feature: Searching my saved links
   A browser without speech recognition shows the plain search. The browser
   tests replace the browser's speech recognition with a stub, because a test
   can't use a microphone, so a real microphone is only checked by hand, in
-  Chrome. The page records how a query was entered, spoken or typed, and never
-  what was said (#217).
+  Chrome. The search records whether a query was spoken or typed. The words the
+  browser heard are stored as the query, as typed words are, but the audio is
+  never stored (#217).
 
   Background:
     Given I am signed in to Haystack
@@ -576,7 +577,20 @@ Feature: Searching my saved links
     And nothing has been searched
     When I press "Search"
     Then "rust error handling" is searched, and the message about what was heard goes
-    And the page records that the query was spoken, not what I said
+    And the search is recorded as spoken, with the words it heard as its query
+
+  @playwright:apps/worker/e2e/search-voice.e2e.ts
+  Scenario: Trying a failed spoken search again
+    A search that failed says so, with "Try again". Trying again repeats the
+    search as it was entered, so a spoken query is searched and recorded as
+    spoken, even when I typed in the field after it failed. Once I type in the
+    field again, a search of what I typed is recorded as typed.
+
+    Given I searched by voice, and the search failed
+    When I type in the field, then press "Try again"
+    Then "rust error handling" is searched again, and the search is recorded as spoken
+    When I press "Search" with the same words in the field
+    Then that search is recorded as spoken too
 
   @playwright:apps/worker/e2e/search-voice.e2e.ts
   Scenario: Stopping or changing what was heard
