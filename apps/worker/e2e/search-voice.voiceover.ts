@@ -85,6 +85,18 @@ test("the voice button is read with its name, and that it is listening is spoken
   await reachTheButton(page, voiceOver);
   await pressToListen(page, voiceOver);
   await expectSpoken(voiceOver, LISTENING);
+
+  // The pressed state is `aria-pressed`, which turns true on the `start` event, after the
+  // press. What VoiceOver calls it hasn't been heard yet, so the item under its cursor is
+  // attached to the test's output for the first CI run to record, and only the name, which is
+  // certain, is checked. What the record shows goes on #275.
+  await voiceOver.perform(voiceOver.keyboardCommands.moveCursorToKeyboardFocus);
+  const whilePressed = await voiceOver.itemText();
+  await test.info().attach("VoiceOver's item text on the pressed button", {
+    body: whilePressed,
+    contentType: "text/plain",
+  });
+  expect(whilePressed).toMatch(NAME);
 });
 
 test("an error that ends listening is spoken", async ({ page, voiceOver }) => {

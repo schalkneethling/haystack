@@ -921,8 +921,6 @@ test.describe("in forced colors", () => {
     await expect(page.locator("#empty-state")).toHaveCSS("border-top-style", "dashed");
   });
 
-  // The bar is a border, which forced colors keep, so the current page still differs from the
-  // other items by its bar and its weight, and not by color.
   // The voice button's edge is a border, which forced colors keep. They drop its straw fill while
   // it listens, so then its icon is a stop square instead of the microphone, and its edge is
   // 3 px instead of 1 px, neither of which is color (#216).
@@ -964,6 +962,8 @@ test.describe("in forced colors", () => {
     expect(icon.border).toBe("solid");
   });
 
+  // The bar is a border, which forced colors keep, so the current page still differs from the
+  // other items by its bar and its weight, and not by color.
   test("only the current page's link has the bar, and the others are underlined", async ({
     page,
   }) => {
