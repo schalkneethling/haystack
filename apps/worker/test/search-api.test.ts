@@ -140,6 +140,17 @@ function searchRequest(body: unknown, { signal }: { readonly signal?: AbortSigna
 // What the fake service answers unless a test says otherwise.
 const OK = { runId: "run-1", outcome: "ok", results: [] } as const;
 
+/** A stand-in for the request's `ExecutionContext`, which keeps what is given to `waitUntil`. */
+function fakeContext() {
+  const registered: Promise<unknown>[] = [];
+  return {
+    registered,
+    waitUntil: vi.fn((promise: Promise<unknown>) => {
+      registered.push(promise);
+    }),
+  };
+}
+
 function fakeService(answer: Awaited<ReturnType<SearchService>> = OK): Mock<SearchService> {
   return vi.fn<SearchService>(async () => answer);
 }
@@ -150,6 +161,7 @@ describe("postSearch, with a fake service", () => {
     const flags = flagsWith({ [SEARCH_SCORE_THRESHOLD_FLAG]: 2.2 });
     await postSearch(
       searchRequest({ query: `  ${QUERY} `, userId: "someone-else", channel: "eval" }),
+      fakeContext(),
       db,
       owner.userId,
       { ...env, FLAGS: flags },
@@ -215,6 +227,7 @@ describe("postSearch, with a fake service", () => {
 
     const response = await postSearch(
       searchRequest({ query: QUERY }),
+      fakeContext(),
       db,
       owner.userId,
       env,
@@ -245,6 +258,7 @@ describe("postSearch, with a fake service", () => {
     } as const;
     const response = await postSearch(
       searchRequest({ query: QUERY }),
+      fakeContext(),
       db,
       owner.userId,
       env,
@@ -262,6 +276,7 @@ describe("postSearch, with a fake service", () => {
     const failed = { runId: "run-9", outcome: "failed", results: [] } as const;
     const response = await postSearch(
       searchRequest({ query: QUERY }),
+      fakeContext(),
       db,
       owner.userId,
       env,
@@ -285,6 +300,7 @@ describe("postSearch, with a fake service", () => {
     });
     await postSearch(
       searchRequest({ query: QUERY }, { signal: abandoned.signal }),
+      fakeContext(),
       db,
       owner.userId,
       env,
@@ -306,6 +322,7 @@ describe("postSearch, with a fake service", () => {
       });
       const response = await postSearch(
         searchRequest({ query: QUERY }, { signal: abandoned.signal }),
+        fakeContext(),
         db,
         owner.userId,
         env,
@@ -331,7 +348,14 @@ describe("postSearch, with a fake service", () => {
     ],
   ])("answers %s with 400, and never calls the service", async (_, body, code) => {
     const service = fakeService();
-    const response = await postSearch(searchRequest(body), db, owner.userId, env, service);
+    const response = await postSearch(
+      searchRequest(body),
+      fakeContext(),
+      db,
+      owner.userId,
+      env,
+      service,
+    );
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ code });
     expect(service).not.toHaveBeenCalled();
@@ -341,6 +365,7 @@ describe("postSearch, with a fake service", () => {
     const service = fakeService();
     const response = await postSearch(
       searchRequest({ query: "a", padding: "x".repeat(64 * 1024) }),
+      fakeContext(),
       db,
       owner.userId,
       env,
@@ -357,6 +382,7 @@ describe("postSearch, with a fake service", () => {
     const service = fakeService();
     const response = await postSearch(
       searchRequest(`{"query":"${"\\ud83d\\ude00".repeat(SEARCH_QUERY_CAP / 2)}"}`),
+      fakeContext(),
       db,
       owner.userId,
       env,
@@ -366,19 +392,72 @@ describe("postSearch, with a fake service", () => {
     expect(service.mock.calls[0]?.[1]).toBe("\u{1f600}".repeat(SEARCH_QUERY_CAP / 2));
   });
 
+  // The route answers with the code the service gave, not a code of its own. The service has one
+  // code today, so the test gives it one the type doesn't know, to show that it is passed on.
   it("answers a rejection by the service with 400 and its code", async () => {
     const service = vi.fn<SearchService>(async () => {
-      throw new SearchRejectedError("SEARCH_QUERY_INVALID", "A search query must have 1 to 500");
+      throw new SearchRejectedError("SEARCH_OTHER_CODE" as never, "Refused for another reason");
     });
     const response = await postSearch(
       searchRequest({ query: QUERY }),
+      fakeContext(),
       db,
       owner.userId,
       env,
       service,
     );
     expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ code: "SEARCH_QUERY_INVALID" });
+    expect(await response.json()).toEqual({ code: "SEARCH_OTHER_CODE" });
+  });
+
+  // The runtime may cancel a request's handler when the client disconnects, so the search that
+  // writes the log is also given to `waitUntil`, which keeps it running for up to 30 seconds.
+  it("gives the search to waitUntil, so that it finishes whatever happens to the request", async () => {
+    const context = fakeContext();
+    let finished = false;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const service = vi.fn<SearchService>(async () => {
+      await gate;
+      finished = true;
+      return OK;
+    });
+    const handling = postSearch(
+      searchRequest({ query: QUERY }),
+      context,
+      db,
+      owner.userId,
+      env,
+      service,
+    );
+    await vi.waitFor(() => expect(context.waitUntil).toHaveBeenCalledTimes(1));
+    expect(finished).toBe(false);
+    release();
+    await context.registered[0];
+    expect(finished).toBe(true);
+    expect((await handling).status).toBe(200);
+  });
+
+  it("gives waitUntil a promise that never rejects, whatever the service throws", async () => {
+    const context = fakeContext();
+    const service = vi.fn<SearchService>(async () => {
+      throw Object.assign(new Error("secret detail"), { code: "TYPESAFE_API_KEY_EMPTY" });
+    });
+    const handling = postSearch(
+      searchRequest({ query: QUERY }),
+      context,
+      db,
+      owner.userId,
+      env,
+      service,
+    );
+    // The handler's rejection is watched from the start, as the entry point watches it.
+    const handled = expect(handling).rejects.toThrow("secret detail");
+    await vi.waitFor(() => expect(context.waitUntil).toHaveBeenCalledTimes(1));
+    await expect(context.registered[0]).resolves.toBeUndefined();
+    await handled;
   });
 
   // A configuration error or a database error isn't the caller's mistake, so it is the entry
@@ -388,7 +467,7 @@ describe("postSearch, with a fake service", () => {
       throw Object.assign(new Error("secret detail"), { code: "TYPESAFE_API_KEY_EMPTY" });
     });
     await expect(
-      postSearch(searchRequest({ query: QUERY }), db, owner.userId, env, service),
+      postSearch(searchRequest({ query: QUERY }), fakeContext(), db, owner.userId, env, service),
     ).rejects.toThrow("secret detail");
   });
 });
@@ -428,7 +507,13 @@ describe("postSearch, with the search service", () => {
       await saveEnriched("found");
       await respond();
 
-      const response = await postSearch(searchRequest({ query: QUERY }), db, owner.userId, env);
+      const response = await postSearch(
+        searchRequest({ query: QUERY }),
+        fakeContext(),
+        db,
+        owner.userId,
+        env,
+      );
 
       expect(response.status).toBe(httpStatus);
       expect(await response.text()).not.toContain(QUERY);
@@ -438,9 +523,49 @@ describe("postSearch, with the search service", () => {
     },
   );
 
+  // When the page leaves, the runtime may cancel the handler, but not what `waitUntil` holds. The
+  // test doesn't wait for the handler: it lets only what `waitUntil` holds finish, as a cancelled
+  // request would, and the run must be logged by then (#212: every valid search is logged).
+  it("logs the run of a search whose page left while Jev was answering", async () => {
+    await saveEnriched("found");
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const answer = answerBy({ found: { noul: 0.9, score: 2.8 } });
+    fixture.respond(async (request) => {
+      await gate;
+      return answer(request);
+    });
+    const page = new AbortController();
+    const context = fakeContext();
+
+    const handling = postSearch(
+      searchRequest({ query: QUERY }, { signal: page.signal }),
+      context,
+      db,
+      owner.userId,
+      env,
+    );
+    await vi.waitFor(() => expect(fixture.requests).toHaveLength(1));
+    page.abort();
+    release();
+    // Only what waitUntil holds is awaited, not `handling`.
+    await Promise.all(context.registered);
+
+    expect(await tableCounts()).toEqual({ runs: 1, answers: 1 });
+    expect((await handling).status).toBe(499);
+  });
+
   it("writes the query to no log, and not to the answer, when it is refused", async () => {
     const query = `${QUERY} ${"a".repeat(SEARCH_QUERY_CAP)}`;
-    const response = await postSearch(searchRequest({ query }), db, owner.userId, env);
+    const response = await postSearch(
+      searchRequest({ query }),
+      fakeContext(),
+      db,
+      owner.userId,
+      env,
+    );
     expect(response.status).toBe(400);
     expect(await response.text()).not.toContain(QUERY);
     expect(logged()).not.toContain(QUERY);
@@ -448,7 +573,13 @@ describe("postSearch, with the search service", () => {
   });
 
   it("writes the query to the body of no malformed request's answer either", async () => {
-    const response = await postSearch(searchRequest(`{"query":"${QUERY}"`), db, owner.userId, env);
+    const response = await postSearch(
+      searchRequest(`{"query":"${QUERY}"`),
+      fakeContext(),
+      db,
+      owner.userId,
+      env,
+    );
     expect(response.status).toBe(400);
     expect(await response.text()).not.toContain(QUERY);
     expect(logged()).not.toContain(QUERY);

@@ -270,6 +270,8 @@ async function oneRequest(db: Db, seeded: Seeded, mode: RequestMode): Promise<Re
       headers: { accept: "application/json", "content-type": "application/json" },
       body: JSON.stringify({ query: QUERY }),
     }),
+    // Nothing to keep alive: the process waits for the search itself.
+    { waitUntil: () => {} },
     db,
     session.user.id,
     envFor(mode),

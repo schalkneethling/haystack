@@ -140,9 +140,12 @@ Feature: Searching my saved links
     Changing the query while a search runs, giving up on it after 30 seconds or
     leaving the page ends the search I abandoned. It asks the service that
     judges my links about no more of them, because each request costs money,
-    and it is still logged, with the reason "aborted". A request already on its
-    way can't be taken back, so it is finished. Haystack's metrics show it as
-    a closed request (499), not as an outage of that service.
+    and it is still logged, with the reason "aborted", even if the page has
+    already gone, because Haystack keeps the search running for the log. A
+    request already on its way can't be taken back, so it is finished. If the
+    search is still running when the page is gone, Haystack answers 499, a
+    closed request, and Cloudflare's metrics count a disconnect as a status of
+    their own, so neither is read as an outage of that service.
 
     Given I started a search that is asking about my links in several requests
     When I change the query, so the page gives up on that search
@@ -390,8 +393,11 @@ Feature: Searching my saved links
   @playwright:apps/worker/e2e/design.e2e.ts
   Scenario Outline: A search that fails
     The page shows an error for any answer that isn't a list of results, which
-    the tests stub, because "A search that cannot be answered" is the only way
-    Haystack's own search fails. The error is in the page's one live region,
+    the tests stub. Of the ways Haystack's own search answers with an error,
+    "A search that cannot be answered", where Jev answers nothing, is the only
+    one that a valid search can meet because of Jev. The others, a body that is
+    refused (400) or too large (413) and a fault of Haystack's own (500), are
+    not something the page sends. The error is in the page's one live region,
     in the alert box of the save form's errors, and it does not take focus, so
     I can go on typing. The browser tests check that the results of the search
     before go only for an answer with an error.

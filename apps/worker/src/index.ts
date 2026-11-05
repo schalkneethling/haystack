@@ -235,7 +235,7 @@ async function handleAppRoute(
   // The page's searches, as `fetch` sends them. The Origin check ran before the session's, in
   // `answer`, and a request without a session never reaches here: it got the 401 (#214).
   if (path === SEARCH_API_PATH && request.method === "POST") {
-    return postSearch(request, db, session.user.id, env);
+    return postSearch(request, ctx, db, session.user.id, env);
   }
   if (path === SAVED_LINKS_PATH && isReadRequest(request)) {
     return showRecentSaves(db, session.user.id, env);

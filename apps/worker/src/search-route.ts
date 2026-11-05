@@ -37,8 +37,10 @@ export const SEARCH_API_PATH = "/api/search";
 /**
  * The most of a request's body that is read. A query is at most SEARCH_QUERY_CAP characters, and
  * the most a character takes in a JSON body is 6 bytes, when it is escaped as `\uXXXX`, so 3 KB
- * holds the longest query and the body's own syntax. The rest is cancelled, never read, so a
- * body of any size costs this much memory and CPU time.
+ * holds the longest query and the body's own syntax. The cap is 8 KiB, which is that 3 KB and
+ * headroom for whitespace and fields the route ignores, and a test checks that a query of the cap
+ * written with every character escaped is accepted. The rest is cancelled, never read, so a body
+ * of any size costs this much memory and CPU time.
  */
 const MAX_BODY_BYTES = 8 * 1024;
 
@@ -75,15 +77,20 @@ function refusal({ status, code }: (typeof REFUSALS)[keyof typeof REFUSALS]): Re
  * A search that the page abandoned, by its time limit, by a changed query or by leaving, is 499,
  * nginx's "client closed request", whatever its outcome, because nobody reads the answer. A 502
  * there would count in the metrics as a Jev outage, which every changed query would then look
- * like. The request's signal also ends the search itself, so that it stops asking Jev: a request
- * not yet sent is not sent (see `SearchContext.signal`). The search is still logged, with the
- * reason `aborted`, because every search that passes validation is.
+ * like. The runtime may cancel the handler on a disconnect before it answers, so 499 is what the
+ * handler answers only if it survives it, and Cloudflare's metrics count a disconnect as a status
+ * of their own, so a disconnect isn't read as a Jev outage either way. The request's signal also
+ * ends the search itself, so that it stops asking Jev: a request not yet sent is not sent (see
+ * `SearchContext.signal`). The search is still logged, with the reason `aborted`, even if the
+ * handler is cancelled, because it is also given to `waitUntil` (see below), and every search
+ * that passes validation is logged.
  *
  * Needs the `enable_request_signal` compatibility flag until the compatibility date of
  * 2026-11-17 (wrangler.jsonc), because without it `request.signal` never aborts.
  */
 export async function postSearch(
   request: Request,
+  context: Pick<ExecutionContext, "waitUntil">,
   db: Db,
   userId: string,
   env: SearchRouteEnv,
@@ -107,9 +114,15 @@ export async function postSearch(
     return refusal(REFUSALS.invalidQuery);
   }
 
-  let result: Awaited<ReturnType<SearchService>>;
-  try {
-    result = await search(
+  // The search is started here, given to `waitUntil` and then awaited for the answer. When the
+  // client disconnects, the runtime may cancel what the handler is doing ("tasks associated with
+  // that request may be canceled", Workers limits), which would lose the run before it is logged,
+  // and #212's rule is that every search that passes validation is. `waitUntil` keeps it running
+  // for up to 30 seconds after the response or the disconnect, and the search ends in at most
+  // SEARCH_DEADLINE_MS plus the attempt under way, 25 seconds, and its log, so the log fits.
+  // The promise given to `waitUntil` never rejects: its error is the handler's to answer with.
+  const searching = (async () =>
+    search(
       userId,
       parsed.output.query,
       { channel: "web", inputMode: "typed" },
@@ -120,10 +133,14 @@ export async function postSearch(
         policy: readReviewPolicy(env),
         signal: request.signal,
       },
-    );
+    ))();
+  context.waitUntil(searching.catch(() => undefined));
+  let result: Awaited<ReturnType<SearchService>>;
+  try {
+    result = await searching;
   } catch (error) {
     if (error instanceof SearchRejectedError) {
-      return refusal(REFUSALS.invalidQuery);
+      return jsonResponse({ code: error.code }, REFUSALS.invalidQuery.status);
     }
     throw error;
   }
