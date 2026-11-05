@@ -14,7 +14,6 @@ import {
   type StubbedAnswer,
 } from "./search-answers.ts";
 import { expect, test } from "./voiceover-fixtures.ts";
-import { waitForSpoken } from "./wait-for-spoken.ts";
 
 const FOUND = [
   { title: "Vitest browser mode guide", description: "Run tests in a real browser." },
@@ -71,37 +70,42 @@ async function focusHeadingAfterResults(page: Page): Promise<void> {
   );
 }
 
-/** Every new phrase VoiceOver says within `ms`, looked at as waitForSpoken looks. */
-async function listen(voiceOver: VoiceOverPlaywright, ms: number): Promise<string[]> {
+// How long to wait for the message, as waitForSpoken waits.
+const WAIT_FOR_MESSAGE_MS = 15_000;
+
+/**
+ * Every phrase VoiceOver said after Enter, collected here rather than from waitForSpoken, whose
+ * error is the only place it keeps its phrases and which quotes the pattern. It looks as
+ * waitForSpoken looks, pressing Shift with `capture: "initial"`, until the message is said or
+ * WAIT_FOR_MESSAGE_MS passes, and once it is said, for LISTEN_AFTER_MS more. `messageAt` is the
+ * index of the first phrase that holds the message, or -1.
+ */
+async function collect(
+  voiceOver: VoiceOverPlaywright,
+  pattern: RegExp,
+): Promise<{ heard: string[]; messageAt: number }> {
   const heard: string[] = [];
-  const deadline = Date.now() + ms;
-  while (Date.now() < deadline) {
-    await voiceOver.press("Shift", { capture: "initial" });
-    const phrase = (await voiceOver.spokenPhraseLog()).at(-1) ?? "";
+  const add = (phrase: string) => {
     if (phrase !== "" && phrase !== heard.at(-1)) {
       heard.push(phrase);
     }
+  };
+  for (const phrase of await voiceOver.spokenPhraseLog()) {
+    add(phrase);
   }
-  return heard;
-}
-
-/**
- * What VoiceOver said after Enter, up to the message, and whether it said the message. The flag
- * is kept apart from the phrases, because waitForSpoken's error quotes the pattern.
- */
-async function heardAfterEnter(
-  voiceOver: VoiceOverPlaywright,
-  pattern: RegExp,
-): Promise<{ heard: string[]; spoken: boolean }> {
-  const before = (await voiceOver.spokenPhraseLog()).filter((phrase) => phrase !== "");
-  if (pattern.test(before.join(" "))) {
-    return { heard: before, spoken: true };
+  let messageAt = heard.findIndex((phrase) => pattern.test(phrase));
+  let deadline = Date.now() + (messageAt === -1 ? WAIT_FOR_MESSAGE_MS : LISTEN_AFTER_MS);
+  while (Date.now() < deadline) {
+    await voiceOver.press("Shift", { capture: "initial" });
+    add((await voiceOver.spokenPhraseLog()).at(-1) ?? "");
+    if (messageAt === -1) {
+      messageAt = heard.findIndex((phrase) => pattern.test(phrase));
+      if (messageAt !== -1) {
+        deadline = Date.now() + LISTEN_AFTER_MS;
+      }
+    }
   }
-  try {
-    return { heard: [...before, ...(await waitForSpoken(voiceOver, pattern))], spoken: true };
-  } catch {
-    return { heard: before, spoken: false };
-  }
+  return { heard, messageAt };
 }
 
 test.describe.configure({ retries: 0 });
@@ -126,13 +130,13 @@ for (const { name, answer, written, pattern, tries } of CASES) {
       await page.keyboard.press("Enter");
       await expect(page.locator(SEARCH_STATUS)).toContainText(written);
       await expect(page.getByRole("heading", { name: "Results", level: 2 })).toBeFocused();
-      const { heard, spoken } = await heardAfterEnter(voiceOver, pattern);
-      const after = spoken ? await listen(voiceOver, LISTEN_AFTER_MS) : [];
+      const { heard, messageAt } = await collect(voiceOver, pattern);
+      const item = await voiceOver.itemText();
       console.log(
-        `[${name}] try ${attempt} ${spoken ? "SPOKEN" : "NOT SPOKEN"}: ${JSON.stringify(heard)}`,
+        `[${name}] try ${attempt} ${messageAt === -1 ? "NOT SPOKEN" : `SPOKEN at phrase ${messageAt + 1} of ${heard.length}`}: ${JSON.stringify(heard)}`,
       );
-      console.log(`[${name}] try ${attempt} after the message: ${JSON.stringify(after)}`);
-      expect(spoken, `VoiceOver said ${JSON.stringify(heard)}`).toBe(true);
+      console.log(`[${name}] try ${attempt} VoiceOver's cursor is on: ${JSON.stringify(item)}`);
+      expect(messageAt, `VoiceOver said ${JSON.stringify(heard)}`).toBeGreaterThanOrEqual(0);
     });
   }
 }
