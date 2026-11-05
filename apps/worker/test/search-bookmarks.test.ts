@@ -904,29 +904,72 @@ describe("writeSearchLog", () => {
     const second = await seedSignedInUser(DB, "second@example.com");
     const mine = await saveEnriched("mine");
     const theirs = await saveEnriched("theirs", { userId: second.userId });
-    const { runId } = await writeSearchLog(
-      db,
-      {
-        userId: owner.userId,
-        query: QUERY,
-        channel: "eval",
-        inputMode: null,
-        requestMode: "batched",
-        jevModel: ANSWERING_MODEL,
-        questions: "noul",
-        displaySignal: "noul",
-        noulThreshold: 0.5,
-        scoreThreshold: 1.5,
-        inputTokens: 200,
-        latencyMs: 10,
-        outcome: "ok",
-        error: null,
-      },
-      [
-        { bookmarkId: mine, noul: 0.9, score: null, shown: true },
-        { bookmarkId: theirs, noul: 0.9, score: null, shown: true },
-      ],
-    );
+    const { runId, loggedBookmarkIds } = await writeSearchLog(db, runLog(), [
+      { bookmarkId: mine, noul: 0.9, score: null, shown: true },
+      { bookmarkId: theirs, noul: 0.9, score: null, shown: true },
+    ]);
     expect((await answerRows(runId)).map(({ bookmark_id }) => bookmark_id)).toEqual([mine]);
+    expect([...loggedBookmarkIds]).toEqual([mine]);
+  });
+
+  // D1 bills every row a statement reads (Q12). Checking each answer's bookmark must cost a few
+  // rows for that answer, not a read of the whole collection for every statement, which would
+  // grow with the square of the collection.
+  it("reads a few rows for each answer it logs, however large the collection", async () => {
+    const DB = await d1();
+    const size = 200;
+    const ids = await seedBookmarks(
+      DB,
+      owner.userId,
+      Array.from({ length: size }, (_, index) => {
+        const url = `https://example.com/${index}`;
+        return { url, normalizedUrl: url, createdAt: index };
+      }),
+    );
+    // The D1 binding, with each batch's results kept, so their `meta.rows_read` can be read.
+    const metas: { rows_read: number }[][] = [];
+    const counted = new Proxy(DB, {
+      get(target, property) {
+        if (property === "batch") {
+          return async (statements: unknown[]) => {
+            const results = await target.batch(statements);
+            metas.push(results.map(({ meta }: { meta: { rows_read: number } }) => meta));
+            return results;
+          };
+        }
+        const value = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const { loggedBookmarkIds } = await writeSearchLog(
+      createDb(counted),
+      runLog(),
+      ids.map((bookmarkId) => ({ bookmarkId, noul: 0.5, score: null, shown: false })),
+    );
+    expect(loggedBookmarkIds.size).toBe(size);
+    expect(metas).toHaveLength(1);
+    // The first statement is the run's insert.
+    const answerReads = metas[0]!.slice(1).reduce((sum, { rows_read }) => sum + rows_read, 0);
+    expect(answerReads).toBeLessThanOrEqual(4 * size);
   });
 });
+
+// A run of the owner's, for the tests that call writeSearchLog directly.
+function runLog(): Parameters<typeof writeSearchLog>[1] {
+  return {
+    userId: owner.userId,
+    query: QUERY,
+    channel: "eval",
+    inputMode: null,
+    requestMode: "batched",
+    jevModel: ANSWERING_MODEL,
+    questions: "noul",
+    displaySignal: "noul",
+    noulThreshold: 0.5,
+    scoreThreshold: 1.5,
+    inputTokens: 200,
+    latencyMs: 10,
+    outcome: "ok",
+    error: null,
+  };
+}

@@ -11,6 +11,12 @@
 // the search would be lost for a bookmark that is gone anyway; its answer would have been deleted
 // with it a moment later. The same condition keeps another user's bookmark out of the log, should
 // a caller ever pass one.
+//
+// The condition looks each answer's bookmark up by its primary key, with EXISTS, so a statement
+// reads a few rows for each of its answers. `column1 IN (SELECT id FROM bookmarks WHERE user_id =
+// ?)` would read every one of the user's bookmarks in each statement, and as the number of
+// statements grows with the collection too, the rows read, which D1 bills, would grow with the
+// collection's square: about 17,000 for a search of 500 bookmarks, where this reads about 1,500.
 import { sql } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import { bookmarks, searchAnswers, searchRuns } from "../db/schema.ts";
@@ -58,7 +64,7 @@ function answerGroup(db: Db, runId: string, userId: string, answers: readonly Se
       sql`SELECT ${runId}, column1, column2, column3, column4, column5, column6, 0 FROM (VALUES ${sql.join(
         rows,
         sql`, `,
-      )}) WHERE column1 IN (SELECT ${bookmarks.id} FROM ${bookmarks} WHERE ${bookmarks.userId} = ${userId})`,
+      )}) WHERE EXISTS (SELECT 1 FROM ${bookmarks} WHERE ${bookmarks.id} = column1 AND ${bookmarks.userId} = ${userId})`,
     )
     .returning({ bookmarkId: searchAnswers.bookmarkId });
 }
