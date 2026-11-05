@@ -84,7 +84,7 @@ function isReadRequest(request: Request): boolean {
 // A browser asks for HTML when it navigates, which is when it loads a page or submits a form.
 // The site's scripts never do: the address form's asks for JSON, the delete dialog's sends
 // fetch()'s default, */*, and the search page's beacon, which records a followed result (#215),
-// sends no Accept header. So a POST that asks for HTML is a form submission, and one that does
+// sends `Accept: */*` too. So a POST that asks for HTML is a form submission, and one that does
 // not is a script's, which gets a 401 it can act on (#34).
 function wantsHtml(request: Request): boolean {
   return (request.headers.get("accept") ?? "").includes("text/html");

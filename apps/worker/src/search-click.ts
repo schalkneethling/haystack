@@ -11,7 +11,8 @@
 //   result twice leaves `clicked` at 1.
 // - 404 with `{ code: "SEARCH_ANSWER_NOT_FOUND" }` for any miss, with one answer for all of them,
 //   as the delete endpoint answers (plan, "Deleting bookmarks"): no such run, another user's run,
-//   no such bookmark in that run, and a deleted bookmark, whose answers were deleted with it. The
+//   no such bookmark in that run, an answer the page never showed (`shown` is 0), and a deleted
+//   bookmark, whose answers were deleted with it. The
 //   answer never reveals that another user's run exists.
 // - 400 with `{ code: "SEARCH_CLICK_INVALID" }` for a body that isn't the shape of
 //   `SearchClickRequest`, and 413 with `SEARCH_CLICK_TOO_LARGE` for one over MAX_BODY_BYTES. A body
@@ -87,6 +88,8 @@ export async function postSearchClick(
       and(
         eq(searchAnswers.searchRunId, runId),
         eq(searchAnswers.bookmarkId, bookmarkId),
+        // Only a result the page showed can be followed, so a candidate below the thresholds is a miss.
+        eq(searchAnswers.shown, true),
         exists(
           db
             .select({ id: searchRuns.id })

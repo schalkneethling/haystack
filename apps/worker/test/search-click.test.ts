@@ -1,7 +1,7 @@
 // POST /api/search/click (#215): the search page records that a person followed a result, by
 // setting `clicked` on that run's answer for that bookmark, as a weak relevance label for Phase 12.
 // The tests send requests to the Worker, as `navigator.sendBeacon` does from the page: the body is
-// JSON, but the request has no `Accept` header of its own and no custom header, so the session
+// JSON, but the request has `Accept: */*`, as `fetch` sends, and no custom header, so the session
 // cookie and the Origin check are the only things that tell who sent it and from where. A last
 // test calls the route's function in this process with a fake context, to show what it gives
 // `waitUntil`. See "Search page" and "Deleting bookmarks" in plans/haystack-v1-implementation-plan.md.
@@ -190,6 +190,27 @@ describe("POST /api/search/click", () => {
       expect(Object.values(await clickedAnswers())).toEqual([0, 0]);
     });
 
+    it("an answer that the page never showed, because it was below the thresholds", async () => {
+      const { runId, first, second } = await seedRun(owner);
+      await (
+        await d1()
+      )
+        .prepare("UPDATE search_answers SET shown = 0 WHERE search_run_id = ? AND bookmark_id = ?")
+        .bind(runId, first)
+        .run();
+
+      const hidden = await clickAsOwner({ runId, bookmarkId: first });
+      const shown = await clickAsOwner({ runId, bookmarkId: second });
+
+      expect(hidden.status).toBe(404);
+      expect(await hidden.json()).toEqual({ code: "SEARCH_ANSWER_NOT_FOUND" });
+      expect(shown.status).toBe(204);
+      expect(await clickedAnswers()).toEqual({
+        [`${runId}/${first}`]: 0,
+        [`${runId}/${second}`]: 1,
+      });
+    });
+
     it("a deleted bookmark, whose answers were deleted with it", async () => {
       const { runId, first, second } = await seedRun(owner);
       await (await d1()).prepare("DELETE FROM bookmarks WHERE id = ?").bind(first).run();
@@ -214,7 +235,8 @@ describe("POST /api/search/click", () => {
     it("a request without a session with 401, as a script's request, and clicks nothing", async () => {
       const { runId, first } = await seedRun(owner);
 
-      // sendBeacon sets no Accept header, so the Worker does not take it for a page request.
+      // sendBeacon sends `Accept: */*`, as fetch does, which has no text/html, so the Worker
+      // does not take it for a page request.
       const answer = await beacon({ origin }, { runId, bookmarkId: first });
       expect(answer.status).toBe(401);
       expect(Object.values(await clickedAnswers())).toEqual([0, 0]);
@@ -305,7 +327,9 @@ describe("postSearchClick, called in this process", () => {
 
     expect(response.status).toBe(204);
     expect(context.waitUntil).toHaveBeenCalledTimes(1);
-    await Promise.all(registered);
+    // What was registered is the update itself, which answers with the row it marked, so a
+    // registration of anything else, or of a promise that is not the update, fails here.
+    await expect(registered[0]).resolves.toEqual({ bookmarkId: first });
     expect((await clickedAnswers())[`${runId}/${first}`]).toBe(1);
   });
 

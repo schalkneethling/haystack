@@ -512,7 +512,8 @@ function enhance(form, field, button, list, template, status, emptyState) {
    */
   function recordFollow(event) {
     const link = event.target instanceof Element ? event.target.closest("h3 a[href]") : null;
-    const followed = link === null ? undefined : runOf.get(link.closest("li") ?? link);
+    const item = link?.closest("li");
+    const followed = item ? runOf.get(item) : undefined;
     if (followed === undefined) {
       return;
     }
