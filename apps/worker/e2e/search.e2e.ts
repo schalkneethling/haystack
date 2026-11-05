@@ -195,7 +195,7 @@ test("a search posts the trimmed query as JSON, and puts nothing in the address"
   expect(new URL(request.url()).search).toBe("");
   expect(await request.headerValue("content-type")).toBe("application/json");
   expect(await request.headerValue("accept")).toBe("application/json");
-  expect(body).toEqual({ query: "a tool for testing" });
+  expect(body).toEqual({ query: "a tool for testing", inputMode: "typed" });
   expect(new URL(page.url()).pathname + new URL(page.url()).search).toBe("/");
 });
 
