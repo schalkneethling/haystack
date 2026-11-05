@@ -59,15 +59,20 @@ function answerGroup(db: Db, runId: string, userId: string, answers: readonly Se
         rows,
         sql`, `,
       )}) WHERE column1 IN (SELECT ${bookmarks.id} FROM ${bookmarks} WHERE ${bookmarks.userId} = ${userId})`,
-    );
+    )
+    .returning({ bookmarkId: searchAnswers.bookmarkId });
 }
 
-/** Writes the run and its answers in one batch, and returns the run's ID. */
+/**
+ * Writes the run and its answers in one batch, and returns the run's ID and the IDs of the
+ * bookmarks whose answers were written, which leaves out any bookmark that was deleted or isn't
+ * the user's.
+ */
 export async function writeSearchLog(
   db: Db,
   run: SearchRunLog,
   answers: readonly SearchAnswerLog[],
-): Promise<string> {
+): Promise<{ readonly runId: string; readonly loggedBookmarkIds: ReadonlySet<string> }> {
   const id = crypto.randomUUID();
   const groups: ReturnType<typeof answerGroup>[] = [];
   for (let start = 0; start < answers.length; start += SEARCH_ANSWERS_PER_STATEMENT) {
@@ -75,6 +80,9 @@ export async function writeSearchLog(
       answerGroup(db, id, run.userId, answers.slice(start, start + SEARCH_ANSWERS_PER_STATEMENT)),
     );
   }
-  await db.batch([db.insert(searchRuns).values({ ...run, id }), ...groups]);
-  return id;
+  const [, ...written] = await db.batch([db.insert(searchRuns).values({ ...run, id }), ...groups]);
+  return {
+    runId: id,
+    loggedBookmarkIds: new Set(written.flat().map(({ bookmarkId }) => bookmarkId)),
+  };
 }

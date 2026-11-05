@@ -10,7 +10,7 @@
 // 1. rejects a query outside the shared schema's bounds, and pair mode until #213 builds it,
 //    before anything is read, sent or logged;
 // 2. reads the candidates (search-candidates.ts);
-// 3. asks Jev about them in batched mode (searchInChunks, #211), ending at SEARCH_DEADLINE_MS;
+// 3. asks Jev about them in batched mode (searchInChunks, #211), ending at its deadline;
 // 4. ranks the answers by the display signal (search-ranking.ts);
 // 5. logs the run and every answer (search-log.ts), whatever the outcome;
 // 6. returns the outcome, the run's ID and the shown results.
@@ -70,6 +70,12 @@ export interface SearchContext {
   readonly timing?: JevTiming;
   /** The clock the deadline and the latency are measured on. The Worker's by default. */
   readonly clock?: LimiterClock;
+  /**
+   * How long after it starts the search stops asking Jev. SEARCH_DEADLINE_MS by default, which
+   * the web route keeps. Phase 12's evaluation and latency runs (#221, #223) may pass a longer
+   * one, because they search large collections and no page waits for them.
+   */
+  readonly deadlineMs?: number;
 }
 
 /** One shown result, in the search page's own shape (`SearchAnswer` in @haystack/schemas). */
@@ -98,7 +104,8 @@ export interface SearchBookmarksResult {
 export const SEARCH_RESPONSE_MARGIN_MS = 5_000;
 
 /**
- * How long after it starts a search stops asking Jev: 20 seconds, the page's 30 less an attempt's
+ * The default deadline, which the web route keeps: how long after it starts, before the candidates
+ * are read, a search stops asking Jev. It is 20 seconds, the page's 30 less an attempt's
  * time limit (SEARCH_TIMING's 5 seconds) and SEARCH_RESPONSE_MARGIN_MS. At the deadline, a chunk
  * waiting on the limiter, a backoff or a connection sends nothing, and a split chunk's halves are
  * not sent, so each is unanswered, and the search is `partial`, or `failed` when nothing was
@@ -151,40 +158,22 @@ function runError(failures: readonly SearchChunkFailure[]): string | null {
   return codes.length === 0 ? null : [...new Set(codes)].join(",");
 }
 
-// Asks Jev about the candidates until the deadline. The deadline's timer stops when the search
-// does, so a finished search leaves nothing waiting on the clock.
-async function askUntilDeadline(
-  jev: JevConfig,
-  query: string,
-  candidates: readonly SearchCandidate[],
-  settings: SearchSettings,
-  { limiter, timing, clock }: Required<Pick<SearchContext, "limiter" | "timing" | "clock">>,
-): Promise<ChunkedSearchResult> {
+/** A signal that is aborted `deadlineMs` after it is made, and how to stop its timer. */
+interface Deadline {
+  readonly signal: AbortSignal;
+  /** Stops the timer, so a finished search leaves nothing waiting on the clock. */
+  stop(): void;
+}
+
+function startDeadline(clock: LimiterClock, deadlineMs: number): Deadline {
   const deadline = new AbortController();
   const finished = new AbortController();
-  void clock.sleep(SEARCH_DEADLINE_MS, finished.signal).then(() => {
+  void clock.sleep(deadlineMs, finished.signal).then(() => {
     if (!finished.signal.aborted) {
       deadline.abort(new SearchDeadlineError());
     }
   });
-  try {
-    return await searchInChunks(
-      jev,
-      {
-        query,
-        bookmarks: candidates.map(({ id, title, kind, matchText }) => ({
-          id,
-          title,
-          kind,
-          matchText,
-        })),
-        questions: settings.questions,
-      },
-      { limiter, timing, signal: deadline.signal },
-    );
-  } finally {
-    finished.abort();
-  }
+  return { signal: deadline.signal, stop: () => finished.abort() };
 }
 
 /**
@@ -192,7 +181,8 @@ async function askUntilDeadline(
  * outcome, the run's ID and the shown results.
  *
  * Throws a SearchRejectedError, having read, sent and logged nothing, for a query that the
- * shared schema refuses (empty once trimmed, or longer than SEARCH_QUERY_CAP once trimmed) and
+ * shared schema refuses (empty once trimmed, or longer than SEARCH_QUERY_CAP once trimmed), for
+ * one longer than SEARCH_QUERY_CAP as given, spaces included, because that is what is stored, and
  * for the `pair` request mode, which #213 adds. Throws the client's configuration errors, such as
  * TYPESAFE_API_KEY_EMPTY, the same way. A Jev failure doesn't throw: it is the `partial` or
  * `failed` outcome, logged like any other. An error from the database does throw.
@@ -212,13 +202,16 @@ export async function searchBookmarks(
     limiter = ISOLATE_JEV_LIMITER,
     timing = SEARCH_TIMING,
     clock = SYSTEM_CLOCK,
+    deadlineMs = SEARCH_DEADLINE_MS,
   }: SearchContext,
 ): Promise<SearchBookmarksResult> {
+  // The schema checks the cap after trimming, and the run stores the query as given, so the text
+  // as given is held to the cap too, or a query padded with spaces could be any length.
   const parsed = v.safeParse(SearchQuery, query);
-  if (!parsed.success) {
+  if (!parsed.success || query.length > SEARCH_QUERY_CAP) {
     throw new SearchRejectedError(
       "SEARCH_QUERY_INVALID",
-      `A search query must have 1 to ${SEARCH_QUERY_CAP} characters, not counting the spaces around it`,
+      `A search query must have 1 to ${SEARCH_QUERY_CAP} characters, and at least one that isn't a space`,
     );
   }
   if (settings.requestMode === "pair") {
@@ -229,21 +222,37 @@ export async function searchBookmarks(
   }
   assertJevConfig(jev);
   const used = usedSearchSettings(settings);
+  // The deadline and the latency both start here, so the candidates' read counts towards both.
   const started = clock.now();
-
-  const candidates = await readSearchCandidates(db, userId, policy);
-  const asked = await askUntilDeadline(jev, parsed.output, candidates, used, {
-    limiter,
-    timing,
-    clock,
-  });
+  const deadline = startDeadline(clock, deadlineMs);
+  let candidates: SearchCandidate[];
+  let asked: ChunkedSearchResult;
+  try {
+    candidates = await readSearchCandidates(db, userId, policy);
+    asked = await searchInChunks(
+      jev,
+      {
+        query: parsed.output,
+        bookmarks: candidates.map(({ id, title, kind, matchText }) => ({
+          id,
+          title,
+          kind,
+          matchText,
+        })),
+        questions: used.questions,
+      },
+      { limiter, timing, signal: deadline.signal },
+    );
+  } finally {
+    deadline.stop();
+  }
   const latencyMs = clock.now() - started;
 
   const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
   const shown = rankAnswers(asked.answers, used, (id) => byId.get(id)?.createdAt ?? 0);
   const shownIds = new Set(shown);
   const error = runError(asked.failures);
-  const runId = await writeSearchLog(
+  const { runId, loggedBookmarkIds } = await writeSearchLog(
     db,
     {
       userId,
@@ -291,9 +300,11 @@ export async function searchBookmarks(
   return {
     runId,
     outcome: asked.outcome,
+    // Only the results whose answer was logged: a bookmark deleted while Jev was answering has no
+    // answer in the log (search-log.ts), and its link is gone, so it isn't shown either.
     results: shown.flatMap((id) => {
       const candidate = byId.get(id);
-      return candidate === undefined
+      return candidate === undefined || !loggedBookmarkIds.has(id)
         ? []
         : [
             {

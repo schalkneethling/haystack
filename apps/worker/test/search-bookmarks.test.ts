@@ -33,6 +33,7 @@ import {
   type SearchContext,
   type SearchSource,
 } from "../src/search/search-bookmarks.ts";
+import { writeSearchLog } from "../src/search/search-log.ts";
 import { fakeClock } from "./fake-clock.ts";
 import {
   JEV_ORIGIN,
@@ -81,6 +82,9 @@ const OLDER_VERSION = ENRICHMENT_SCHEMA_VERSION - 1;
 
 // A query that no fixed text contains, so finding it anywhere means it leaked.
 const QUERY = "quokka-telescope-marmalade 7c41";
+
+// Text in a response body that no fixed text contains.
+const BODY_MARKER = "pangolin-body-marker-3e9d";
 
 const WEB: SearchSource = { channel: "web", inputMode: "typed" };
 
@@ -281,6 +285,31 @@ async function answerRows(runId?: string): Promise<AnswerRow[]> {
         )
   ).all();
   return results as AnswerRow[];
+}
+
+/**
+ * 120 bookmarks with a `match_text` of 2,000 characters, so that they make several chunks, and
+ * their IDs.
+ */
+async function seedSeveralChunks(): Promise<string[]> {
+  const DB = await d1();
+  const ids = await seedBookmarks(
+    DB,
+    owner.userId,
+    Array.from({ length: 120 }, (_, index) => {
+      const url = `https://example.com/${index}`;
+      return { url, normalizedUrl: url, createdAt: index };
+    }),
+  );
+  await seedEnrichments(
+    DB,
+    ids.map((bookmarkId, index) => ({
+      bookmarkId,
+      schemaVersion: ENRICHMENT_SCHEMA_VERSION,
+      matchText: `${index} ${"x".repeat(2000)}`,
+    })),
+  );
+  return ids;
 }
 
 // The IDs of the results, in their order.
@@ -526,6 +555,33 @@ describe("searchBookmarks", () => {
     expect(sentMatchTexts()).toEqual(["current", "older only"]);
   });
 
+  it("asks about the enrichment written last, even when it is at the older schema version", async () => {
+    const DB = await d1();
+    // After a Worker rollback, the older version can be written after the current one.
+    const rolledBack = await seedBookmark(DB, owner.userId, "https://example.com/r", "r");
+    await seedEnrichment(DB, rolledBack, ENRICHMENT_SCHEMA_VERSION, {
+      matchText: "written before the rollback",
+      createdAt: 1_000,
+    });
+    await seedEnrichment(DB, rolledBack, OLDER_VERSION, {
+      matchText: "written after the rollback",
+      createdAt: 2_000,
+    });
+    // Two enrichments written in the same millisecond: the higher schema version is used.
+    const together = await seedBookmark(DB, owner.userId, "https://example.com/t", "t");
+    await seedEnrichment(DB, together, ENRICHMENT_SCHEMA_VERSION, {
+      matchText: "same time, current version",
+      createdAt: 3_000,
+    });
+    await seedEnrichment(DB, together, OLDER_VERSION, {
+      matchText: "same time, older version",
+      createdAt: 3_000,
+    });
+    fixture.respond(answerBy());
+    await search();
+    expect(sentMatchTexts()).toEqual(["same time, current version", "written after the rollback"]);
+  });
+
   it("returns an empty result for an empty collection, asks Jev nothing, and logs the run", async () => {
     const DB = await d1();
     const url = "https://example.com/pending";
@@ -548,6 +604,8 @@ describe("searchBookmarks", () => {
   it.each([
     ["that is over the cap", "x".repeat(SEARCH_QUERY_CAP + 1)],
     ["that is only spaces", "   "],
+    // Under the cap once trimmed, but stored as given, so the stored text would be over it.
+    ["that is over the cap only with its spaces", `x${" ".repeat(SEARCH_QUERY_CAP)}`],
   ])("rejects a query %s, and sends and logs nothing", async (_, query) => {
     await saveEnriched("only");
     const rejected = search({}, query);
@@ -560,12 +618,14 @@ describe("searchBookmarks", () => {
     expect(await runs()).toEqual([]);
   });
 
-  it("accepts a query at the cap", async () => {
+  it.each([
+    ["without spaces", "x".repeat(SEARCH_QUERY_CAP)],
+    ["with spaces around it", ` ${"x".repeat(SEARCH_QUERY_CAP - 2)} `],
+  ])("accepts a query at the cap, %s, and stores it as given", async (_, query) => {
     await saveEnriched("only");
     fixture.respond(answerBy());
-    await expect(search({}, "x".repeat(SEARCH_QUERY_CAP))).resolves.toMatchObject({
-      outcome: "ok",
-    });
+    await expect(search({}, query)).resolves.toMatchObject({ outcome: "ok" });
+    expect((await runs()).map((run) => run.query)).toEqual([query]);
   });
 
   it("leaves out a deleted bookmark, whose delete removes its answers and keeps the runs", async () => {
@@ -594,18 +654,21 @@ describe("searchBookmarks", () => {
     expect((await answerRows(before.runId)).map(({ bookmark_id }) => bookmark_id)).toEqual([kept]);
   });
 
-  it("logs no answer for a bookmark deleted while Jev was answering, and keeps the search", async () => {
+  it("neither logs nor returns a bookmark deleted while Jev was answering, and keeps the search", async () => {
     const kept = await saveEnriched("kept");
     const deleted = await saveEnriched("deleted");
-    const answer = answerBy();
+    const matched = { noul: 0.9, score: 2.9 };
+    const answer = answerBy({ kept: matched, deleted: matched });
     fixture.respond(async (request) => {
       const DB = await d1();
       await DB.prepare("DELETE FROM bookmarks WHERE id = ?").bind(deleted).run();
       return answer(request);
     });
-    const { runId, outcome } = await search();
-    expect(outcome).toBe("ok");
-    expect((await answerRows(runId)).map(({ bookmark_id }) => bookmark_id)).toEqual([kept]);
+    const result = await search();
+    expect(result.outcome).toBe("ok");
+    expect((await answerRows(result.runId)).map(({ bookmark_id }) => bookmark_id)).toEqual([kept]);
+    // The link is gone, so it isn't returned either.
+    expect(resultIds(result)).toEqual([kept]);
   });
 
   it("never reads or returns another user's bookmarks, and logs each search as its user's", async () => {
@@ -702,8 +765,15 @@ describe("searchBookmarks", () => {
       });
     }
     await saveEnriched("only");
-    // A failed search, then a successful one, then a rejected one.
-    fixture.respond(status(500), status(500), status(500), answerBy());
+    // A failed search, one whose 400's body the client reads, a successful one, then rejected ones.
+    fixture.respond(
+      status(500),
+      status(500),
+      status(500),
+      () => HttpResponse.json({ detail: `${BODY_MARKER} bad request` }, { status: 400 }),
+      answerBy(),
+    );
+    await search();
     await search();
     await search();
     await expect(search({}, `${QUERY} ${"x".repeat(SEARCH_QUERY_CAP)}`)).rejects.toMatchObject({
@@ -717,8 +787,8 @@ describe("searchBookmarks", () => {
     expect(lines.length).toBeGreaterThanOrEqual(2);
     const logged = JSON.stringify(lines);
     const errors = JSON.stringify((await runs()).map(({ error }) => error));
-    expect(errors).toBe(JSON.stringify(["status:500", null]));
-    for (const secret of [QUERY, "fixture error", KEY]) {
+    expect(errors).toBe(JSON.stringify(["status:500", "status:400", null]));
+    for (const secret of [QUERY, "fixture error", BODY_MARKER, KEY]) {
       expect(logged).not.toContain(secret);
       expect(errors).not.toContain(secret);
     }
@@ -742,24 +812,7 @@ describe("searchBookmarks", () => {
   });
 
   it("keeps what Jev answered by the deadline, and logs the rest as unanswered and the run as partial", async () => {
-    const DB = await d1();
-    // Bookmarks with a `match_text` of 2,000 characters, so that 120 make several chunks.
-    const ids = await seedBookmarks(
-      DB,
-      owner.userId,
-      Array.from({ length: 120 }, (_, index) => {
-        const url = `https://example.com/${index}`;
-        return { url, normalizedUrl: url, createdAt: index };
-      }),
-    );
-    await seedEnrichments(
-      DB,
-      ids.map((bookmarkId, index) => ({
-        bookmarkId,
-        schemaVersion: ENRICHMENT_SCHEMA_VERSION,
-        matchText: `${index} ${"x".repeat(2000)}`,
-      })),
-    );
+    const ids = await seedSeveralChunks();
     const clock = fakeClock();
     // A full chunk's tokens count for many seconds at 1,000 tokens a second, so the second chunk
     // waits past the deadline.
@@ -796,5 +849,84 @@ describe("searchBookmarks", () => {
       }),
     ]);
     expect(await answerRows(result.runId)).toHaveLength(firstChunk);
+  });
+
+  it("ends at the deadline the caller passes, as an evaluation run may", async () => {
+    await seedSeveralChunks();
+    const clock = fakeClock();
+    const limiter = new JevLimiter({ requestsPerSecond: 10, tokensPerSecond: 1000 }, clock);
+    let answered = 0;
+    const answer = answerBy();
+    fixture.respond(async (request) => {
+      const response = await answer(request);
+      answered += 1;
+      return response;
+    });
+    const deadlineMs = 5_000;
+    let settled = false;
+    const searching = search({ limiter, clock, deadlineMs }).finally(() => {
+      settled = true;
+    });
+    await vi.waitFor(() => {
+      expect(answered).toBe(1);
+    });
+    await clock.advance(deadlineMs - 1);
+    expect(settled).toBe(false);
+    await clock.advance(1);
+    await vi.waitFor(() => {
+      expect(settled).toBe(true);
+    });
+    const result = await searching;
+    expect(result.outcome).toBe("partial");
+    expect(await runs()).toEqual([
+      expect.objectContaining({ outcome: "partial", error: "aborted", latency_ms: deadlineMs }),
+    ]);
+  });
+
+  // The deadline covers the whole search, so a deadline that passes while the candidates are
+  // read ends the search before anything is sent.
+  it("starts the deadline before it reads the candidates", async () => {
+    await saveEnriched("only");
+    // Answers the request that a deadline started after the read would let through.
+    fixture.respond(answerBy());
+    const result = await search({ deadlineMs: 0, clock: undefined });
+    expect(result).toEqual({ runId: expect.any(String), outcome: "failed", results: [] });
+    expect(fixture.requests).toEqual([]);
+    expect(await runs()).toEqual([
+      expect.objectContaining({ outcome: "failed", error: "aborted" }),
+    ]);
+  });
+});
+
+describe("writeSearchLog", () => {
+  it("logs no answer for a bookmark that isn't the run's user's", async () => {
+    const DB = await d1();
+    const second = await seedSignedInUser(DB, "second@example.com");
+    const mine = await saveEnriched("mine");
+    const theirs = await saveEnriched("theirs", { userId: second.userId });
+    const { runId } = await writeSearchLog(
+      db,
+      {
+        userId: owner.userId,
+        query: QUERY,
+        channel: "eval",
+        inputMode: null,
+        requestMode: "batched",
+        jevModel: ANSWERING_MODEL,
+        questions: "noul",
+        displaySignal: "noul",
+        noulThreshold: 0.5,
+        scoreThreshold: 1.5,
+        inputTokens: 200,
+        latencyMs: 10,
+        outcome: "ok",
+        error: null,
+      },
+      [
+        { bookmarkId: mine, noul: 0.9, score: null, shown: true },
+        { bookmarkId: theirs, noul: 0.9, score: null, shown: true },
+      ],
+    );
+    expect((await answerRows(runId)).map(({ bookmark_id }) => bookmark_id)).toEqual([mine]);
   });
 });
