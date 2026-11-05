@@ -30,6 +30,15 @@ Feature: Searching my saved links
   which the evaluation of the search (Phase 12) can use. Nothing about the
   page changes for me, and a failed record never keeps me from the saved page.
 
+  In a browser with speech recognition, such as Chrome or Safari, I can say
+  my query instead of typing it (#216). A button next to the field starts the
+  browser's own recognition, and what it heard goes in the field for me to
+  check. It never searches on its own: I press Search, as for a typed query.
+  A browser without speech recognition shows the plain search. The browser
+  tests replace the browser's speech recognition with a stub, because a test
+  can't use a microphone, so a real microphone is only checked by hand, in
+  Chrome.
+
   Background:
     Given I am signed in to Haystack
 
@@ -398,15 +407,20 @@ Feature: Searching my saved links
   @playwright:apps/worker/e2e/search.e2e.ts
   Scenario: Searching with the keyboard alone
     Focus stays where I searched from, so I can change the query and search
-    again straight away. The results come after the field and the button.
+    again straight away. The results come after the field and the buttons.
+    In a browser with speech recognition, the button "Search by voice" is
+    between the field and "Search", which the test makes so with the stub.
 
-    When I press Tab six times
-    Then the focus moves through the Haystack wordmark, the links "Search" and "Saved links", the button "Sign out", the field and the button "Search"
-    When I press Shift+Tab
+    Given my browser has speech recognition
+    When I press Tab eight times
+    Then the focus moves through the Haystack wordmark, the links "Search" and "Saved links", the button "Sign out", the button "Close messages", the field, the button "Search by voice" and the button "Search"
+    When I press Shift+Tab twice
     Then the field has focus
     When I type a query and press Enter
     Then the page says how many links match, and the field still has focus
     When I press Tab
+    Then the button "Search by voice" has focus
+    When I press Tab again
     Then the button "Search" has focus
     When I press Tab again
     Then the first result's title has focus
@@ -467,7 +481,7 @@ Feature: Searching my saved links
     "A search that cannot be answered", where Jev answers nothing, is the only
     one that a valid search can meet because of Jev. The others, a body that is
     refused (400) or too large (413) and a fault of Haystack's own (500), are
-    not something the page sends. The error is in the page's one live region,
+    not something the page sends. The error is in the search's live region,
     in the alert box of the save form's errors, and it does not take focus, so
     I can go on typing. The browser tests check that the results of the search
     before go only for an answer with an error.
@@ -523,6 +537,7 @@ Feature: Searching my saved links
     And the link signs me in and brings me back to the search page
 
   @playwright:apps/worker/e2e/search.e2e.ts
+  @playwright:apps/worker/e2e/search-voice.e2e.ts
   @integration:apps/worker/test/search-page.test.ts
   Scenario: Searching without JavaScript
     The results are built in the browser, so searching needs JavaScript. The
@@ -533,5 +548,91 @@ Feature: Searching my saved links
     When I open the search page
     Then it says "Searching needs JavaScript, which isn't running in this browser."
     And the link "Go to your saved links" takes me to my saved links
+    And there is no button "Search by voice", and no note about it
     When I type a query and press Enter
     Then the search page loads again, with no query in its address
+
+  @playwright:apps/worker/e2e/search-voice.e2e.ts
+  @playwright:apps/worker/e2e/design.e2e.ts
+  Scenario: Searching by voice
+    The button is added only when my browser has speech recognition, after
+    the field and before "Search". It is a toggle, pressed while the browser
+    listens, which it shows by turning straw with a stop square in place of
+    the microphone. It says it is listening only once the browser does, so not
+    while the browser is still asking me for the microphone. The browser
+    listens in my browser's language, for one query, and stops when I pause.
+    Focus stays on the button, so Tab takes me to "Search".
+
+    Given my browser has speech recognition
+    When I open the search page
+    Then the button "Search by voice" is next to the field
+    And under the field it says "In some browsers, including Chrome, searching by voice sends a recording of what you say to the browser maker's servers, which turn it into text."
+    When I press "Search by voice" and the browser starts listening
+    Then the button is pressed, and the page says "Listening. Say what you're looking for, then pause."
+    When I say "rust error handling" and pause
+    Then the field holds "rust error handling", in place of anything I had typed
+    And the button is no longer pressed, and the page says "Check what was heard in the field, then press Search."
+    And nothing has been searched
+    When I press "Search"
+    Then "rust error handling" is searched, and the message about what was heard goes
+
+  @playwright:apps/worker/e2e/search-voice.e2e.ts
+  Scenario: Stopping or changing what was heard
+    Given I pressed "Search by voice" and the browser is listening
+    When I press "Search by voice" again
+    Then the browser stops listening, and puts what it heard so far in the field
+    When I change the text in the field
+    Then the message about what was heard goes
+
+  @playwright:apps/worker/e2e/search-voice.e2e.ts
+  @playwright:apps/worker/e2e/design.e2e.ts
+  Scenario Outline: Searching by voice fails
+    Each failure ends listening and says why next to the field, in the alert
+    box of the page's other errors, and leaves the field as it was. Pressing
+    "Search by voice" again listens again. When listening was cancelled, by the
+    browser's own controls, nothing is said.
+
+    Given I pressed "Search by voice"
+    When <what happens>
+    Then the button is no longer pressed
+    And the page says "<message>" under the field
+    And the field still holds what I had typed
+
+    Examples:
+      | what happens                                            | message                                                                                       |
+      | I don't allow the browser to use the microphone         | This browser isn't allowing Haystack to use the microphone. You can type your search instead. |
+      | I say nothing                                           | No speech was recognized. You can try again, or type your search.                             |
+      | the browser recognizes none of what I said              | No speech was recognized. You can try again, or type your search.                             |
+      | the browser can't reach its recognition service         | Speech recognition couldn't reach its service. Check your connection, or type your search.    |
+      | the browser fails in another way, such as no microphone | Searching by voice isn't working in this browser right now. You can type your search instead. |
+
+  @playwright:apps/worker/e2e/search-voice.e2e.ts
+  Scenario: A browser without speech recognition
+    Given my browser has no speech recognition
+    When I open the search page
+    Then it is the plain search, with the field and the button "Search"
+    And there is no button "Search by voice", no disabled control and no message about it
+
+  @voiceover:apps/worker/e2e/search-voice.voiceover.ts
+  Scenario: Searching by voice with a screen reader
+    The test stubs the browser's speech recognition, because a test can't use
+    a microphone. It was written without a local run.
+
+    Given I use VoiceOver
+    When I move with Tab from the field to the button
+    Then VoiceOver reads its name, "Search by voice"
+    When I press it and the browser starts listening
+    Then VoiceOver says "Listening"
+    When I say nothing
+    Then VoiceOver says "No speech was recognized"
+
+  @untested
+  Scenario: Searching by voice with a real microphone in Chrome
+    No automated test uses a real microphone or Chrome's recognition service.
+    The manual check in the plan, under "Search page", "Voice", covers it.
+
+    Given I use Chrome with a microphone
+    When I press "Search by voice", allow the microphone, and say a query
+    Then the field holds what I said, and nothing is searched
+    When I press "Search"
+    Then the page shows what matches

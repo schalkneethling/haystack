@@ -17,6 +17,7 @@ import {
   type StubbedResult,
   saveResults,
 } from "./search-answers.ts";
+import { stubSpeechRecognition } from "./speech-recognition.ts";
 
 test.beforeEach(async ({ signIn }) => {
   await signIn();
@@ -111,9 +112,13 @@ test("each result has a Delete button named by its title, in a form that returns
 test("the dialog works with the keyboard, with Cancel first, and Escape deletes nothing", async ({
   page,
 }) => {
+  // The voice button (#216) is a stop after the field in a browser with speech recognition, as
+  // Playwright's Chromium is. The stub makes that so whatever the browser has.
+  await stubSpeechRecognition(page);
   await search(page, STUBBED);
   // Focus stays in the field after a search. The first result's link and its Delete button come
-  // after the Search button.
+  // after the voice button and the Search button.
+  await page.keyboard.press("Tab");
   await page.keyboard.press("Tab");
   await page.keyboard.press("Tab");
   await expect(page.getByRole("link", { name: STUBBED[0]?.title })).toBeFocused();
