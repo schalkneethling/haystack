@@ -278,8 +278,9 @@ Feature: Searching my saved links
     said only "browser" and the text field's hint, with the count written
     100 ms and then 500 ms after the results. #237 is to make it speak. A
     region that already holds text, aria-live="polite" without the role, and
-    aria-atomic="true" weren't spoken either, so what's left waits for
-    Schalk's decision (plan, "Search page"). search.voiceover.ts has a test
+    aria-atomic="true" weren't spoken either, and nor was the count with
+    focus moved to the results' heading first (plan, "Search page").
+    search.voiceover.ts has a test
     of it marked as failing, which shows the problem but doesn't cover this
     journey.
 

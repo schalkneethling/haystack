@@ -11,9 +11,9 @@
 // "browser" and the text field's hint. The processing message, the incomplete notice and the
 // error state are written the same way, to the same region, and without their marks none of the
 // four was spoken either (run 41914276764). In the same run, a region that already holds text,
-// `aria-live="polite"` without the role, and `aria-atomic="true"` weren't spoken either, so
-// what's left needs the owner's decision (plan, "Search page"). So each message has a test of
-// its own, marked as failing with `test.fail`, which
+// `aria-live="polite"` without the role, and `aria-atomic="true"` weren't spoken either, and
+// nor was the count with focus moved to the results' heading first (run 42090865867, plan,
+// "Search page"). So each message has a test of its own, marked as failing with `test.fail`, which
 // Playwright passes while the test fails, and reports as a failure once it passes, so the mark
 // can't outlive the fix. Playwright marks a whole test, not one step, which is why each message
 // has a test of its own, and why none of them is a step of the first test. A failing test passes
@@ -53,7 +53,7 @@ const NOT_SPOKEN_YET = {
   annotation: {
     type: "issue",
     description:
-      "#237: VoiceOver doesn't speak the live region's messages yet (runs 40849016780, 40854364804 and 41914276764)",
+      "#237: VoiceOver doesn't speak the live region's messages yet (runs 40849016780, 40854364804, 41914276764 and 42090865867)",
   },
 };
 
