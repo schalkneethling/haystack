@@ -2,7 +2,7 @@
 // their stylesheets and fonts under the CSP, and let a signed-in user sign out without
 // JavaScript.
 import AxeBuilder from "@axe-core/playwright";
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
 import { INVALID_LINK, openRefusalPage } from "./rejected-save-pages.ts";
 import { saveThroughForm } from "./save-through-form.ts";
@@ -16,6 +16,16 @@ import {
   type StubbedAnswer,
   TRY_AGAIN,
 } from "./search-answers.ts";
+import {
+  failWith,
+  hear,
+  removeSpeechRecognition,
+  startListening,
+  stubSpeechRecognition,
+  VOICE_MESSAGES,
+  VOICE_NAME,
+  VOICE_STATUS,
+} from "./speech-recognition.ts";
 import { browserHtmlProblems } from "../test/html-problems.ts";
 import { openWarnedForm, sendWithoutTheBox } from "./sensitivity-warning.ts";
 
@@ -72,10 +82,17 @@ async function rejectTitle(page: Page): Promise<void> {
   await page.waitForLoadState("load");
 }
 
-// The states of the search page (#206, #207, #208), with its answers stubbed in the browser. Each
-// state but the first is a search for the state's name, and the message the page then shows.
-// The last two then press a result's Delete button: one leaves the dialog open, and the other
-// deletes the search's only result, which leaves the empty state.
+// The states of the search page (#206, #207, #208, #216), with its answers stubbed in the browser.
+// Each state but the first is a search for the state's name, and the message the page then shows.
+// Two then press a result's Delete button: one leaves the dialog open, and the other deletes the
+// search's only result, which leaves the empty state. The voice states press the voice button,
+// with the browser's speech recognition stubbed, and the error is the network error's, the
+// longest of the three the issue names. Playwright's Chromium has speech recognition, so the
+// voice button is on the page in every state.
+const VOICE_STATES = ["while listening", "after hearing a query", "after a voice error"] as const;
+
+type VoiceState = (typeof VOICE_STATES)[number];
+
 const SEARCH_STATES = [
   "at first load",
   "with results",
@@ -86,11 +103,36 @@ const SEARCH_STATES = [
   "signed out",
   "with the delete dialog open",
   "after deleting its only result",
+  ...VOICE_STATES,
 ] as const;
 
 type SearchState = (typeof SEARCH_STATES)[number];
 
-const SEARCH_STATE_MESSAGES: Record<Exclude<SearchState, "at first load">, string> = {
+function isVoiceState(state: SearchState): state is VoiceState {
+  return (VOICE_STATES as readonly string[]).includes(state);
+}
+
+const VOICE_STATE_MESSAGES: Record<VoiceState, string> = {
+  "while listening": VOICE_MESSAGES.listening,
+  "after hearing a query": VOICE_MESSAGES.heard,
+  "after a voice error": VOICE_MESSAGES.network,
+};
+
+/** Presses the voice button, with recognition stubbed, and brings the voice input to `state`. */
+async function bringVoiceInputTo(page: Page, state: VoiceState, title: string): Promise<void> {
+  await stubSpeechRecognition(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: VOICE_NAME }).click();
+  await startListening(page);
+  if (state === "after hearing a query") {
+    await hear(page, title);
+  } else if (state === "after a voice error") {
+    await failWith(page, "network");
+  }
+  await expect(page.locator(VOICE_STATUS)).toHaveText(VOICE_STATE_MESSAGES[state]);
+}
+
+const SEARCH_STATE_MESSAGES: Record<Exclude<SearchState, "at first load" | VoiceState>, string> = {
   "with results": "2 saved links match your search.",
   "with no results": SEARCH_MESSAGES.none,
   "while searching": SEARCH_MESSAGES.processing,
@@ -102,6 +144,10 @@ const SEARCH_STATE_MESSAGES: Record<Exclude<SearchState, "at first load">, strin
 };
 
 async function bringSearchPageTo(page: Page, state: SearchState, title: string): Promise<void> {
+  if (isVoiceState(state)) {
+    await bringVoiceInputTo(page, state, title);
+    return;
+  }
   const found = [
     { title, description: `A description of ${title}.` },
     { title: "A second result", description: null },
@@ -566,7 +612,8 @@ for (const viewport of [
 }
 
 // The forms whose field and button share a row: the address form on the saved links page, and the
-// search form.
+// search form, here in a browser without speech recognition, so without the voice button (#216),
+// whose row is checked on its own below.
 const FORM_ROWS = [
   {
     name: "the address form",
@@ -581,6 +628,18 @@ const FORM_ROWS = [
     button: "Search",
   },
 ] as const;
+
+/** The left and right edges of the content box of the form around `field`: the room its row has. */
+function panelEdges(field: Locator) {
+  return field.locator("xpath=ancestor::form[1]").evaluate((element) => {
+    const style = getComputedStyle(element);
+    const box = element.getBoundingClientRect();
+    return {
+      left: box.left + parseFloat(style.paddingLeft) + parseFloat(style.borderLeftWidth),
+      right: box.right - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth),
+    };
+  });
+}
 
 // The design puts the button next to the field, and under it when the row has no room for both.
 // The row fills the panel either way, and a wrapped button is as wide as the field, with twice the
@@ -598,20 +657,15 @@ for (const [width, beside] of [
         signIn,
       }) => {
         await signIn();
+        await removeSpeechRecognition(page);
         await page.goto(form.path);
         const fieldLocator = page.getByRole(form.field.role, { name: form.field.name });
+        const buttonLocator = page.getByRole("button", { name: form.button, exact: true });
         const field = await fieldLocator.boundingBox();
-        const button = await page.getByRole("button", { name: form.button }).boundingBox();
+        const button = await buttonLocator.boundingBox();
         // The row's box, inside the panel's padding, is the room the two have.
         const row = await fieldLocator.locator("xpath=..").boundingBox();
-        const panel = await fieldLocator.locator("xpath=ancestor::form[1]").evaluate((element) => {
-          const style = getComputedStyle(element);
-          const box = element.getBoundingClientRect();
-          return {
-            left: box.left + parseFloat(style.paddingLeft) + parseFloat(style.borderLeftWidth),
-            right: box.right - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth),
-          };
-        });
+        const panel = await panelEdges(fieldLocator);
         if (field === null || button === null || row === null) {
           throw new Error(`${form.name} is not drawn`);
         }
@@ -624,20 +678,18 @@ for (const [width, beside] of [
           expect(button.x).toBeGreaterThan(field.x + field.width);
           // The field takes the spare room, so the button is as wide as its label, within the
           // fraction of a pixel its own share of the growth gives it.
-          const labelWidth = await page
-            .getByRole("button", { name: form.button })
-            .evaluate((element) => {
-              const style = getComputedStyle(element);
-              const range = document.createRange();
-              range.selectNodeContents(element);
-              return (
-                range.getBoundingClientRect().width +
-                parseFloat(style.paddingLeft) +
-                parseFloat(style.paddingRight) +
-                parseFloat(style.borderLeftWidth) +
-                parseFloat(style.borderRightWidth)
-              );
-            });
+          const labelWidth = await buttonLocator.evaluate((element) => {
+            const style = getComputedStyle(element);
+            const range = document.createRange();
+            range.selectNodeContents(element);
+            return (
+              range.getBoundingClientRect().width +
+              parseFloat(style.paddingLeft) +
+              parseFloat(style.paddingRight) +
+              parseFloat(style.borderLeftWidth) +
+              parseFloat(style.borderRightWidth)
+            );
+          });
           expect(button.width).toBeLessThan(labelWidth + 2);
         } else {
           expect(button.y - (field.y + field.height)).toBeCloseTo(24, 0);
@@ -646,6 +698,50 @@ for (const [width, beside] of [
         }
       });
     }
+  });
+}
+
+// With speech recognition, the voice button (#216) is a 48 px circle after the field. On a wide
+// row it sits between the field and Search, which keeps its own width. When the row has no room,
+// it moves under the field with Search, at the start of the line, and Search takes the rest of
+// that line, so the row still fills the panel.
+for (const [width, beside] of [
+  [1280, true],
+  [320, false],
+] as const) {
+  test.describe(`at ${width} px wide, with the voice button`, () => {
+    test.use({ viewport: { width, height: 800 } });
+
+    test(`the voice button is ${beside ? "between the field and Search" : "under the field, with Search after it"}, and the row fills the panel`, async ({
+      page,
+      signIn,
+    }) => {
+      await signIn();
+      await stubSpeechRecognition(page);
+      await page.goto("/");
+      const fieldLocator = page.getByRole("searchbox", { name: "Search your saved links" });
+      const field = await fieldLocator.boundingBox();
+      const voice = await page.getByRole("button", { name: VOICE_NAME }).boundingBox();
+      const search = await page.getByRole("button", { name: "Search", exact: true }).boundingBox();
+      const panel = await panelEdges(fieldLocator);
+      if (field === null || voice === null || search === null) {
+        throw new Error("The search row is not drawn");
+      }
+      expect(voice.width).toBeCloseTo(48, 0);
+      expect(voice.height).toBeCloseTo(48, 0);
+      expect(field.x).toBeCloseTo(panel.left, 0);
+      expect(search.x + search.width).toBeCloseTo(panel.right, 0);
+      expect(search.y).toBeCloseTo(voice.y, 0);
+      expect(search.x - (voice.x + voice.width)).toBeCloseTo(12, 0);
+      if (beside) {
+        expect(voice.y).toBeCloseTo(field.y, 0);
+        expect(voice.x - (field.x + field.width)).toBeCloseTo(12, 0);
+      } else {
+        expect(field.x + field.width).toBeCloseTo(panel.right, 0);
+        expect(voice.y - (field.y + field.height)).toBeCloseTo(24, 0);
+        expect(voice.x).toBeCloseTo(field.x, 0);
+      }
+    });
   });
 }
 
@@ -827,6 +923,47 @@ test.describe("in forced colors", () => {
 
   // The bar is a border, which forced colors keep, so the current page still differs from the
   // other items by its bar and its weight, and not by color.
+  // The voice button's edge is a border, which forced colors keep. They drop its straw fill while
+  // it listens, so then its icon is a stop square instead of the microphone, and its edge is
+  // 3 px instead of 1 px, neither of which is color (#216).
+  test("the voice button keeps its edge, and while it listens shows the stop square", async ({
+    page,
+  }) => {
+    await stubSpeechRecognition(page);
+    await page.goto("/");
+    const button = page.getByRole("button", { name: VOICE_NAME });
+    const icon = () =>
+      button.evaluate((element) => {
+        const shown = (selector: string) => {
+          const part = element.querySelector(selector);
+          return part === null ? null : getComputedStyle(part).display !== "none";
+        };
+        return { microphone: shown(".voice-icon-microphone"), stop: shown(".voice-icon-stop") };
+      });
+    await expect(button).toHaveCSS("border-top-style", "solid");
+    await expect(button).toHaveCSS("border-top-width", "1px");
+    expect(await icon()).toEqual({ microphone: true, stop: false });
+
+    await button.click();
+    await startListening(page);
+    await expect(button).toHaveAttribute("aria-pressed", "true");
+    await expect(button).toHaveCSS("border-top-style", "solid");
+    await expect(button).toHaveCSS("border-top-width", "3px");
+    expect(await icon()).toEqual({ microphone: false, stop: true });
+  });
+
+  test("the voice input's error keeps the alert's border and icon", async ({ page }) => {
+    await bringSearchPageTo(page, "after a voice error", "A guide");
+    const alert = page.locator(`${VOICE_STATUS} > .alert`);
+    await expect(alert).toHaveCSS("border-top-style", "solid");
+    const icon = await alert.evaluate((element) => {
+      const style = getComputedStyle(element, "::before");
+      return { content: style.content, border: style.borderTopStyle };
+    });
+    expect(icon.content).toContain('"!"');
+    expect(icon.border).toBe("solid");
+  });
+
   test("only the current page's link has the bar, and the others are underlined", async ({
     page,
   }) => {

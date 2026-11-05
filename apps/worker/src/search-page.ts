@@ -32,7 +32,7 @@ const NEEDS_SCRIPT_ID = "search-needs-script";
  *
  * The heading, the live region and the empty state have the IDs the saved links page and /held
  * give theirs, so that the delete dialog finds them (#208): focus moves to the heading when the
- * last result is deleted, the dialog writes its message to the page's one live region, and it
+ * last result is deleted, the dialog writes its message to the search's live region, and it
  * shows the empty state, which search.js hides again with the next search's outcome. The live
  * region is in the page from the start, because a screen reader announces a change to a live
  * region that already exists. It is empty, or holds the result of a delete that returned here

@@ -324,7 +324,8 @@ main > :where(p, ul, div) {
 }
 
 /* The address form (#97) and the search form (#206). The field and the button share a row that
-   fills the panel, and the button moves under the field when the row has no room for both. */
+   fills the panel, and the button moves under the field when the row has no room for both. On
+   the search form, the voice button (#216) can sit between them (`.voice-button` below). */
 .address-form,
 .search-form {
   gap: var(--space-s);
@@ -391,6 +392,64 @@ main > :where(p, ul, div) {
 /* The search page (#206). Browsers that predate the element would draw it inline. */
 search {
   display: block;
+}
+
+/* The voice button (#216), which voice-input.js adds after the search field only when the browser
+   has speech recognition. It is a secondary button, round and as tall as the field and Search,
+   48 px, so it never shrinks or grows: on one row it sits between the two, and when the row has
+   no room, it moves under the field with Search, which takes the rest of that line. The row's own
+   rule makes its buttons grow, so `flex` is set at the row's specificity. */
+.voice-button {
+  block-size: var(--target-primary);
+  inline-size: var(--target-primary);
+  padding: 0;
+}
+
+.search-row > .voice-button {
+  flex: none;
+}
+
+.voice-icon {
+  block-size: 1.5rem;
+  inline-size: 1.5rem;
+}
+
+/* The icon is a microphone, and a stop square while the browser listens, so the state is a
+   change of shape as well as of color. */
+.voice-icon-stop,
+.voice-button[aria-pressed="true"] .voice-icon-microphone {
+  display: none;
+}
+
+.voice-button[aria-pressed="true"] .voice-icon-stop {
+  display: inline;
+}
+
+/* While it listens, the button has the primary button's straw fill and edge, which is ochre in
+   the light scheme, because straw alone is under 3:1 on white. */
+.voice-button[aria-pressed="true"],
+.voice-button[aria-pressed="true"]:hover {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary-border);
+  color: var(--color-on-primary);
+}
+
+/* Forced colors drop the straw fill, so there the listening button's edge is 3 px, three times
+   its usual width, as well as holding the stop square. Both are shapes, which forced colors
+   keep. `forced-color-adjust`, which could keep a fill, isn't newly available Baseline, which
+   the style linter flags. */
+@media (forced-colors: active) {
+  .voice-button[aria-pressed="true"] {
+    border-width: 3px;
+  }
+}
+
+/* The voice input's live region, under the field's row. It is in the page from the start, and
+   an empty one is taken out of the panel's flow, so the panel's gap doesn't leave a space for
+   it. It is still drawn, which keeps it a live region that a screen reader follows. Its messages
+   are the page's: the raised status box (`.status > p`), and the alert's box for an error. */
+.voice-status:empty {
+  position: absolute;
 }
 
 /* Notices and messages. */

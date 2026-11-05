@@ -26,9 +26,9 @@
 // - Each result is a saved link's card (design review), cloned from the template that the Worker
 //   renders from the saved links page's card, with its Delete control (#208), which the delete
 //   dialog handles: it finds the form when it is used, because the results come after the page
-//   loaded. After a delete, the dialog moves focus and writes "Deleted …" to the one live region,
-//   in place of the count, and shows the empty state when no result is left. The next search's
-//   outcome hides the empty state again.
+//   loaded. After a delete, the dialog moves focus and writes "Deleted …" to the search's live
+//   region, in place of the count, and shows the empty state when no result is left. The next
+//   search's outcome hides the empty state again.
 //
 // - Following a result is recorded (#215), as a weak relevance label for the evaluations of Phase
 //   12. A click on a result's link, Enter on it and a middle click send the search run's ID and
@@ -41,10 +41,15 @@
 //   navigation in Chromium and WebKit, and a beacon is the one made for it (plan, "Search page",
 //   "Built in #215").
 //
-// The page's one script, so it imports the delete dialog's module and the message bar's (plan,
-// "Search page", "Performance").
+// - Voice input (#216) is voice-input.js's: a button next to the field, added once the page is
+//   enhanced and only when the browser has speech recognition, which puts what it heard in the
+//   field and never searches on its own.
+//
+// The page's one script, so it imports the delete dialog's module, the message bar's and the
+// voice input's (plan, "Search page", "Performance").
 import "./delete-dialog.js";
 import "./message-bar.js";
+import { addVoiceInput } from "./voice-input.js";
 
 const FORM = "form[data-search-form]";
 const FIELD_ID = "search-query";
@@ -56,7 +61,8 @@ const RESULTS_HEADING_ID = "results-heading";
 const NEEDS_SCRIPT_ID = "search-needs-script";
 // The template of a saved link's card: CARD_TEMPLATE_ID in apps/worker/src/bookmark-card.ts.
 const CARD_TEMPLATE_ID = "bookmark-card-template";
-// The page's one live region, which the delete dialog finds by the same ID (#208).
+// The search's live region, in the message bar, which the delete dialog finds by the same ID
+// (#208). The voice input's messages have a region of their own, next to the field (#216).
 const STATUS_ID = "list-status";
 // What the delete dialog shows when the last result is deleted (#208).
 const EMPTY_STATE_ID = "empty-state";
@@ -397,8 +403,9 @@ function enhance(form, field, button, list, template, status, emptyState) {
 
   /**
    * The error state, which replaces the results: the alert's box, with what went wrong and Try
-   * again, which sends the same query again. It is in the live region, so it is announced, and the
-   * page has one live region (#208).
+   * again, which sends the same query again. It is in the search's live region, so it is
+   * announced, and it has no `alert` role, which would make it a second region for the search's
+   * messages (#208).
    * @param {string} text
    * @param {string} query The query that failed.
    */
@@ -620,5 +627,6 @@ if (
   fillsTheTemplate(template)
 ) {
   enhance(form, field, button, list, template, status, document.getElementById(EMPTY_STATE_ID));
+  addVoiceInput(field, form);
   document.getElementById(NEEDS_SCRIPT_ID)?.setAttribute("hidden", "");
 }
