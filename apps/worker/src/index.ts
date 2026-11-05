@@ -34,6 +34,7 @@ import { withoutSearchLink } from "./page.ts";
 import { showRecentSaves } from "./recent-saves.ts";
 import { runScheduled } from "./scheduled.ts";
 import { showSearchPage } from "./search-page.ts";
+import { postSearchClick, SEARCH_CLICK_PATH } from "./search-click.ts";
 import { postSearch, SEARCH_API_PATH } from "./search-route.ts";
 import {
   saveBookmark,
@@ -81,8 +82,9 @@ function isReadRequest(request: Request): boolean {
 }
 
 // A browser asks for HTML when it navigates, which is when it loads a page or submits a form.
-// The site's scripts never do: the address form's asks for JSON, and the delete dialog's sends
-// fetch()'s default, */*. So a POST that asks for HTML is a form submission, and one that does
+// The site's scripts never do: the address form's asks for JSON, the delete dialog's sends
+// fetch()'s default, */*, and the search page's beacon, which records a followed result (#215),
+// sends no Accept header. So a POST that asks for HTML is a form submission, and one that does
 // not is a script's, which gets a 401 it can act on (#34).
 function wantsHtml(request: Request): boolean {
   return (request.headers.get("accept") ?? "").includes("text/html");
@@ -236,6 +238,10 @@ async function handleAppRoute(
   // `answer`, and a request without a session never reaches here: it got the 401 (#214).
   if (path === SEARCH_API_PATH && request.method === "POST") {
     return postSearch(request, ctx, db, session.user.id, env);
+  }
+  // A followed result, as `navigator.sendBeacon` sends it (#215).
+  if (path === SEARCH_CLICK_PATH && request.method === "POST") {
+    return postSearchClick(request, ctx, db, session.user.id);
   }
   if (path === SAVED_LINKS_PATH && isReadRequest(request)) {
     return showRecentSaves(db, session.user.id, env);
