@@ -7,10 +7,11 @@
 // and, as explicit arguments, the database, the Jev configuration, the search settings that the
 // caller read from Flagship once for this search (readSearchSettings in flags.ts) and the policy
 // that decides which bookmarks are Held. It
-// 1. rejects a query outside the shared schema's bounds, and pair mode until #213 builds it,
-//    before anything is read, sent or logged;
+// 1. rejects a query outside the shared schema's bounds before anything is read, sent or logged;
 // 2. reads the candidates (search-candidates.ts);
-// 3. asks Jev about them in batched mode (searchInChunks, #211), ending at its deadline;
+// 3. asks Jev about them in the settings' request mode, ending at its deadline: batched mode, a
+//    request for each chunk of them (searchInChunks, #211), or pair mode, a request for each one
+//    (searchInPairs, #213), through the same limiter and with the same shape of answer;
 // 4. ranks the answers by the display signal (search-ranking.ts);
 // 5. logs the run and every answer (search-log.ts), whatever the outcome;
 // 6. returns the outcome, the run's ID and the shown results.
@@ -27,8 +28,8 @@ import { assertJevConfig, type JevConfig, type JevTiming } from "../enrichment/j
 import type { EnrichmentStatePolicy } from "../enrichment/state.ts";
 import type { SearchSettings } from "../flags.ts";
 import {
-  type ChunkedSearchResult,
-  type SearchChunkFailure,
+  type SearchRequestsResult,
+  type SearchRequestFailure,
   type SearchOutcome,
   searchInChunks,
 } from "./chunked-search.ts";
@@ -39,6 +40,7 @@ import {
   SYSTEM_CLOCK,
 } from "./jev-limiter.ts";
 import { SEARCH_TIMING } from "./jev-search.ts";
+import { searchInPairs } from "./pair-search.ts";
 import { readSearchCandidates, type SearchCandidate } from "./search-candidates.ts";
 import { writeSearchLog } from "./search-log.ts";
 import { rankAnswers, signalMatches, usedSearchSettings } from "./search-ranking.ts";
@@ -106,7 +108,7 @@ export const SEARCH_RESPONSE_MARGIN_MS = 5_000;
 /**
  * The default deadline, which the web route keeps: how long after it starts, before the candidates
  * are read, a search stops asking Jev. It is 20 seconds, the page's 30 less an attempt's
- * time limit (SEARCH_TIMING's 5 seconds) and SEARCH_RESPONSE_MARGIN_MS. At the deadline, a chunk
+ * time limit (SEARCH_TIMING's 5 seconds) and SEARCH_RESPONSE_MARGIN_MS. At the deadline, a request
  * waiting on the limiter, a backoff or a connection sends nothing, and a split chunk's halves are
  * not sent, so each is unanswered, and the search is `partial`, or `failed` when nothing was
  * answered. An attempt already under way runs to its answer or its time limit, because the client
@@ -118,7 +120,7 @@ export const SEARCH_RESPONSE_MARGIN_MS = 5_000;
 export const SEARCH_DEADLINE_MS = 20_000;
 
 /** Why a search was refused before anything was read, sent or logged. */
-export type SearchRejection = "SEARCH_QUERY_INVALID" | "SEARCH_REQUEST_MODE_UNSUPPORTED";
+export type SearchRejection = "SEARCH_QUERY_INVALID";
 
 /**
  * A search refused before anything was read, sent or logged. Its `code` is safe to log, and its
@@ -135,7 +137,7 @@ export class SearchRejectedError extends Error {
 }
 
 // The reason a search's deadline aborts its signal with. searchInChunks recognises it as the
-// signal's own reason, and records the chunks not yet sent as `aborted`.
+// signal's own reason, and records the requests not yet sent as `aborted`.
 class SearchDeadlineError extends Error {
   constructor() {
     super("The search's deadline passed");
@@ -149,7 +151,7 @@ class SearchDeadlineError extends Error {
  * and a status are fixed values (JevFailure), as `last_error`'s are (#126). Null when nothing
  * failed.
  */
-function runError(failures: readonly SearchChunkFailure[]): string | null {
+function runError(failures: readonly SearchRequestFailure[]): string | null {
   const codes = failures.map(({ failure }) =>
     "status" in failure && failure.status !== undefined
       ? `${failure.reason}:${failure.status}`
@@ -181,11 +183,11 @@ function startDeadline(clock: LimiterClock, deadlineMs: number): Deadline {
  * outcome, the run's ID and the shown results.
  *
  * Throws a SearchRejectedError, having read, sent and logged nothing, for a query that the
- * shared schema refuses (empty once trimmed, or longer than SEARCH_QUERY_CAP once trimmed), for
- * one longer than SEARCH_QUERY_CAP as given, spaces included, because that is what is stored, and
- * for the `pair` request mode, which #213 adds. Throws the client's configuration errors, such as
- * TYPESAFE_API_KEY_EMPTY, the same way. A Jev failure doesn't throw: it is the `partial` or
- * `failed` outcome, logged like any other. An error from the database does throw.
+ * shared schema refuses (empty once trimmed, or longer than SEARCH_QUERY_CAP once trimmed), and
+ * for one longer than SEARCH_QUERY_CAP as given, spaces included, because that is what is stored.
+ * Throws the client's configuration errors, such as TYPESAFE_API_KEY_EMPTY, the same way. A Jev
+ * failure doesn't throw: it is the `partial` or `failed` outcome, logged like any other. An error
+ * from the database does throw.
  *
  * The query is sent to Jev trimmed, as the schema returns it, and logged exactly as it was given,
  * because Phase 12 joins its runs to its labeled queries by the exact text (#204).
@@ -214,22 +216,18 @@ export async function searchBookmarks(
       `A search query must have 1 to ${SEARCH_QUERY_CAP} characters, and at least one that isn't a space`,
     );
   }
-  if (settings.requestMode === "pair") {
-    throw new SearchRejectedError(
-      "SEARCH_REQUEST_MODE_UNSUPPORTED",
-      "The pair request mode isn't built yet (#213), so search runs only in batched mode",
-    );
-  }
   assertJevConfig(jev);
   const used = usedSearchSettings(settings);
   // The deadline and the latency both start here, so the candidates' read counts towards both.
   const started = clock.now();
   const deadline = startDeadline(clock, deadlineMs);
   let candidates: SearchCandidate[];
-  let asked: ChunkedSearchResult;
+  let asked: SearchRequestsResult;
   try {
     candidates = await readSearchCandidates(db, userId, policy);
-    asked = await searchInChunks(
+    // The mode the run records is the mode that asked, so the log says which one produced it.
+    const searchIn = used.requestMode === "pair" ? searchInPairs : searchInChunks;
+    asked = await searchIn(
       jev,
       {
         query: parsed.output,
@@ -262,7 +260,7 @@ export async function searchBookmarks(
       requestMode: used.requestMode,
       // The model that answered; the configured one when nothing was answered. Every request asks
       // the configured model, so a search has one answering model, unless TypeSafe moved an alias
-      // between its chunks, and then the first chunk's is recorded.
+      // between its requests, and then the first request's is recorded.
       jevModel: asked.models[0] ?? jev.JEV_MODEL,
       questions: used.questions,
       displaySignal: used.displaySignal,
