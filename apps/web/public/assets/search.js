@@ -30,6 +30,17 @@
 //   in place of the count, and shows the empty state when no result is left. The next search's
 //   outcome hides the empty state again.
 //
+// - Following a result is recorded (#215), as a weak relevance label for the evaluations of Phase
+//   12. A click on a result's link, Enter on it and a middle click send the search run's ID and
+//   the bookmark's ID to /api/search/click with `navigator.sendBeacon`, and the visit goes on as
+//   it would without the script: nothing is awaited, no default is prevented, and a failure,
+//   which only a browser without `sendBeacon` or a refused request can cause, is dropped. The
+//   browser sends a beacon after the page has gone, and it adds the session cookie and the Origin
+//   header to it as to any POST, which the Worker checks as it checks every POST (plan, "Search
+//   page"). A beacon was chosen over `fetch` with `keepalive` because both outlived the
+//   navigation in Chromium and WebKit, and a beacon is the one made for it (plan, "Search page",
+//   "Built in #215").
+//
 // The page's one script, so it imports the delete dialog's module and the message bar's (plan,
 // "Search page", "Performance").
 import "./delete-dialog.js";
@@ -64,6 +75,9 @@ const LATEST_DATE = 8.64e15;
 
 /** The route that searches (SEARCH_API_PATH in apps/worker/src/search-route.ts). */
 const SEARCH_PATH = "/api/search";
+
+/** The route that records a followed result (SEARCH_CLICK_PATH in apps/worker/src/search-click.ts). */
+const CLICK_PATH = "/api/search/click";
 
 /** The Search button's label while a search runs: the address form's word for the same state. */
 const PROCESSING_LABEL = "Processing…";
@@ -114,7 +128,7 @@ const TIMEOUT_MS = 30_000;
 
 /**
  * @typedef {{ id: string, title: string, description: string | null, url: string, createdAt: number }} Result
- * @typedef {{ kind: "found", results: Result[], complete: boolean }
+ * @typedef {{ kind: "found", runId: string, results: Result[], complete: boolean }
  *   | { kind: "timeout" | "network" | "failed" | "signedOut" }} Outcome
  */
 
@@ -132,13 +146,14 @@ const RESULT_ID = /^[\w-]+$/;
 const OUTCOMES = ["ok", "partial"];
 
 /**
- * The results in a success answer, in its order, and whether every link was searched, or null
- * when the answer doesn't have the shape of `SearchAnswer` in packages/schemas. The assets have
+ * The search run's ID, the results in a success answer, in its order, and whether every link was
+ * searched, or null when the answer doesn't have the shape of `SearchAnswer` in
+ * packages/schemas. The assets have
  * no build step, so the page can't import that schema. It checks the fields it reads instead,
  * and the browser tests build every answer they give with the schema, so the two can't drift
  * apart unnoticed.
  * @param {unknown} body
- * @returns {{ results: Result[], complete: boolean } | null}
+ * @returns {{ runId: string, results: Result[], complete: boolean } | null}
  */
 function answerIn(body) {
   if (
@@ -170,7 +185,7 @@ function answerIn(body) {
     const { id, title, description, url, createdAt } = result;
     results.push({ id, title, description, url, createdAt });
   }
-  return { results, complete: body.outcome === "ok" };
+  return { runId: body.runId, results, complete: body.outcome === "ok" };
 }
 
 // The rule of `isHttpsUrl` in packages/schemas, which the saved links page links by: an https
@@ -327,6 +342,11 @@ function enhance(form, field, button, list, template, status, emptyState) {
   // query: an answer already on its way when the abort comes can still reach the script.
   /** @type {{ query: string, controller: AbortController } | null} */
   let inFlight = null;
+  // Which search run found each result, and the bookmark's ID, by the result's `li`. Each search
+  // replaces the list, so a result is always recorded against the run that showed it, never a
+  // later one's.
+  /** @type {WeakMap<Element, { runId: string, bookmarkId: string }>} */
+  const runOf = new WeakMap();
 
   /**
    * Writes a message to the live region after the delay, in place of the one there. A message
@@ -353,12 +373,23 @@ function enhance(form, field, button, list, template, status, emptyState) {
   // next search ran. The results are about to be removed, and focus with them would fall to the
   // page, so it moves to the Search button first, as Try again's does, where a person searches
   // again.
-  /** @param {Result[]} results */
-  function show(results) {
+  /**
+   * @param {Result[]} results
+   * @param {string} [runId] The search run that found them, which recording a follow needs. None
+   *   for the empty list of an outcome that has no run.
+   */
+  function show(results, runId) {
     if (list.contains(document.activeElement)) {
       button.focus();
     }
-    list.replaceChildren(...results.map((result) => resultItem(template, result)));
+    const items = results.map((result) => resultItem(template, result));
+    for (const [index, item] of items.entries()) {
+      const result = results[index];
+      if (runId !== undefined && result !== undefined) {
+        runOf.set(item, { runId, bookmarkId: result.id });
+      }
+    }
+    list.replaceChildren(...items);
     list.hidden = results.length === 0;
     document.getElementById(RESULTS_HEADING_ID)?.toggleAttribute("hidden", list.hidden);
     emptyState?.setAttribute("hidden", "");
@@ -401,8 +432,8 @@ function enhance(form, field, button, list, template, status, emptyState) {
    */
   function settle(outcome, query) {
     if (outcome.kind === "found") {
-      const { results, complete } = outcome;
-      show(results);
+      const { runId, results, complete } = outcome;
+      show(results, runId);
       if (complete) {
         announce(
           paragraphOf(results.length === 0 ? MESSAGES.none : MESSAGES.found(results.length)),
@@ -469,6 +500,43 @@ function enhance(form, field, button, list, template, status, emptyState) {
     button.textContent = idleLabel;
     settle(outcome, query);
   }
+
+  /**
+   * Records that a result's link was followed, from a click, Enter or a middle click, and does
+   * nothing else: no default is prevented and nothing is awaited, so the visit is neither delayed
+   * nor changed. `sendBeacon` queues the request in the browser, which sends it even after the
+   * page has gone. It has no custom headers, so the request is a POST with the session cookie
+   * and the Origin header that the Worker checks. A browser that has no `sendBeacon`, or throws,
+   * is not told about: the person still reaches the page.
+   * @param {Event} event
+   */
+  function recordFollow(event) {
+    const link = event.target instanceof Element ? event.target.closest("h3 a[href]") : null;
+    const item = link?.closest("li");
+    const followed = item ? runOf.get(item) : undefined;
+    if (followed === undefined) {
+      return;
+    }
+    try {
+      navigator.sendBeacon(
+        CLICK_PATH,
+        new Blob([JSON.stringify(followed)], { type: "application/json" }),
+      );
+    } catch {
+      // Recording is best effort.
+    }
+  }
+
+  // A click is a press, and also Enter on the link, which the browser turns into one. A middle
+  // click, which opens a new tab, is an `auxclick` with button 1, and a right click is another
+  // button, which opens the browser's menu and records nothing. The results are replaced by each
+  // search, so one listener on the list serves them all.
+  list.addEventListener("click", recordFollow);
+  list.addEventListener("auxclick", (event) => {
+    if (event.button === 1) {
+      recordFollow(event);
+    }
+  });
 
   // Ends the search in flight, if there is one, and gives the button its own label back.
   function stop() {

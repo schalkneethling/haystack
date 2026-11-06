@@ -26,6 +26,10 @@ Feature: Searching my saved links
   be searched, and shows an error with a way to try again when the search
   failed, never an empty list, which would look like nothing matched (#207).
 
+  Following a result is recorded (#215), as a hint of which results helped,
+  which the evaluation of the search (Phase 12) can use. Nothing about the
+  page changes for me, and a failed record never keeps me from the saved page.
+
   Background:
     Given I am signed in to Haystack
 
@@ -254,6 +258,72 @@ Feature: Searching my saved links
     And at the bottom of the card, the button "Delete"
     And the card is the one my saved links show for the same link
     And the saved site is not told that I came from Haystack, when I follow the link
+
+  @playwright:apps/worker/e2e/search-click.e2e.ts
+  @integration:apps/worker/test/search-click.test.ts
+  Scenario Outline: Following a result is recorded
+    The page tells Haystack which of the search's results I followed, and
+    Haystack marks that one link as followed in the log of that search. No
+    other link of that search, and no link of another search, is marked, and
+    each result is recorded against the search that showed it, so a result of
+    an earlier search still counts for that one after I search again. Nothing
+    is recorded for a click on the card outside its link, on "Delete", or with
+    the right button. Following the same result again leaves it marked as
+    followed.
+
+    Given I searched, and the page shows two results
+    When I follow the second result by <how>
+    Then I reach the saved page, <where>
+    And Haystack has marked only the second result of that search as followed
+
+    Examples:
+      | how                                              | where                                          |
+      | clicking its title                               | in this tab                                    |
+      | focusing its title and pressing Enter            | in this tab                                    |
+      | clicking its title with the middle button        | in a new tab, and the results stay in this one |
+      | clicking its title while holding Ctrl or Command | in a new tab, and the results stay in this one |
+
+  @playwright:apps/worker/e2e/search-click.e2e.ts
+  Scenario: Recording a followed result never slows or breaks the visit
+    The page sends the record in a way that the browser finishes after the
+    page has gone, so I reach the saved page without waiting for it. If the
+    record fails, for example because Haystack can't be reached or the browser
+    can't send it, nothing is shown and the link still opens.
+
+    Given I searched, and the page shows two results
+    And Haystack has not yet received the record of a result I followed
+    When I follow the result
+    Then I reach the saved page, with no wait for the record
+    And the record still arrives afterwards
+    When the record fails instead
+    Then I still reach the saved page, and the page shows no error
+
+  @playwright:apps/worker/e2e/search-click.e2e.ts
+  @playwright:apps/worker/e2e/search.e2e.ts
+  Scenario: Following a result changes nothing I can see or reach
+    The title is still a link that tells the saved site nothing about where I
+    came from, and the card has no new control: Tab reaches only its link and
+    its "Delete" button.
+
+    Given I searched, and the page shows two results
+    Then each title's link keeps the attribute that keeps the saved site from learning where I came from
+    And a card holds only two controls that Tab can reach, its link and its "Delete" button
+
+  @integration:apps/worker/test/search-click.test.ts
+  Scenario: Only my own searches can be marked
+    The record names a search and a link, and Haystack finds the answer
+    through the search and the search through the person who is signed in. A
+    search of another person, one that does not exist, a link that was not
+    among that search's answers and a link I deleted all get the same answer,
+    "not found", and change nothing, so the answer never says that another
+    person's search exists. A request without a session is refused, and so is
+    one from another site.
+
+    Given another person has searched
+    When a request names their search and one of their links
+    Then Haystack answers that the answer was not found, and marks nothing
+    When a request comes without my session, or from another site
+    Then Haystack refuses it, and marks nothing
 
   @playwright:apps/worker/e2e/search-delete.e2e.ts
   Scenario: Deleting every result of a search
