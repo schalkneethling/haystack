@@ -28,6 +28,7 @@ import {
   type StubbedResult,
   TRY_AGAIN,
 } from "./search-answers.ts";
+import { stubSpeechRecognition, VOICE_NAME } from "./speech-recognition.ts";
 
 test.beforeEach(async ({ signIn }) => {
   await signIn();
@@ -74,11 +75,14 @@ async function expectFailure(page: Page, message: string): Promise<void> {
   await expect(status(page)).not.toContainText(SEARCH_MESSAGES.none);
 }
 
+// In a browser with speech recognition, as Chrome is, the voice button (#216) is a stop between
+// the field and Search. The stub makes it so in any browser the test runs in.
 test("the page works with the keyboard alone, and focus stays in the field", async ({ page }) => {
+  await stubSpeechRecognition(page);
   await answerSearches(page, () => GUIDES);
   await page.goto("/");
   // The header's four stops come first, then the message bar's Close, which is shown because the
-  // notice about private links is (design review), then the field and the button.
+  // notice about private links is (design review), then the field, the voice button and Search.
   const nav = page.getByRole("navigation", { name: "Main" });
   for (const control of [
     page.getByRole("link", { name: "Haystack", exact: true }),
@@ -87,11 +91,13 @@ test("the page works with the keyboard alone, and focus stays in the field", asy
     page.getByRole("button", { name: "Sign out" }),
     page.getByRole("button", { name: "Close messages" }),
     field(page),
+    page.getByRole("button", { name: VOICE_NAME }),
     page.getByRole("button", { name: "Search", exact: true }),
   ]) {
     await page.keyboard.press("Tab");
     await expect(control).toBeFocused();
   }
+  await page.keyboard.press("Shift+Tab");
   await page.keyboard.press("Shift+Tab");
   await expect(field(page)).toBeFocused();
   await page.keyboard.type("testing in a browser");
@@ -101,6 +107,8 @@ test("the page works with the keyboard alone, and focus stays in the field", asy
   await expect(results(page)).toHaveCount(2);
   // Focus is where the search was made, so the query can be changed and sent again.
   await expect(field(page)).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: VOICE_NAME })).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(page.getByRole("button", { name: "Search", exact: true })).toBeFocused();
   await page.keyboard.press("Tab");
@@ -634,7 +642,7 @@ test.describe("a failed search", () => {
     fail = true;
     await field(page).press("Enter");
     await expectFailure(page, SEARCH_MESSAGES.failed);
-    // The page's one live region holds it, so it is not a second one.
+    // The search's live region holds it, so it is not a second region for the search's messages.
     await expect(page.getByRole("alert")).toHaveCount(0);
     await expect(field(page)).toBeFocused();
   });

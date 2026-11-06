@@ -12,10 +12,26 @@
 // from the saved links page: the live region already holds the count when "Deleted …" replaces
 // it, where the saved links page's region is empty, so this test is the check that VoiceOver
 // speaks the replacement.
+//
+// The last test repeats the confirm with the voice input's live region in the page (#216). A
+// second, empty `role="status"` region silenced "Deleted …" on the saved links page when it was
+// written 100 ms after focus moved (#275, 1.3). The voice input adds its region on the button's
+// first press, and Playwright's WebKit has no speech recognition, so the stub adds one and the
+// test presses the button once. That test was written without a local run too. On CI, VoiceOver
+// spoke "Deleted …" at its first try in each of runs 42122353135, 42126761913, 42256328190 and
+// 42256327354, so on this page, at the dialog's 500 ms, the voice region doesn't silence it.
 import type { VoiceOverPlaywright } from "@guidepup/playwright";
 import type { Page } from "@playwright/test";
 import type { HaystackWorker } from "./fixtures.ts";
 import { answerSearches, SEARCH_MESSAGES, SEARCH_STATUS, saveResults } from "./search-answers.ts";
+import {
+  endListening,
+  recognitionCount,
+  startListening,
+  stubSpeechRecognition,
+  VOICE_NAME,
+  VOICE_STATUS,
+} from "./speech-recognition.ts";
 import { expect, test } from "./voiceover-fixtures.ts";
 import { waitForSpoken } from "./wait-for-spoken.ts";
 
@@ -28,18 +44,40 @@ test.beforeEach(async ({ signIn }) => {
 });
 
 /**
+ * Presses the voice button once, with recognition stubbed, and lets that recognition start and
+ * end, so the voice input's live region is in the page, empty (#216). The stub must be installed
+ * before the page loads.
+ */
+async function addTheVoiceRegion(page: Page): Promise<void> {
+  await page.getByRole("button", { name: VOICE_NAME }).click();
+  await expect.poll(() => recognitionCount(page)).toBe(1);
+  await startListening(page);
+  await endListening(page);
+  await expect(page.locator(VOICE_STATUS)).toHaveCount(1);
+  await expect(page.locator(VOICE_STATUS)).toBeEmpty();
+}
+
+/**
  * Saves a link at an address that starts with `prefix`, searches for it, and puts keyboard focus
- * on its result's Delete button, with VoiceOver in the page. Returns the bookmark's ID.
+ * on its result's Delete button, with VoiceOver in the page. With `withVoiceRegion`, the voice
+ * input's live region is added first. Returns the bookmark's ID.
  */
 async function focusDeleteButton(
   page: Page,
   voiceOver: VoiceOverPlaywright,
   query: Query,
   prefix: string,
+  withVoiceRegion = false,
 ): Promise<string> {
   const saved = await saveResults(page, query, prefix, [TITLE]);
   await answerSearches(page, () => saved);
+  if (withVoiceRegion) {
+    await stubSpeechRecognition(page);
+  }
   await page.goto("/");
+  if (withVoiceRegion) {
+    await addTheVoiceRegion(page);
+  }
   const field = page.getByRole("searchbox", { name: "Search your saved links" });
   await field.fill("a testing guide");
   await field.press("Enter");
@@ -54,8 +92,9 @@ async function openDialog(
   voiceOver: VoiceOverPlaywright,
   query: Query,
   prefix: string,
+  withVoiceRegion = false,
 ): Promise<{ id: string; spoken: string }> {
-  const id = await focusDeleteButton(page, voiceOver, query, prefix);
+  const id = await focusDeleteButton(page, voiceOver, query, prefix, withVoiceRegion);
   await voiceOver.clearSpokenPhraseLog();
   await voiceOver.press("Enter", { capture: true });
   await expect(page.getByRole("dialog")).toBeVisible();
@@ -94,12 +133,13 @@ test("Escape closes the dialog, and VoiceOver reads the result's Delete button",
   await expect(page.getByRole("button", { name: `Delete ${TITLE}` })).toBeFocused();
 });
 
-test("confirming reads the status message with the deleted link's title", async ({
-  page,
-  query,
-  voiceOver,
-}) => {
-  const { id } = await openDialog(page, voiceOver, query, "voiceover-search-confirm");
+/** Confirms the open dialog with VoiceOver, and checks that "Deleted …" is spoken. */
+async function confirmAndHearDeleted(
+  page: Page,
+  voiceOver: VoiceOverPlaywright,
+  query: Query,
+  id: string,
+): Promise<void> {
   // Cancel comes first, then Delete.
   await voiceOver.press("Tab");
   await voiceOver.press("Tab");
@@ -113,4 +153,22 @@ test("confirming reads the status message with the deleted link's title", async 
   ).toBeFocused();
   await expect(page.getByRole("button", { name: `Delete ${TITLE}` })).toHaveCount(0);
   expect(await query("SELECT id FROM bookmarks WHERE id = ?", id)).toHaveLength(0);
+}
+
+test("confirming reads the status message with the deleted link's title", async ({
+  page,
+  query,
+  voiceOver,
+}) => {
+  const { id } = await openDialog(page, voiceOver, query, "voiceover-search-confirm");
+  await confirmAndHearDeleted(page, voiceOver, query, id);
+});
+
+test("confirming reads the status message with the voice input's live region in the page", async ({
+  page,
+  query,
+  voiceOver,
+}) => {
+  const { id } = await openDialog(page, voiceOver, query, "voiceover-search-confirm-voice", true);
+  await confirmAndHearDeleted(page, voiceOver, query, id);
 });
