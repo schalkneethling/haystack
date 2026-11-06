@@ -17,8 +17,9 @@
 // second, empty `role="status"` region silenced "Deleted …" on the saved links page when it was
 // written 100 ms after focus moved (#275, 1.3). The voice input adds its region on the button's
 // first press, and Playwright's WebKit has no speech recognition, so the stub adds one and the
-// test presses the button once. That test was written without a local run too, and isn't marked
-// as failing in advance: if CI shows the message silenced, it goes on #275.
+// test presses the button once. That test was written without a local run too. On CI, VoiceOver
+// spoke "Deleted …" at its first try in each of runs 42122353135, 42126761913, 42256328190 and
+// 42256327354, so on this page, at the dialog's 500 ms, the voice region doesn't silence it.
 import type { VoiceOverPlaywright } from "@guidepup/playwright";
 import type { Page } from "@playwright/test";
 import type { HaystackWorker } from "./fixtures.ts";

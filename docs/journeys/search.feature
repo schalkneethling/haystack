@@ -627,13 +627,26 @@ Feature: Searching my saved links
     And there is no button "Search by voice", no disabled control and no message about it
 
   @voiceover:apps/worker/e2e/search-voice.voiceover.ts
-  Scenario: Searching by voice with a screen reader
+  Scenario: Reaching the voice button with a screen reader
     The test stubs the browser's speech recognition, because a test can't use
-    a microphone. It was written without a local run.
+    a microphone.
 
     Given I use VoiceOver
     When I move with Tab from the field to the button
     Then VoiceOver reads its name, "Search by voice"
+    When I press it and the browser starts listening
+    Then VoiceOver still reads its name, "Search by voice"
+
+  @untested
+  Scenario: Hearing that the browser listens, and why it stopped, with a screen reader
+    The messages are written to the voice button's own live region while
+    focus stays on the button. VoiceOver doesn't speak them yet: on CI it said
+    only the button's hint, "You are currently on a toggle button", after the
+    press (#275). search-voice.voiceover.ts has a test of each marked as
+    failing, which shows the problem but doesn't cover this journey.
+
+    Given I use VoiceOver
+    And I have moved with Tab from the field to the button "Search by voice"
     When I press it and the browser starts listening
     Then VoiceOver says "Listening"
     When I say nothing

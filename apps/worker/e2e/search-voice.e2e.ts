@@ -430,4 +430,42 @@ test.describe("with a speech recognition whose start throws", () => {
     await voiceButton(page).click();
     await expect.poll(() => recognitionCount(page)).toBe(2);
   });
+
+  // The first press adds the live region. A screen reader can miss text that is already in a
+  // region when the region is added, so the message is written in a later task than the press,
+  // after the region is in the page empty. A mutation observer's callback runs at the end of the
+  // press's task, so what it records is the region's text in that task.
+  test("the first press adds the region empty, and writes the message in a later task", async ({
+    page,
+  }) => {
+    await stubSpeechRecognition(page, ["SpeechRecognition", "webkitSpeechRecognition"], {
+      startThrows: true,
+    });
+    await page.goto("/");
+    await page.evaluate((selector) => {
+      const observer = new MutationObserver(() => {
+        const region = document.querySelector(selector);
+        if (region !== null) {
+          document.body.dataset.voiceStatusWhenAdded = region.textContent ?? "";
+          observer.disconnect();
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    }, VOICE_STATUS);
+    await voiceButton(page).click();
+    await expect(page.locator("body")).toHaveAttribute("data-voice-status-when-added", "");
+    await expect(voiceStatus(page).locator(".alert")).toHaveText(VOICE_MESSAGES.unavailable);
+  });
+
+  test("typing before the message is written drops it", async ({ page }) => {
+    await stubSpeechRecognition(page, ["SpeechRecognition", "webkitSpeechRecognition"], {
+      startThrows: true,
+    });
+    await page.clock.install();
+    await page.goto("/");
+    await voiceButton(page).click();
+    await field(page).fill("typed instead");
+    await page.clock.runFor(1000);
+    await expect(voiceStatus(page)).toBeEmpty();
+  });
 });

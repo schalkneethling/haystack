@@ -8,13 +8,25 @@
 // The button is a toggle with `aria-pressed`, and its messages go to a `role="status"` region of
 // their own under the field's row. Focus stays on the button throughout. That is a different
 // case from #237's, where the page's live region in the message bar changes while focus stays in
-// the field, and VoiceOver has spoken none of its messages (#275, 1.1). Whether VoiceOver speaks
-// this region is what the test shows. It isn't marked as failing in advance: if CI shows a
-// problem, it goes on #275, and the markup is not changed just to make the test pass.
+// the field (#275, 1.1), but CI shows the same result: VoiceOver speaks neither "Listening" nor
+// the no-speech error. In every try of both tests, in runs 42122353135, 42126761913, 42256328190
+// and 42256327354 (macOS 26.6.2), it said only the button's hint after the press, "You are
+// currently on a toggle button. To select or deselect this checkbox, press Control-Option-Space.
+// …", and nothing in the 15 seconds after it. The problem is recorded on #275, and the markup is
+// not changed just to make the tests pass. So those two tests are marked as failing with
+// `test.fail`, as in search.voiceover.ts, which Playwright passes while the test fails, and
+// reports as a failure once it passes, so the mark can't outlive the fix.
 //
-// It was written without a local run, because the VoiceOver tests change macOS settings. It
-// assumes that `voiceOver.act()`, VoiceOver's own press, presses the button that VoiceOver's
-// cursor is on, as the address form's test does with Continue.
+// A failing test passes `test.fail` whatever makes it fail, so the first test, which takes the
+// same steps up to the message and must pass, shows that they still work: VoiceOver reads the
+// button's name when Tab reaches it, which CI confirmed, and again once it is pressed. It also
+// attaches what VoiceOver reads on the pressed button to the test's output, which no run has
+// recorded yet, because in the runs above that step came after the failing check.
+//
+// The tests were written without a local run, because the VoiceOver tests change macOS
+// settings. `voiceOver.act()`, VoiceOver's own press, presses the button that VoiceOver's cursor
+// is on, as the address form's test does with Continue: on CI, the stub's recognition was made
+// after it.
 import type { VoiceOverPlaywright } from "@guidepup/playwright";
 import type { Page } from "@playwright/test";
 import {
@@ -32,6 +44,15 @@ import { waitForSpoken } from "./wait-for-spoken.ts";
 const NAME = /search by voice/i;
 const LISTENING = /listening/i;
 const NO_SPEECH = /no speech was recognized/i;
+
+/** Why the tests of the voice region's messages are marked as failing. */
+const NOT_SPOKEN_YET = {
+  annotation: {
+    type: "issue",
+    description:
+      "#275: VoiceOver doesn't speak the voice button's own live region while focus stays on the button (runs 42122353135, 42126761913, 42256328190 and 42256327354)",
+  },
+};
 
 test.beforeEach(async ({ signIn, page }) => {
   await signIn();
@@ -78,18 +99,17 @@ async function pressToListen(page: Page, voiceOver: VoiceOverPlaywright): Promis
   await expect(page.locator(VOICE_STATUS)).toHaveText(VOICE_MESSAGES.listening);
 }
 
-test("the voice button is read with its name, and that it is listening is spoken", async ({
+test("the voice button is read with its name, before and while it is pressed", async ({
   page,
   voiceOver,
 }) => {
   await reachTheButton(page, voiceOver);
   await pressToListen(page, voiceOver);
-  await expectSpoken(voiceOver, LISTENING);
 
   // The pressed state is `aria-pressed`, which turns true on the `start` event, after the
-  // press. What VoiceOver calls it hasn't been heard yet, so the item under its cursor is
-  // attached to the test's output for the first CI run to record, and only the name, which is
-  // certain, is checked. What the record shows goes on #275.
+  // press. CI's runs heard only the hint "You are currently on a toggle button" after the press,
+  // so the item under VoiceOver's cursor is attached to the test's output for the next run to
+  // record, and only the name, which is certain, is checked. What the record shows goes on #275.
   await voiceOver.perform(voiceOver.keyboardCommands.moveCursorToKeyboardFocus);
   const whilePressed = await voiceOver.itemText();
   await test.info().attach("VoiceOver's item text on the pressed button", {
@@ -99,7 +119,17 @@ test("the voice button is read with its name, and that it is listening is spoken
   expect(whilePressed).toMatch(NAME);
 });
 
-test("an error that ends listening is spoken", async ({ page, voiceOver }) => {
+test.fail(
+  "the voice button is read with its name, and that it is listening is spoken",
+  NOT_SPOKEN_YET,
+  async ({ page, voiceOver }) => {
+    await reachTheButton(page, voiceOver);
+    await pressToListen(page, voiceOver);
+    await expectSpoken(voiceOver, LISTENING);
+  },
+);
+
+test.fail("an error that ends listening is spoken", NOT_SPOKEN_YET, async ({ page, voiceOver }) => {
   await reachTheButton(page, voiceOver);
   await pressToListen(page, voiceOver);
   await voiceOver.clearSpokenPhraseLog();

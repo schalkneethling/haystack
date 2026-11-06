@@ -45,6 +45,12 @@
 const NAME = "Search by voice";
 const STATUS_ID = "voice-status";
 const PRIVACY_ID = "voice-privacy";
+// How long after a press that couldn't start listening its message is written. The first press
+// adds the live region, and a screen reader can miss text that is already in a region when the
+// region is added, so the message waits for a later task. On the saved links page, VoiceOver
+// silenced a message written 100 ms after a change while a newly added, empty region was in the
+// page, and spoke it at 500 ms (#275, 1.3). 500 ms is also search.js's delay on this page.
+const ANNOUNCE_DELAY_MS = 500;
 
 const MESSAGES = {
   listening: "Listening. Say what you're looking for, then pause.",
@@ -202,7 +208,8 @@ function enhance(field, form, row, Recognizer) {
   // The live region, which the first press adds, empty, before the row's privacy note. A screen
   // reader announces a change only to a live region that already exists, and the browser fires
   // `start` in a later task than the press, so the region is in the page before its first
-  // message. Made only then, it is absent for a person who never presses the button, so the
+  // message. A press whose `start()` throws has no `start` event to wait for, so its message
+  // waits ANNOUNCE_DELAY_MS instead. Made only then, it is absent for a person who never presses the button, so the
   // search's own region is the page's only one for them. The role is on a `<div>` that holds
   // the message, as on the page's other live region.
   const status = document.createElement("div");
@@ -220,6 +227,9 @@ function enhance(field, form, row, Recognizer) {
 
   /** @type {Recognition | null} */
   let recognition = null;
+  // The message of a press that couldn't start listening, while it waits to be written.
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let announcement;
   // Whether the browser listens: from the recognition's `start` event to its error or `end`.
   let listening = false;
 
@@ -241,7 +251,10 @@ function enhance(field, form, row, Recognizer) {
     status.replaceChildren(alert);
   }
 
+  // Empties the region, and drops a message still waiting to be written, so typing or a new
+  // press never brings back an earlier press's message.
   function clear() {
+    clearTimeout(announcement);
     status.replaceChildren();
   }
 
@@ -338,7 +351,7 @@ function enhance(field, form, row, Recognizer) {
       current.start();
     } catch {
       recognition = null;
-      warn(MESSAGES.unavailable);
+      announcement = setTimeout(() => warn(MESSAGES.unavailable), ANNOUNCE_DELAY_MS);
     }
   }
 
