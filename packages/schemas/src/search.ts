@@ -22,6 +22,13 @@ export const SearchQuery = v.pipe(
 );
 
 /**
+ * The body of a web search, `POST /api/search`: the shared search input, as every channel sends
+ * it. The page sends the query alone. Its input mode is `typed` until the voice input (Phase 13)
+ * has the page send it.
+ */
+export const SearchRequest = v.object({ query: SearchQuery });
+
+/**
  * A bookmark's ID, as the search page puts it into the IDs of a result's elements, which the
  * Delete control's `aria-labelledby` refers to (#208). An IDREF list is split on whitespace, so
  * an ID must be non-empty and hold none. Bookmark IDs come from `crypto.randomUUID()`, whose

@@ -50,6 +50,12 @@ import {
   seedSignedInUser,
   type SeededUser,
 } from "./seed.ts";
+import {
+  ANSWERING_MODEL,
+  answerBy,
+  PROBABILITIES,
+  type SentBody,
+} from "./search-match-text-answers.ts";
 import { createTestWorker } from "./test-worker.ts";
 
 const server = createTestWorker({
@@ -59,7 +65,6 @@ const server = createTestWorker({
 // The configured model differs from the one the fixture says answered, so a run shows which of
 // the two it recorded.
 const CONFIGURED_MODEL = "jev-latest";
-const ANSWERING_MODEL = "jev-1.14.0";
 const KEY = "ts-search-service-key-5b2e";
 
 const jev: JevConfig = {
@@ -174,50 +179,6 @@ async function saveEnriched(
   const id = await seedBookmark(DB, userId, url, url, { title: `Title ${matchText}`, ...fields });
   await seedEnrichment(DB, id, schemaVersion, { matchText, kind: "tool" });
   return id;
-}
-
-interface Signals {
-  readonly noul: number;
-  readonly score: number;
-}
-
-// Below both of the default thresholds, unless a test says otherwise.
-const UNMATCHED: Signals = { noul: 0.1, score: 0.4 };
-
-const PROBABILITIES = { "0": 0.1, "1": 0.1, "2": 0.2, "3": 0.6 };
-
-interface SentBody {
-  readonly model: string;
-  readonly state: {
-    readonly query: string;
-    readonly bookmarks: Record<string, { readonly title: string; readonly match_text: string }>;
-  };
-  readonly questions: Record<string, { readonly type: string }>;
-}
-
-/**
- * Answers every question in the request, with each bookmark's signals from `signals`, by its
- * `match_text`, or UNMATCHED.
- */
-function answerBy(signals: Record<string, Signals> = {}): JevResolver {
-  return async (request) => {
-    const body = (await request.json()) as SentBody;
-    const answers: Record<string, unknown> = {};
-    for (const [id, question] of Object.entries(body.questions)) {
-      const alias = id.replace(/_(helps|relevance)$/u, "");
-      const matchText = body.state.bookmarks[alias]?.match_text ?? "";
-      const { noul, score } = signals[matchText] ?? UNMATCHED;
-      answers[id] =
-        question.type === "noul"
-          ? { type: "noul", noul }
-          : { type: "score", score, confidence: 0.41, probabilities: PROBABILITIES };
-    }
-    return HttpResponse.json({
-      model: ANSWERING_MODEL,
-      answers,
-      usage: { input_tokens: 100 * Object.keys(body.state.bookmarks).length, output_tokens: 5 },
-    });
-  };
 }
 
 // Queues `count` copies of `resolver`, for a test that doesn't know the order of its requests.
@@ -1003,6 +964,60 @@ describe("searchBookmarks", () => {
     expect(result.outcome).toBe("partial");
     expect(await runs()).toEqual([
       expect.objectContaining({ outcome: "partial", error: "aborted", latency_ms: deadlineMs }),
+    ]);
+  });
+
+  // A caller that stops waiting, as /api/search does when the page abandons a search (#214),
+  // ends the search as the deadline does: what Jev answered is kept, the rest is unanswered, and
+  // the run is logged, because every search that passes validation is.
+  it("ends the search when the caller's signal aborts, keeping what Jev answered and logging the run", async () => {
+    await seedSeveralChunks();
+    const clock = fakeClock();
+    const limiter = new JevLimiter({ requestsPerSecond: 10, tokensPerSecond: 1000 }, clock);
+    let answered = 0;
+    const answer = answerBy();
+    fixture.respond(async (request) => {
+      const response = await answer(request);
+      answered += 1;
+      return response;
+    });
+    const abandoned = new AbortController();
+    let settled = false;
+    const searching = search({ limiter, clock, signal: abandoned.signal }).finally(() => {
+      settled = true;
+    });
+    await vi.waitFor(() => {
+      expect(answered).toBe(1);
+    });
+    // The second chunk is still waiting on the limiter, 19 seconds before the deadline.
+    expect(settled).toBe(false);
+    abandoned.abort();
+    await vi.waitFor(() => {
+      expect(settled).toBe(true);
+    });
+    const result = await searching;
+
+    expect(result.outcome).toBe("partial");
+    expect(fixture.requests).toHaveLength(1);
+    const firstChunk = Object.keys(sent().state.bookmarks).length;
+    expect(await runs()).toEqual([
+      expect.objectContaining({
+        outcome: "partial",
+        error: "aborted",
+        input_tokens: 100 * firstChunk,
+      }),
+    ]);
+    expect(await answerRows(result.runId)).toHaveLength(firstChunk);
+  });
+
+  it("sends nothing and logs a failed run when the caller's signal is already aborted", async () => {
+    await saveEnriched("only");
+    fixture.respond(answerBy());
+    const result = await search({ signal: AbortSignal.abort() });
+    expect(result).toEqual({ runId: expect.any(String), outcome: "failed", results: [] });
+    expect(fixture.requests).toEqual([]);
+    expect(await runs()).toEqual([
+      expect.objectContaining({ outcome: "failed", error: "aborted" }),
     ]);
   });
 

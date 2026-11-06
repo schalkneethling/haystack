@@ -5,14 +5,17 @@ Feature: Searching my saved links
   built for the keyboard and for a screen reader: focus stays in the field,
   the count of matches is announced, and each result is a heading.
 
-  Searching itself comes with Phase 11 (#214). Until then, the browser tests
-  answer every search with a stubbed answer, and Haystack's own search answers
-  "not found", so every real search fails, as the scenario "A search that
-  fails" describes. So the search page is behind a switch, the
-  `search-enabled` flag, which the owner turns on when search is released
-  (#218). Until then the home page is the saved links, and the header has no
-  "Search" link. Every scenario but the first is with the switch on, as the
-  browser tests run. Each result can be deleted from its card (#208), through
+  Searching is real since Phase 11 (#214): a search asks Jev about my saved
+  links and the page shows the answer. Most of the browser tests still answer
+  the search with a stubbed answer, because a stub decides the answer and when
+  it arrives, which the scenarios about a slow, incomplete or failed search
+  need. The scenarios "A search that finds links", "A search that finds
+  nothing", "A search that is answered in part" and "A search that cannot be
+  answered" are the ones that run through Haystack's own search. The search
+  page is behind a switch, the `search-enabled` flag, which the owner turns on
+  when search is released (#218). Until then the home page is the saved links,
+  and the header has no "Search" link. Every scenario but the first is with
+  the switch on, as the browser tests run. Each result can be deleted from its card (#208), through
   the same dialog and confirmation page as on the saved links page, which
   delete.feature describes under "From the search results". The scenarios
   here say what the search page shows afterwards.
@@ -64,6 +67,90 @@ Feature: Searching my saved links
       | testing | two links | 2 saved links match your search.  | two cards, in the order found |
       | one     | one link  | 1 saved link matches your search. | one card                      |
       | nothing | no link   | No saved links match your search. | no cards, and no error        |
+
+  @playwright:apps/worker/e2e/search.e2e.ts
+  @integration:apps/worker/test/search-api.test.ts
+  Scenario: A search that finds links
+    Haystack asks the service that judges each of my links, whether it would
+    help with what I described. The links that clear the threshold are shown,
+    the best match first. Haystack also keeps, for every link it asked about,
+    both of the service's answers, whether or not the link is shown, so that
+    the ranking can be judged later. The query is kept with them, and in no
+    log.
+
+    Given I have saved several links, and Haystack has described them
+    And two of them match what I describe, one better than the other
+    When I search for what I describe
+    Then the page says "2 saved links match your search."
+    And it shows the two cards, the better match first
+    And Haystack has kept both answers for every link it asked about, the one that did not match too
+
+  @playwright:apps/worker/e2e/search.e2e.ts
+  Scenario: A search that finds nothing
+    A search that finds nothing is an answer, and not an error.
+
+    Given I have saved links, and none of them matches what I describe
+    When I search for what I describe
+    Then the page says "No saved links match your search."
+    And it shows no cards, and no error
+
+  @playwright:apps/worker/e2e/search.e2e.ts
+  @integration:apps/worker/test/search-api.test.ts
+  Scenario: A search that is answered in part
+    Haystack asks about my links in several requests when there are many. If
+    only some of them are answered, it shows what those found, with the notice
+    that there may be more matches, and says so in its log.
+
+    Given I have saved so many links that Haystack asks about them in several requests
+    And the service that judges them answers only some of the requests
+    When I search
+    Then the page shows the cards that the answered requests found
+    And the page says "Some of your links could not be searched, so there may be more matches. You can press Search to try again."
+
+  @playwright:apps/worker/e2e/search.e2e.ts
+  @integration:apps/worker/test/search-api.test.ts
+  Scenario: A search that cannot be answered
+    When the service that judges my links answers none of the requests,
+    Haystack answers the page with an error. It does not answer with an empty
+    list, which would look like nothing matched. The page shows the error with
+    "Try again", and trying again searches again once the service is back. The
+    search is logged as failed.
+
+    Given the service that judges my links is not answering
+    When I search
+    Then the page shows the error "Something went wrong, so your links could not be searched." with the button "Try again"
+    And it shows no cards, and does not say that nothing matched
+    When the service is answering again, and I press "Try again"
+    Then the page shows the cards that the search found
+
+  @integration:apps/worker/test/search-api.test.ts
+  Scenario: Searching only my own links
+    The search reads the links of the person who is signed in, and the person
+    comes from the session, never from what the page sends.
+
+    Given another person has saved links of their own
+    When I search
+    Then the page shows none of their links
+    And none of their links is sent to the service that judges them
+    And the log of my search holds none of their links
+
+  @integration:apps/worker/test/search-api.test.ts
+  @integration:apps/worker/test/search-bookmarks.test.ts
+  Scenario: Leaving a search that is still running
+    Changing the query while a search runs, giving up on it after 30 seconds or
+    leaving the page ends the search I abandoned. It asks the service that
+    judges my links about no more of them, because each request costs money,
+    and it is still logged, with the reason "aborted", even if the page has
+    already gone, because Haystack keeps the search running for the log. A
+    request already on its way can't be taken back, so it is finished. If the
+    search is still running when the page is gone, Haystack answers 499, a
+    closed request, and Cloudflare's metrics count a disconnect as a status of
+    their own, so neither is read as an outage of that service.
+
+    Given I started a search that is asking about my links in several requests
+    When I change the query, so the page gives up on that search
+    Then the search I gave up on sends no more requests
+    And it is logged as a search that was cut short
 
   @playwright:apps/worker/e2e/search.e2e.ts
   Scenario: Searching again replaces the results
@@ -305,11 +392,15 @@ Feature: Searching my saved links
   @playwright:apps/worker/e2e/search.e2e.ts
   @playwright:apps/worker/e2e/design.e2e.ts
   Scenario Outline: A search that fails
-    Until searching is built (#214), Haystack answers every search with "not
-    found", and the page treats that as a failure. The error is in the page's
-    one live region, in the alert box of the save form's errors, and it does
-    not take focus, so I can go on typing. The browser tests check that the
-    results of the search before go only for an answer with an error.
+    The page shows an error for any answer that isn't a list of results, which
+    the tests stub. Of the ways Haystack's own search answers with an error,
+    "A search that cannot be answered", where Jev answers nothing, is the only
+    one that a valid search can meet because of Jev. The others, a body that is
+    refused (400) or too large (413) and a fault of Haystack's own (500), are
+    not something the page sends. The error is in the page's one live region,
+    in the alert box of the save form's errors, and it does not take focus, so
+    I can go on typing. The browser tests check that the results of the search
+    before go only for an answer with an error.
 
     Given I searched, and the page shows what it found
     When my next search fails because <the reason>

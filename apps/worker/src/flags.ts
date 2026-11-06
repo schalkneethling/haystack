@@ -61,10 +61,11 @@ export const SWEEP_ENABLED_FLAG = "sweep-enabled";
 export const SWEEP_BATCH_SIZE_FLAG = "sweep-batch-size";
 
 /**
- * Whether the search page is the home page: a boolean flag (#235). Search answers nothing until
- * /api/search is built (#214), so until the owner turns this on (#218), `/` sends a signed-in
- * user on to the saved links, and the header has no Search link. A deploy in between therefore
- * never puts a page whose every search fails on the home page.
+ * Whether the search page is the home page: a boolean flag (#235). It was added when `/api/search`
+ * did not exist yet, so that no deploy put a page whose every search fails on the home page.
+ * The route exists since #214, and the switch stays until the release (#218), when the owner turns
+ * it on: until then, `/` sends a signed-in user on to the saved links, and the header has no
+ * Search link.
  */
 export const SEARCH_ENABLED_FLAG = "search-enabled";
 
@@ -109,8 +110,8 @@ export interface SearchFlags {
 
 /**
  * The default: search off, which is also what a Flagship outage gives, because the search page
- * is only worth showing once /api/search answers (#214). Off, the saved links are the home page,
- * which every bookmark reaches.
+ * is only worth showing once the release has judged search ready (#218). Off, the saved links are
+ * the home page, which every bookmark reaches.
  */
 export const SEARCH_FLAG_DEFAULTS: SearchFlags = Object.freeze({ enabled: false });
 

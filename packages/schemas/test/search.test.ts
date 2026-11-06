@@ -1,6 +1,6 @@
 import * as v from "valibot";
 import { describe, expect, it } from "vite-plus/test";
-import { SEARCH_QUERY_CAP, SearchAnswer, SearchQuery } from "../src/index.ts";
+import { SEARCH_QUERY_CAP, SearchAnswer, SearchQuery, SearchRequest } from "../src/index.ts";
 
 describe("SearchQuery", () => {
   it("trims the query", () => {
@@ -22,6 +22,39 @@ describe("SearchQuery", () => {
 
   it("rejects a value that is not a string", () => {
     expect(v.safeParse(SearchQuery, 42).success).toBe(false);
+  });
+});
+
+describe("SearchRequest", () => {
+  it("holds the query, trimmed by the shared search input", () => {
+    expect(v.parse(SearchRequest, { query: "  a tool for testing  " })).toEqual({
+      query: "a tool for testing",
+    });
+  });
+
+  it("holds the shared search input's bounds", () => {
+    expect(v.safeParse(SearchRequest, { query: "a".repeat(SEARCH_QUERY_CAP) }).success).toBe(true);
+    expect(v.safeParse(SearchRequest, { query: "a".repeat(SEARCH_QUERY_CAP + 1) }).success).toBe(
+      false,
+    );
+    expect(v.safeParse(SearchRequest, { query: "   " }).success).toBe(false);
+  });
+
+  it.each([
+    ["no query", {}],
+    ["a query that is not a string", { query: 42 }],
+    ["a string", "a"],
+    ["null", null],
+  ])("rejects %s", (_, body) => {
+    expect(v.safeParse(SearchRequest, body).success).toBe(false);
+  });
+
+  // The user comes from the session, never from the request, so a field that names one is not
+  // part of the body, and the parsed body does not carry it on.
+  it("leaves out any other field, so a user or a channel in the body is never passed on", () => {
+    expect(v.parse(SearchRequest, { query: "a", userId: "someone-else", channel: "eval" })).toEqual(
+      { query: "a" },
+    );
   });
 });
 

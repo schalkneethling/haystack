@@ -62,7 +62,7 @@ const SAVED_DATE = new Intl.DateTimeFormat("en", { dateStyle: "long", timeZone: 
 // (packages/schemas/src/search.ts), because a later one can't be formatted.
 const LATEST_DATE = 8.64e15;
 
-/** The route that searches (#214). It answers 404 until then, which the page calls a failure. */
+/** The route that searches (SEARCH_API_PATH in apps/worker/src/search-route.ts). */
 const SEARCH_PATH = "/api/search";
 
 /** The Search button's label while a search runs: the address form's word for the same state. */
@@ -105,10 +105,11 @@ const MESSAGES = {
 // stops asking Jev at its deadline (SEARCH_DEADLINE_MS in the Worker's search-bookmarks.ts, #212),
 // which leaves an attempt under way and the response inside this limit.
 // apps/worker/test/search-bookmarks.test.ts reads this value, so the two change together. A search
-// the page abandons here keeps running on the Worker, unless the route passes its request's signal
-// on (#214). The timer is an ordinary setTimeout that aborts the request, as on the address form,
-// rather than AbortSignal.timeout, so that one AbortController ends the request either way, and a
-// test's clock can reach it.
+// the page abandons here, by this limit, by a changed query or by leaving, stops asking Jev: the
+// route passes its request's signal on (`postSearch` in the Worker's search-route.ts, #214), so
+// what had not been sent is not sent, and the search is still logged. The timer is an ordinary
+// setTimeout that aborts the request, as on the address form, rather than AbortSignal.timeout, so
+// that one AbortController ends the request either way, and a test's clock can reach it.
 const TIMEOUT_MS = 30_000;
 
 /**

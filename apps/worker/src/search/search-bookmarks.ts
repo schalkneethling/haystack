@@ -9,9 +9,10 @@
 // that decides which bookmarks are Held. It
 // 1. rejects a query outside the shared schema's bounds before anything is read, sent or logged;
 // 2. reads the candidates (search-candidates.ts);
-// 3. asks Jev about them in the settings' request mode, ending at its deadline: batched mode, a
-//    request for each chunk of them (searchInChunks, #211), or pair mode, a request for each one
-//    (searchInPairs, #213), through the same limiter and with the same shape of answer;
+// 3. asks Jev about them in the settings' request mode, ending at its deadline or when the
+//    caller's signal aborts: batched mode, a request for each chunk of them (searchInChunks,
+//    #211), or pair mode, a request for each one (searchInPairs, #213), through the same limiter
+//    and with the same shape of answer;
 // 4. ranks the answers by the display signal (search-ranking.ts);
 // 5. logs the run and every answer (search-log.ts), whatever the outcome;
 // 6. returns the outcome, the run's ID and the shown results.
@@ -78,6 +79,14 @@ export interface SearchContext {
    * one, because they search large collections and no page waits for them.
    */
   readonly deadlineMs?: number;
+  /**
+   * Ends the search when it aborts, as the deadline does, for a caller that has stopped waiting:
+   * `/api/search` passes the request's signal (#214), so a search the page abandoned stops asking
+   * Jev. A request not yet sent is unanswered, with the reason `aborted`, an attempt under way
+   * runs to its answer or its time limit (see SEARCH_DEADLINE_MS), and the search is still logged
+   * and returned, because every search that passes validation is logged.
+   */
+  readonly signal?: AbortSignal;
 }
 
 /** One shown result, in the search page's own shape (`SearchAnswer` in @haystack/schemas). */
@@ -205,6 +214,7 @@ export async function searchBookmarks(
     timing = SEARCH_TIMING,
     clock = SYSTEM_CLOCK,
     deadlineMs = SEARCH_DEADLINE_MS,
+    signal,
   }: SearchContext,
 ): Promise<SearchBookmarksResult> {
   // The schema checks the cap after trimming, and the run stores the query as given, so the text
@@ -239,7 +249,13 @@ export async function searchBookmarks(
         })),
         questions: used.questions,
       },
-      { limiter, timing, signal: deadline.signal },
+      {
+        limiter,
+        timing,
+        // The first of the two to abort ends the search, and its reason is the combined signal's,
+        // which searchInRequests recognises as the signal's own.
+        signal: signal === undefined ? deadline.signal : AbortSignal.any([signal, deadline.signal]),
+      },
     );
   } finally {
     deadline.stop();

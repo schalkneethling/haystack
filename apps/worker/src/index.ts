@@ -34,6 +34,7 @@ import { withoutSearchLink } from "./page.ts";
 import { showRecentSaves } from "./recent-saves.ts";
 import { runScheduled } from "./scheduled.ts";
 import { showSearchPage } from "./search-page.ts";
+import { postSearch, SEARCH_API_PATH } from "./search-route.ts";
 import {
   saveBookmark,
   showSaveForm,
@@ -224,12 +225,17 @@ async function handleAppRoute(
 ): Promise<Response> {
   const path = new URL(request.url).pathname;
   // The search page is the home page (#206) once the `search-enabled` flag is on (#218). Until
-  // then, `/` sends the user on to the saved links, because /api/search has no route until #214,
-  // and every search would get the 404 that every unknown route gets. The browser asks for `/`
-  // again each time, because the redirect is a 302, not a 301, which a browser keeps, and like
-  // every redirect it carries `cache-control: no-store` (security-headers.ts).
+  // then, `/` sends the user on to the saved links, so the page is shown only once Phase 11's
+  // search is judged ready (#214 built the route, and #218 is the release). The browser asks for
+  // `/` again each time, because the redirect is a 302, not a 301, which a browser keeps, and
+  // like every redirect it carries `cache-control: no-store` (security-headers.ts).
   if (path === SEARCH_PATH && isReadRequest(request)) {
     return (await search()).enabled ? showSearchPage() : redirect(SAVED_LINKS_PATH, 302);
+  }
+  // The page's searches, as `fetch` sends them. The Origin check ran before the session's, in
+  // `answer`, and a request without a session never reaches here: it got the 401 (#214).
+  if (path === SEARCH_API_PATH && request.method === "POST") {
+    return postSearch(request, ctx, db, session.user.id, env);
   }
   if (path === SAVED_LINKS_PATH && isReadRequest(request)) {
     return showRecentSaves(db, session.user.id, env);
