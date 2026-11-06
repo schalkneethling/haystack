@@ -819,9 +819,13 @@ test.describe("against the Worker's own /api/search", () => {
       expect(row.score).toEqual(expect.any(Number));
       expect(row.score_probabilities).toEqual(expect.any(String));
     }
+    // Exactly the two above the threshold are shown, so the one below it is not.
     expect(
-      answers.filter(({ shown }) => shown === 1).map(({ bookmark_id }) => bookmark_id),
-    ).toEqual(expect.arrayContaining([best, next]));
+      answers
+        .filter(({ shown }) => shown === 1)
+        .map(({ bookmark_id }) => String(bookmark_id))
+        .sort(byText),
+    ).toEqual([best, next].sort(byText));
   });
 
   test("a search that finds nothing says so, and is not an error", async ({

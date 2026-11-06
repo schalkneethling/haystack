@@ -376,6 +376,24 @@ describe("postSearch, with a fake service", () => {
     expect(service).not.toHaveBeenCalled();
   });
 
+  // The cap is a body "past" 8 KiB, so a body of exactly 8 KiB is read whole, and one byte more is not.
+  it.each([
+    ["exactly the cap, with 200", 8 * 1024, 200],
+    ["one byte over the cap, with 413", 8 * 1024 + 1, 413],
+  ])("answers a body of %s", async (_, size, status) => {
+    const json = '{"query":"a"}';
+    const service = fakeService();
+    const response = await postSearch(
+      searchRequest(json + " ".repeat(size - json.length)),
+      fakeContext(),
+      db,
+      owner.userId,
+      env,
+      service,
+    );
+    expect(response.status).toBe(status);
+  });
+
   // Every UTF-16 code unit escaped as `\uXXXX` is 6 bytes, the most a character of the query can
   // take in the body, so the body's cap has to hold a whole query written that way.
   it("accepts a query at the cap, even when every character is escaped in the body", async () => {
@@ -458,6 +476,58 @@ describe("postSearch, with a fake service", () => {
     await vi.waitFor(() => expect(context.waitUntil).toHaveBeenCalledTimes(1));
     await expect(context.registered[0]).resolves.toBeUndefined();
     await handled;
+  });
+
+  // When the client has gone, the handler may be cancelled before it rethrows to the entry point,
+  // which is the only code that logs, so the background branch logs the failure, by its code only.
+  it("logs the code of a failure when the client left, and answers 499 instead of throwing", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const page = new AbortController();
+    const context = fakeContext();
+    const service = vi.fn<SearchService>(async () => {
+      await Promise.resolve();
+      page.abort();
+      throw Object.assign(new Error("secret detail"), { code: "TYPESAFE_API_KEY_EMPTY" });
+    });
+    const handling = postSearch(
+      searchRequest({ query: QUERY }, { signal: page.signal }),
+      context,
+      db,
+      owner.userId,
+      env,
+      service,
+    );
+    // Only what waitUntil holds is awaited, as for a cancelled handler.
+    await vi.waitFor(() => expect(context.waitUntil).toHaveBeenCalledTimes(1));
+    await context.registered[0];
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(error.mock.calls)).toContain("TYPESAFE_API_KEY_EMPTY");
+    expect(JSON.stringify(error.mock.calls)).not.toContain("secret detail");
+    expect((await handling).status).toBe(499);
+    error.mockRestore();
+  });
+
+  // The entry point logs a failure that reaches it, so the background branch must not log it too.
+  it("does not log a failure itself while the client is connected", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const context = fakeContext();
+    const service = vi.fn<SearchService>(async () => {
+      throw Object.assign(new Error("secret detail"), { code: "TYPESAFE_API_KEY_EMPTY" });
+    });
+    const handling = postSearch(
+      searchRequest({ query: QUERY }),
+      context,
+      db,
+      owner.userId,
+      env,
+      service,
+    );
+    const handled = expect(handling).rejects.toThrow("secret detail");
+    await vi.waitFor(() => expect(context.waitUntil).toHaveBeenCalledTimes(1));
+    await context.registered[0];
+    await handled;
+    expect(error).not.toHaveBeenCalled();
+    error.mockRestore();
   });
 
   // A configuration error or a database error isn't the caller's mistake, so it is the entry

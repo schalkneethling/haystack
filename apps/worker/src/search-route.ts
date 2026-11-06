@@ -26,6 +26,7 @@ import * as v from "valibot";
 import type { Db } from "./db/client.ts";
 import { readText } from "./enrichment/bounded-read.ts";
 import type { JevConfig } from "./enrichment/jev-client.ts";
+import { errorCode } from "./error-code.ts";
 import { type FlagReader, readSearchSettings } from "./flags.ts";
 import { readReviewPolicy, type ReviewConfig } from "./held.ts";
 import { jsonResponse } from "./page.ts";
@@ -120,7 +121,11 @@ export async function postSearch(
   // and #212's rule is that every search that passes validation is. `waitUntil` keeps it running
   // for up to 30 seconds after the response or the disconnect, and the search ends in at most
   // SEARCH_DEADLINE_MS plus the attempt under way, 25 seconds, and its log, so the log fits.
-  // The promise given to `waitUntil` never rejects: its error is the handler's to answer with.
+  // The promise given to `waitUntil` never rejects. While the client is connected, a failure is the
+  // handler's to rethrow to the entry point, which logs it. After a disconnect the handler may be
+  // cancelled before it does, so the background branch logs it, by its code only, and the handler
+  // then answers 499 instead of rethrowing, so that the failure is logged once. A rejection's two
+  // readers run in the same step, so both see the same `request.signal.aborted`.
   const searching = (async () =>
     search(
       userId,
@@ -134,13 +139,23 @@ export async function postSearch(
         signal: request.signal,
       },
     ))();
-  context.waitUntil(searching.catch(() => undefined));
+  context.waitUntil(
+    searching.catch((error: unknown) => {
+      if (request.signal.aborted && !(error instanceof SearchRejectedError)) {
+        console.error("Search failed after the client left:", errorCode(error));
+      }
+    }),
+  );
   let result: Awaited<ReturnType<SearchService>>;
   try {
     result = await searching;
   } catch (error) {
     if (error instanceof SearchRejectedError) {
       return jsonResponse({ code: error.code }, REFUSALS.invalidQuery.status);
+    }
+    if (request.signal.aborted) {
+      // Logged by the background branch, and nobody reads an answer.
+      return new Response(null, { status: 499 });
     }
     throw error;
   }

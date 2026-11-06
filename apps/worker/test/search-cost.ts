@@ -288,6 +288,20 @@ interface CpuSample {
   readonly results: number;
 }
 
+/**
+ * The answer's body, when the search was complete: a 200 whose outcome is `ok`. A `partial` or
+ * `failed` search stopped early, so its cost is not that of a whole search, and it throws.
+ */
+async function completeAnswer(response: Response): Promise<{ results?: unknown[] }> {
+  const answer = (await response.json()) as { outcome?: string; results?: unknown[] };
+  if (response.status !== 200 || answer.outcome !== "ok") {
+    throw new Error(
+      `The search answered ${response.status} ${JSON.stringify(answer).slice(0, 80)}`,
+    );
+  }
+  return answer;
+}
+
 async function measureOnce(db: Db, seeded: Seeded, mode: RequestMode): Promise<CpuSample> {
   outside.sqlite = 0;
   outside.jev = 0;
@@ -295,12 +309,7 @@ async function measureOnce(db: Db, seeded: Seeded, mode: RequestMode): Promise<C
   const start = cpuMicroseconds();
   const response = await oneRequest(db, seeded, mode);
   const total = cpuMicroseconds() - start;
-  const answer = (await response.json()) as { outcome?: string; results?: unknown[] };
-  if (response.status !== 200 || answer.outcome !== "ok") {
-    throw new Error(
-      `The search answered ${response.status} ${JSON.stringify(answer).slice(0, 80)}`,
-    );
-  }
+  const answer = await completeAnswer(response);
   return {
     totalMs: total / 1000,
     workerMs: (total - outside.sqlite - outside.jev) / 1000,
@@ -402,7 +411,7 @@ async function measureRows(
       const rows: Rows = { read: 0, written: 0, statements: 0, byStatement: new Map() };
       const db = createDb(countingD1(DB, rows));
       const response = await oneRequest(db, seeded, mode);
-      const answer = (await response.json()) as { results?: unknown[] };
+      const answer = await completeAnswer(response);
       out.set(size, { ...rows, results: answer.results?.length ?? 0 });
       if (size === Math.max(...sizes) && mode === "batched") {
         console.log(`\nRows by statement, ${size} bookmarks, batched mode:`);
