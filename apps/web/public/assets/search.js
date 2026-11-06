@@ -1,10 +1,10 @@
 // @ts-check
 // Searches the saved links from the search page at `/` (plan, "Search page"). The Worker renders
 // the form, an empty live region and an empty results list, and this script does the rest: it
-// sends the query to /api/search with `fetch`, and builds each result from the JSON answer with
-// DOM APIs and `textContent`, so no bookmark data is ever parsed as markup. Searching needs this
-// script. Until it runs, the page says so and links to the saved links, and the script hides that
-// message.
+// sends the query, and how it was entered, to /api/search with `fetch`, and builds each result
+// from the JSON answer with DOM APIs and `textContent`, so no bookmark data is ever parsed as
+// markup. Searching needs this script. Until it runs, the page says so and links to the saved
+// links, and the script hides that message.
 //
 // - Focus stays where it was, in the field after Enter or on the button after a press, so a
 //   person can change the query and search again straight away, and Tab moves on to the button
@@ -41,9 +41,11 @@
 //   navigation in Chromium and WebKit, and a beacon is the one made for it (plan, "Search page",
 //   "Built in #215").
 //
-// - Voice input (#216) is voice-input.js's: a button next to the field, added once the page is
-//   enhanced and only when the browser has speech recognition, which puts what it heard in the
-//   field and never searches on its own.
+// - Voice input (#216) is voice-input.js's: a button next to the field, added once the page's
+//   search can run and only when the browser has speech recognition, which puts what it heard in
+//   the field and never searches on its own. Each search says how its query was entered (#217):
+//   `web-speech` when the field still holds the transcript voice input placed, and `typed`
+//   otherwise. Try again repeats the mode of the search that failed.
 //
 // The page's one script, so it imports the delete dialog's module, the message bar's and the
 // voice input's (plan, "Search page", "Performance").
@@ -84,6 +86,13 @@ const SEARCH_PATH = "/api/search";
 
 /** The route that records a followed result (SEARCH_CLICK_PATH in apps/worker/src/search-click.ts). */
 const CLICK_PATH = "/api/search/click";
+
+/**
+ * How a query was entered, which the search run records: `web-speech` for the transcript of the
+ * browser's speech recognition, and `typed` for anything else (`SearchRequest` in
+ * packages/schemas).
+ * @typedef {"typed" | "web-speech"} InputMode
+ */
 
 /** The Search button's label while a search runs: the address form's word for the same state. */
 const PROCESSING_LABEL = "Processing…";
@@ -338,8 +347,9 @@ async function outcomeOf(response, signal) {
  * @param {HTMLTemplateElement} template
  * @param {HTMLElement} status
  * @param {HTMLElement | null} emptyState
+ * @param {() => string | null} transcriptInField The transcript the field holds, from voice input.
  */
-function enhance(form, field, button, list, template, status, emptyState) {
+function enhance(form, field, button, list, template, status, emptyState, transcriptInField) {
   const idleLabel = button.textContent ?? "";
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let announcement;
@@ -348,6 +358,11 @@ function enhance(form, field, button, list, template, status, emptyState) {
   // query: an answer already on its way when the abort comes can still reach the script.
   /** @type {{ query: string, controller: AbortController } | null} */
   let inFlight = null;
+  // The query that Try again restored, with how it was entered. Searching it again, with the field
+  // unchanged, repeats that mode. The person's first edit forgets it, as voice input forgets the
+  // transcript, so a query they then type is typed.
+  /** @type {{ query: string, inputMode: InputMode } | null} */
+  let restored = null;
   // Which search run found each result, and the bookmark's ID, by the result's `li`. Each search
   // replaces the list, so a result is always recorded against the run that showed it, never a
   // later one's.
@@ -408,8 +423,9 @@ function enhance(form, field, button, list, template, status, emptyState) {
    * messages (#208).
    * @param {string} text
    * @param {string} query The query that failed.
+   * @param {InputMode} inputMode How the query that failed was entered.
    */
-  function failure(text, query) {
+  function failure(text, query, inputMode) {
     const alert = element("div");
     alert.className = "alert";
     const body = element("div");
@@ -423,8 +439,10 @@ function enhance(form, field, button, list, template, status, emptyState) {
       // The query that failed goes back in the field, so the field always holds the query whose
       // results the page shows. Focus moves to the Search button before the search empties the
       // region, so it does not fall to the page with Try again. The form is then submitted, so
-      // the search goes through the submit handler's rules, as a press of Search does.
+      // the search goes through the submit handler's rules, as a press of Search does, and the
+      // handler gives it the mode of the search that failed, through `restored`.
       field.value = query;
+      restored = { query, inputMode };
       button.focus();
       form.requestSubmit();
     });
@@ -436,8 +454,9 @@ function enhance(form, field, button, list, template, status, emptyState) {
   /**
    * @param {Outcome} outcome
    * @param {string} query The query that was sent.
+   * @param {InputMode} inputMode How the query was entered.
    */
-  function settle(outcome, query) {
+  function settle(outcome, query, inputMode) {
     if (outcome.kind === "found") {
       const { runId, results, complete } = outcome;
       show(results, runId);
@@ -468,11 +487,14 @@ function enhance(form, field, button, list, template, status, emptyState) {
       announce(paragraphOf(`${MESSAGES.signedOut} `, signIn));
       return;
     }
-    announce(failure(MESSAGES[outcome.kind], query));
+    announce(failure(MESSAGES[outcome.kind], query, inputMode));
   }
 
-  /** @param {string} query */
-  async function send(query) {
+  /**
+   * @param {string} query
+   * @param {InputMode} inputMode How the query was entered, which the search run records.
+   */
+  async function send(query, inputMode) {
     const controller = new AbortController();
     const request = { query, controller };
     inFlight = request;
@@ -490,7 +512,7 @@ function enhance(form, field, button, list, template, status, emptyState) {
       const response = await fetch(SEARCH_PATH, {
         method: "POST",
         headers: { accept: "application/json", "content-type": "application/json" },
-        body: JSON.stringify({ query }),
+        body: JSON.stringify({ query, inputMode }),
         signal: controller.signal,
       });
       outcome = await outcomeOf(response, controller.signal);
@@ -505,7 +527,7 @@ function enhance(form, field, button, list, template, status, emptyState) {
     }
     inFlight = null;
     button.textContent = idleLabel;
-    settle(outcome, query);
+    settle(outcome, query, inputMode);
   }
 
   /**
@@ -552,14 +574,12 @@ function enhance(form, field, button, list, template, status, emptyState) {
     button.textContent = idleLabel;
   }
 
-  // A press of Search or Enter in the field submits the form. The browser's own submission is
-  // stopped, and the query that is already being searched for is not sent again.
-  form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const query = field.value.trim();
-    if (query !== "" && inFlight?.query === query) {
-      return;
-    }
+  /**
+   * Starts a search for `query`, which was entered as `inputMode` says.
+   * @param {string} query
+   * @param {InputMode} inputMode
+   */
+  function search(query, inputMode) {
     stop();
     if (query === "") {
       // The query was replaced with nothing, so an answer to the one before is not wanted either.
@@ -567,7 +587,41 @@ function enhance(form, field, button, list, template, status, emptyState) {
       announce(paragraphOf(MESSAGES.empty));
       return;
     }
-    void send(query);
+    void send(query, inputMode);
+  }
+
+  /**
+   * How the query in the field was entered. Text that voice input placed is spoken, whatever came
+   * before it. Otherwise it is the mode of the query Try again restored, when it is that query.
+   * Anything else is typed. Both sides are trimmed, because the query is.
+   * @param {string} query The trimmed query in the field.
+   * @returns {InputMode}
+   */
+  function inputModeOf(query) {
+    if (transcriptInField() === query) {
+      return "web-speech";
+    }
+    if (restored !== null && restored.query === query) {
+      return restored.inputMode;
+    }
+    return "typed";
+  }
+
+  // The person's first edit forgets the restored query, as voice input forgets the transcript.
+  field.addEventListener("input", () => {
+    restored = null;
+  });
+
+  // A press of Search or Enter in the field submits the form. The browser's own submission is
+  // stopped, and the query that is already being searched for is not sent again.
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const query = field.value.trim();
+    const inputMode = inputModeOf(query);
+    if (query !== "" && inFlight?.query === query) {
+      return;
+    }
+    search(query, inputMode);
   });
 
   // Following a result and coming back can restore this page from the back-forward cache as it
@@ -626,7 +680,18 @@ if (
   status !== null &&
   fillsTheTemplate(template)
 ) {
-  enhance(form, field, button, list, template, status, document.getElementById(EMPTY_STATE_ID));
-  addVoiceInput(field, form);
+  // The voice input is added before the search is wired, so the search can ask it, at submit,
+  // whether the field holds a transcript.
+  const transcriptInField = addVoiceInput(field, form);
+  enhance(
+    form,
+    field,
+    button,
+    list,
+    template,
+    status,
+    document.getElementById(EMPTY_STATE_ID),
+    transcriptInField,
+  );
   document.getElementById(NEEDS_SCRIPT_ID)?.setAttribute("hidden", "");
 }

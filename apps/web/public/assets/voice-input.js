@@ -2,8 +2,8 @@
 // Voice input for the search page (#216; plan, "Search page", "Voice"). It adds a button next to
 // the search field that starts the browser's own speech recognition, and puts what was heard in
 // the field for the person to check. It never searches on its own: the person presses Search, as
-// for a typed query. search.js calls `addVoiceInput` once it has enhanced the page, so a page
-// whose search isn't working has no button either.
+// for a typed query. search.js calls `addVoiceInput` once it knows the page's search can run, so a
+// page whose search isn't working has no button either.
 //
 // - Feature detection. The button is added only when the browser has a speech recognition
 //   constructor, `SpeechRecognition` or the prefixed `webkitSpeechRecognition`. Chrome has both
@@ -25,6 +25,9 @@
 //   message bar, above the form, and holds the search's own messages.
 // - The privacy note under the field says where the audio goes, and describes the button, so a
 //   screen reader reads it with the button, before the person speaks.
+// - The transcript the field holds. The script keeps the text it last placed in the field, and
+//   `addVoiceInput` returns a function that gives it, trimmed (#217). It is kept only until the
+//   person types in the field, so search.js can tell a spoken query from a typed one at submit.
 
 /**
  * The parts of a speech recognition that this module uses. TypeScript's DOM library has the
@@ -177,16 +180,21 @@ function transcriptOf(event) {
 
 /**
  * Adds the voice button to the field's row, after the field, with its live region and the
- * privacy note after the row, when the browser has speech recognition.
+ * privacy note after the row, when the browser has speech recognition. Returns a function that
+ * gives the transcript the field holds: the text the script last placed in it, or null when there
+ * is none, because the browser has no speech recognition or the person has typed in the field
+ * since.
  * @param {HTMLInputElement} field
  * @param {HTMLFormElement} form
+ * @returns {() => string | null}
  */
 export function addVoiceInput(field, form) {
   const Recognizer = recognitionConstructor();
   const row = field.parentElement;
   if (Recognizer !== null && row !== null) {
-    enhance(field, form, row, Recognizer);
+    return enhance(field, form, row, Recognizer);
   }
+  return () => null;
 }
 
 /**
@@ -195,6 +203,7 @@ export function addVoiceInput(field, form) {
  * @param {HTMLFormElement} form
  * @param {HTMLElement} row The field's row, after which the region and the note go.
  * @param {RecognitionConstructor} Recognizer The browser's speech recognition constructor.
+ * @returns {() => string | null} The transcript the field holds, as `addVoiceInput` describes.
  */
 function enhance(field, form, row, Recognizer) {
   const button = document.createElement("button");
@@ -232,6 +241,11 @@ function enhance(field, form, row, Recognizer) {
   let announcement;
   // Whether the browser listens: from the recognition's `start` event to its error or `end`.
   let listening = false;
+  // The transcript the script last placed in the field. The field's `input` event fires for typing
+  // but not for the script's own `field.value =`, so the text stops being the transcript at the
+  // person's first edit.
+  /** @type {string | null} */
+  let placedTranscript = null;
 
   /** @param {string} text */
   function say(text) {
@@ -308,7 +322,11 @@ function enhance(field, form, row, Recognizer) {
       }
       // A script's value isn't held to `maxlength`, which the search route's own cap matches, so
       // what was heard is cut to it, as typing would be.
-      field.value = field.maxLength > 0 ? transcript.slice(0, field.maxLength) : transcript;
+      const placed = field.maxLength > 0 ? transcript.slice(0, field.maxLength) : transcript;
+      field.value = placed;
+      // A search sends the field's text trimmed, so the transcript is kept trimmed too, for
+      // search.js to compare with the query. The cut can end in a space, which the field keeps.
+      placedTranscript = placed.trim();
       settle(() => say(MESSAGES.heard));
     });
     current.addEventListener("nomatch", () => {
@@ -370,7 +388,13 @@ function enhance(field, form, row, Recognizer) {
   });
 
   // The field's text is the person's from the moment they change it or search, so a recognition
-  // still running is cancelled, and the message about what was heard, or an error's, goes.
-  field.addEventListener("input", cancel);
+  // still running is cancelled, and the message about what was heard, or an error's, goes. Once
+  // they have typed, the text is no longer the transcript, so a search of it is typed.
+  field.addEventListener("input", () => {
+    placedTranscript = null;
+    cancel();
+  });
   form.addEventListener("submit", cancel);
+
+  return () => placedTranscript;
 }
