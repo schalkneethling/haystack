@@ -101,11 +101,14 @@ const MESSAGES = {
 
 // How long the page waits for an answer. It is the ceiling that the search's whole budget must
 // fit under: every chunk, its retries, the waits of the client-side limiter and the halves of a
-// chunk that was split and retried (#212, plan, "Jev model limits" and "Jev client"). If Phase 11
-// lets a search run longer, this changes with it. A search the page abandons here keeps running
-// on the Worker, unless the route passes its request's signal on (#214). The timer is an ordinary
-// setTimeout that aborts the request, as on the address form, rather than AbortSignal.timeout, so
-// that one AbortController ends the request either way, and a test's clock can reach it.
+// chunk that was split and retried (plan, "Jev model limits" and "Jev client"). The search service
+// stops asking Jev at its deadline (SEARCH_DEADLINE_MS in the Worker's search-bookmarks.ts, #212),
+// which leaves an attempt under way and the response inside this limit.
+// apps/worker/test/search-bookmarks.test.ts reads this value, so the two change together. A search
+// the page abandons here keeps running on the Worker, unless the route passes its request's signal
+// on (#214). The timer is an ordinary setTimeout that aborts the request, as on the address form,
+// rather than AbortSignal.timeout, so that one AbortController ends the request either way, and a
+// test's clock can reach it.
 const TIMEOUT_MS = 30_000;
 
 /**
