@@ -136,6 +136,41 @@ describe("JevLimiter", () => {
     ]);
   });
 
+  // A timer wakes no earlier than it was asked to, but it may wake later, on a busy isolate. Jev
+  // counts the requests it receives, so the ceilings hold over the times requests are let
+  // through, not the times they reserved: a request that wakes late counts from when it goes,
+  // and the one after it waits a full second from then.
+  it("counts a request that wakes late from when it goes, and holds the next one back", async () => {
+    const clock = fakeClock();
+    let late = false;
+    // `clock`, except that its first sleep wakes 100 ms after it was asked to.
+    const lateFirstSleep: FakeClock = {
+      ...clock,
+      sleep: (milliseconds, signal) => {
+        if (!late) {
+          late = true;
+          return clock.sleep(milliseconds + 100, signal);
+        }
+        return clock.sleep(milliseconds, signal);
+      },
+    };
+    const limiter = new JevLimiter(
+      { requestsPerSecond: 1, tokensPerSecond: 100_000 },
+      lateFirstSleep,
+    );
+    const sent = await send(limiter, clock, [
+      ["first", 1],
+      ["late", 1],
+      ["after", 1],
+    ]).wait();
+    expect(sent.map(({ label, at }) => [label, at])).toEqual([
+      ["first", 0],
+      ["late", 1100],
+      ["after", 2100],
+    ]);
+    expect(busiestSecond(sent).requests).toBe(1);
+  });
+
   describe("after a 429", () => {
     it.each([
       ["the wait the response asked for", 3000, 3000],

@@ -17,6 +17,13 @@
 // inside the pause goes behind every reservation made so far (below). Each request still goes no
 // earlier than the ceilings allow.
 //
+// Jev counts the requests it receives, so the ceilings hold over the times requests go, not the
+// times they reserved. A timer wakes no earlier than asked, but it may wake later on a busy
+// isolate, so a request that wakes checks the second up to that moment again, against the times
+// the requests before it went. It goes at once and is logged at that time, or, when one before it
+// went late, it waits again for as long as that one needs. A request that wakes very late can
+// then go behind requests that reserved after it.
+//
 // No request ever waits on another request's promise. The limiter is the isolate's, shared by
 // every search, and Cloudflare can cancel a request's pending work when its client disconnects, so
 // a request may never come back from its sleep. It then leaves only its reservation, which counts
@@ -110,25 +117,35 @@ export class JevLimiter {
     if (!Number.isInteger(tokens) || tokens < 0) {
       throw new RangeError(`tokens is ${tokens}, which isn't a whole number from 0`);
     }
+    if (signal?.aborted) {
+      return false;
+    }
+    let entry = this.#reserve(tokens);
     for (;;) {
-      if (signal?.aborted) {
-        return false;
-      }
-      const entry = this.#reserve(tokens);
       const wait = entry.at - this.#clock.now();
       if (wait > 0) {
         await this.#clock.sleep(wait, signal);
       }
+      this.#release(entry);
       if (signal?.aborted) {
-        this.#release(entry);
         return false;
       }
+      const now = this.#clock.now();
       // A 429 since the reservation: wait for the pause, behind everything reserved so far.
-      if (this.#clock.now() < this.#pausedUntil) {
-        this.#release(entry);
+      if (now < this.#pausedUntil) {
+        entry = this.#reserve(tokens);
         continue;
       }
-      return true;
+      // A timer may wake later than asked, so this request, or one before it, may go later than
+      // it reserved. Check the second up to now against the times the requests before it went,
+      // and log this one at the time it goes, or wait again for as long as they need.
+      const sentBefore = this.#log.filter(({ at }) => at <= now);
+      const later = this.#waitMs(tokens, now, sentBefore);
+      entry = this.#entry(tokens, now + later);
+      this.#insert(entry);
+      if (later === 0) {
+        return true;
+      }
     }
   }
 
@@ -160,34 +177,49 @@ export class JevLimiter {
       ({ at, tokensCountUntil }) => at + WINDOW_MS > now || tokensCountUntil > now,
     );
     let at = Math.max(now, this.#pausedUntil, this.#log.at(-1)?.at ?? now);
-    for (let wait = this.#waitMs(tokens, at); wait > 0; wait = this.#waitMs(tokens, at)) {
+    for (
+      let wait = this.#waitMs(tokens, at, this.#log);
+      wait > 0;
+      wait = this.#waitMs(tokens, at, this.#log)
+    ) {
       at += wait;
     }
-    const entry: Entry = {
+    const entry = this.#entry(tokens, at);
+    this.#log.push(entry);
+    return entry;
+  }
+
+  #entry(tokens: number, at: number): Entry {
+    return {
       at,
       tokens,
       tokensCountUntil: at + WINDOW_MS * Math.max(1, tokens / this.#limits.tokensPerSecond),
     };
-    this.#log.push(entry);
-    return entry;
+  }
+
+  // Logs `entry` in the order of send times.
+  #insert(entry: Entry): void {
+    const index = this.#log.findIndex(({ at }) => at > entry.at);
+    this.#log.splice(index === -1 ? this.#log.length : index, 0, entry);
   }
 
   #release(entry: Entry): void {
     this.#log = this.#log.filter((other) => other !== entry);
   }
 
-  // How much later than `at` a request of `tokens` has to go, or 0 when it may go at `at`. Every
-  // entry in the log is at or before `at`, so only the second that ends at `at` matters.
-  #waitMs(tokens: number, at: number): number {
+  // How much later than `at` a request of `tokens` has to go, after the requests in `log`, or 0
+  // when it may go at `at`. Every entry in `log` is at or before `at`, and in the order of send
+  // times, so only the second that ends at `at` matters.
+  #waitMs(tokens: number, at: number, log: readonly Entry[]): number {
     const waits = [0];
     const { requestsPerSecond, tokensPerSecond } = this.#limits;
     // The requests of the second up to `at`, oldest first, since the log is in that order.
-    const recent = this.#log.filter((entry) => entry.at + WINDOW_MS > at);
+    const recent = log.filter((entry) => entry.at + WINDOW_MS > at);
     if (recent.length >= requestsPerSecond) {
       const oldestInTheWay = recent[recent.length - requestsPerSecond];
       waits.push(oldestInTheWay!.at + WINDOW_MS - at);
     }
-    const counting = this.#log
+    const counting = log
       .filter(({ tokensCountUntil }) => tokensCountUntil > at)
       .sort((a, b) => a.tokensCountUntil - b.tokensCountUntil);
     // A request over the ceiling goes only when nothing else counts, so it needs room for all of
