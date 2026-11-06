@@ -18,11 +18,19 @@
 // earlier than the ceilings allow.
 //
 // Jev counts the requests it receives, so the ceilings hold over the times requests go, not the
-// times they reserved. A timer wakes no earlier than asked, but it may wake later on a busy
-// isolate, so a request that wakes checks the second up to that moment again, against the times
-// the requests before it went. It goes at once and is logged at that time, or, when one before it
-// went late, it waits again for as long as that one needs. A request that wakes very late can
-// then go behind requests that reserved after it.
+// times they reserved. A timer wakes no earlier than asked, but it may wake later, so a request
+// that wakes checks the second up to that moment again, against the times the requests before it
+// went. It goes at once and is logged at that time, or, when one before it went late, it waits
+// again for as long as that one needs. A request that wakes very late can then go behind requests
+// that reserved after it.
+//
+// That check sees a late wake only when the clock shows it, as Node's clock in the tests and
+// local workerd's clock do. Cloudflare's production clock doesn't: inside a timer's callback, and
+// the promises it settles, `Date.now()` is held at the timer's own deadline as a Spectre
+// mitigation (`TimerChannel::now` in workerd's src/workerd/io/io-channels.h). No clock a Worker
+// can read shows the lateness, so there the check always finds the request on time and changes
+// nothing. A late wake in production is covered only by the ceilings' margin below TypeSafe's
+// published figures, and by the pause after a `429`.
 //
 // No request ever waits on another request's promise. The limiter is the isolate's, shared by
 // every search, and Cloudflare can cancel a request's pending work when its client disconnects, so

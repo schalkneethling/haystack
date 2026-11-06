@@ -136,39 +136,131 @@ describe("JevLimiter", () => {
     ]);
   });
 
-  // A timer wakes no earlier than it was asked to, but it may wake later, on a busy isolate. Jev
-  // counts the requests it receives, so the ceilings hold over the times requests are let
-  // through, not the times they reserved: a request that wakes late counts from when it goes,
-  // and the one after it waits a full second from then.
-  it("counts a request that wakes late from when it goes, and holds the next one back", async () => {
-    const clock = fakeClock();
-    let late = false;
+  // A timer wakes no earlier than it was asked to, but it may wake later. Jev counts the requests
+  // it receives, so the ceilings hold over the times requests are let through, not the times they
+  // reserved. These tests use a clock that shows the lateness, as Node and local workerd do.
+  // Cloudflare's production clock doesn't (see the limiter's module comment).
+  describe("when a timer wakes late", () => {
     // `clock`, except that its first sleep wakes 100 ms after it was asked to.
-    const lateFirstSleep: FakeClock = {
-      ...clock,
-      sleep: (milliseconds, signal) => {
-        if (!late) {
-          late = true;
-          return clock.sleep(milliseconds + 100, signal);
-        }
-        return clock.sleep(milliseconds, signal);
-      },
-    };
-    const limiter = new JevLimiter(
-      { requestsPerSecond: 1, tokensPerSecond: 100_000 },
-      lateFirstSleep,
-    );
-    const sent = await send(limiter, clock, [
-      ["first", 1],
-      ["late", 1],
-      ["after", 1],
-    ]).wait();
-    expect(sent.map(({ label, at }) => [label, at])).toEqual([
-      ["first", 0],
-      ["late", 1100],
-      ["after", 2100],
-    ]);
-    expect(busiestSecond(sent).requests).toBe(1);
+    function lateFirstSleep(clock: FakeClock): FakeClock {
+      let late = false;
+      return {
+        ...clock,
+        sleep: (milliseconds, signal) => {
+          if (!late) {
+            late = true;
+            return clock.sleep(milliseconds + 100, signal);
+          }
+          return clock.sleep(milliseconds, signal);
+        },
+      };
+    }
+
+    const ONE_A_SECOND = { requestsPerSecond: 1, tokensPerSecond: 100_000 };
+
+    // `late` reserves 1000 and wakes at 1100, so `after`, which reserved 2000, waits a second
+    // from 1100.
+    it("counts the request from when it goes, and holds the next one back", async () => {
+      const clock = fakeClock();
+      const limiter = new JevLimiter(ONE_A_SECOND, lateFirstSleep(clock));
+      const sent = await send(limiter, clock, [
+        ["first", 1],
+        ["late", 1],
+        ["after", 1],
+      ]).wait();
+      expect(sent.map(({ label, at }) => [label, at])).toEqual([
+        ["first", 0],
+        ["late", 1100],
+        ["after", 2100],
+      ]);
+      expect(busiestSecond(sent).requests).toBe(1);
+    });
+
+    // The late request's tokens count for the second after it goes, not after its reservation:
+    // `late` counts until 2100, so `after` can't add its 60,000 tokens at 2000.
+    it("counts its tokens from when it goes", async () => {
+      const clock = fakeClock();
+      const limiter = new JevLimiter(SEARCH_JEV_LIMITS, lateFirstSleep(clock));
+      const sent = await send(limiter, clock, [
+        ["first", 60_000],
+        ["late", 60_000],
+        ["after", 60_000],
+      ]).wait();
+      expect(sent.map(({ label, at }) => [label, at])).toEqual([
+        ["first", 0],
+        ["late", 1100],
+        ["after", 2100],
+      ]);
+      expect(busiestSecond(sent).tokens).toBeLessThanOrEqual(SEARCH_JEV_LIMITS.tokensPerSecond);
+    });
+
+    // `after` wakes at 2000 and waits again until 2100. Aborted at 2050, it gives back the time
+    // it logged for 2100, so a request that asks at 2050 goes at 2100, a second after `late`.
+    it("gives back the time of a request aborted while it waits again", async () => {
+      const clock = fakeClock();
+      const limiter = new JevLimiter(ONE_A_SECOND, lateFirstSleep(clock));
+      const line = send(limiter, clock, [
+        ["first", 1],
+        ["late", 1],
+      ]);
+      const controller = new AbortController();
+      const aborted = limiter.acquire(1, controller.signal);
+      await clock.advance(2050);
+      controller.abort();
+      expect(await aborted).toBe(false);
+      expect(await line.wait(0)).toHaveLength(2);
+      expect(await send(limiter, clock, [["next", 1]]).wait()).toEqual([
+        { label: "next", at: 2100, tokens: 1 },
+      ]);
+    });
+
+    // `after` waits again until 2100, and a 429 at 2050 pauses everything until 3050.
+    it("holds a request that waits again for a pause that starts meanwhile", async () => {
+      const clock = fakeClock();
+      const limiter = new JevLimiter(ONE_A_SECOND, lateFirstSleep(clock));
+      const line = send(limiter, clock, [
+        ["first", 1],
+        ["late", 1],
+        ["after", 1],
+      ]);
+      await clock.advance(2050);
+      limiter.throttled(1000);
+      expect((await line.wait()).map(({ label, at }) => [label, at])).toEqual([
+        ["first", 0],
+        ["late", 1100],
+        ["after", 3050],
+      ]);
+    });
+
+    // Two a second. `late` goes at 1100, between `B` at 1000 and `C`, reserved for 2000, so the
+    // log has to place it between them. A request that asks at 1100 then goes at 2100, once
+    // `late` is a second old, beside `C`.
+    it("keeps the log in the order of send times", async () => {
+      const clock = fakeClock();
+      const limiter = new JevLimiter(
+        { requestsPerSecond: 2, tokensPerSecond: 100_000 },
+        lateFirstSleep(clock),
+      );
+      const line = send(limiter, clock, [
+        ["r1", 1],
+        ["r2", 1],
+        ["late", 1],
+        ["B", 1],
+        ["C", 1],
+      ]);
+      await clock.advance(1100);
+      const next = send(limiter, clock, [["next", 1]]);
+      const sent = [...(await line.wait()), ...(await next.wait(0))];
+      expect(sent.map(({ label, at }) => [label, at])).toEqual([
+        ["r1", 0],
+        ["r2", 0],
+        ["B", 1000],
+        ["late", 1100],
+        ["C", 2000],
+        ["next", 2100],
+      ]);
+      expect(busiestSecond(sent).requests).toBe(2);
+    });
   });
 
   describe("after a 429", () => {
