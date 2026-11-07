@@ -41,7 +41,7 @@
 //   navigation in Chromium and WebKit, and a beacon is the one made for it (plan, "Search page",
 //   "Built in #215").
 //
-// - Voice input (#216) is voice-input.js's: a button next to the field, added once the page's
+// - Voice input (#216) is voice-input.js's: a button next to the field, shown once the page's
 //   search can run and only when the browser has speech recognition, which puts what it heard in
 //   the field and never searches on its own. Each search says how its query was entered (#217):
 //   `web-speech` when the field still holds the transcript voice input placed, and `typed`
@@ -680,7 +680,7 @@ if (
   status !== null &&
   fillsTheTemplate(template)
 ) {
-  // The voice input is added before the search is wired, so the search can ask it, at submit,
+  // The voice input is set up before the search is wired, so the search can ask it, at submit,
   // whether the field holds a transcript.
   const transcriptInField = addVoiceInput(field, form);
   enhance(
