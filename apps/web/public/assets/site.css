@@ -394,9 +394,9 @@ search {
   display: block;
 }
 
-/* The voice button (#216), which voice-input.js adds after the search field only when the browser
-   has speech recognition. It is a secondary button, round and as tall as the field and Search,
-   48 px, so it never shrinks or grows. The row wraps by width, so it has three layouts, as
+/* The voice button (#216), which the page renders after the search field, hidden, and which
+   voice-input.js shows only when the browser has speech recognition. It is a secondary button,
+   round and as tall as the field and Search, 48 px, so it never shrinks or grows. The row wraps by width, so it has three layouts, as
    measured in Chromium: from about 600 px wide, one line of the field, the button and Search;
    at about 480 to 540 px, the field and the button on the first line, and Search alone, full
    width, under them; and at about 320 to 430 px, the field alone, then the button and Search,
@@ -410,6 +410,12 @@ search {
 
 .search-row > .voice-button {
   flex: none;
+}
+
+/* The button's `display` would win over the `hidden` attribute, which the browser's own
+   stylesheet draws as `display: none`, so a browser without speech recognition would show it. */
+.voice-button[hidden] {
+  display: none;
 }
 
 .voice-icon {
@@ -447,7 +453,7 @@ search {
   }
 }
 
-/* The voice input's live region, under the field's row, which the button's first press adds. Its
+/* The voice input's live region, under the field's row, which the button's first press shows. Its
    first message comes after that, and while it is empty it is taken out of the panel's flow, so
    the panel's gap doesn't leave a space for it. It is still drawn, which keeps it a live region that a screen reader follows. Its messages
    are the page's: the raised status box (`.status > p`), and the alert's box for an error. */

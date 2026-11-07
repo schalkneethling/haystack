@@ -1,5 +1,5 @@
 // The search page's voice input (#216): a button next to the field that starts the browser's
-// speech recognition, which the page adds only when the browser has it, and which puts what it
+// speech recognition, which the page renders hidden and shows only when the browser has it, and which puts what it
 // heard in the field for the person to check, never searching on its own. Playwright's Chromium
 // has a real `SpeechRecognition`, and a test can't use a microphone, so every test here either
 // replaces the constructor with the stub in speech-recognition.ts or removes it. Logging whether a
@@ -68,9 +68,16 @@ test.describe("without speech recognition", () => {
     // The search form holds the field and Search, and nothing else that can be pressed.
     const form = page.locator("form[data-search-form]");
     await expect(form.getByRole("button")).toHaveText(["Search"]);
+    // The voice input's markup is in the page, hidden from everyone, so it is not in the
+    // accessibility tree either.
+    // `toBeHidden` alone would also pass for markup that is missing, so `hidden` is checked.
     await expect(voiceButton(page)).toHaveCount(0);
-    await expect(page.locator(VOICE_STATUS)).toHaveCount(0);
-    await expect(page.getByText(VOICE_MESSAGES.privacy)).toHaveCount(0);
+    await expect(page.locator("#voice-button")).toHaveAttribute("hidden", "");
+    await expect(page.locator("#voice-button")).toBeHidden();
+    await expect(voiceStatus(page)).toHaveCount(0);
+    await expect(page.locator(VOICE_STATUS)).toHaveAttribute("hidden", "");
+    await expect(page.locator("#voice-privacy")).toHaveAttribute("hidden", "");
+    await expect(page.getByText(VOICE_MESSAGES.privacy)).toBeHidden();
     await expect(page.locator("[disabled], [aria-disabled]")).toHaveCount(0);
   });
 });
@@ -82,7 +89,10 @@ test.describe("without JavaScript", () => {
     await page.goto("/");
     await expect(field(page)).toBeVisible();
     await expect(voiceButton(page)).toHaveCount(0);
-    await expect(page.getByText(VOICE_MESSAGES.privacy)).toHaveCount(0);
+    await expect(page.locator("#voice-button")).toHaveAttribute("hidden", "");
+    await expect(page.locator("#voice-button")).toBeHidden();
+    await expect(page.locator("#voice-privacy")).toHaveAttribute("hidden", "");
+    await expect(page.getByText(VOICE_MESSAGES.privacy)).toBeHidden();
   });
 });
 
@@ -94,7 +104,7 @@ test.describe("with speech recognition", () => {
     ["SpeechRecognition"],
     ["webkitSpeechRecognition"],
   ] as const satisfies readonly (readonly RecognitionName[])[]) {
-    test(`the button is added when the browser has ${names.join(" and ")}`, async ({ page }) => {
+    test(`the button is shown when the browser has ${names.join(" and ")}`, async ({ page }) => {
       await stubSpeechRecognition(page, names);
       await page.goto("/");
       await expect(voiceButton(page)).toBeVisible();
@@ -128,15 +138,16 @@ test.describe("with speech recognition", () => {
       `);
     });
 
-    // The voice input's live region is made on the first press, so a person who never presses
-    // the button has no second live region on the page. The browser fires `start` in a later
-    // task, so the region is in the page, empty, before its first message.
-    test("the voice input's live region is added, empty, on the first press, before any message", async ({
+    // The voice input's live region is hidden until the first press, so a person who never
+    // presses the button has no second live region on the page. A hidden region is not in the
+    // accessibility tree, so the role finds none until the press shows it. The browser fires
+    // `start` in a later task, so the region is shown, empty, before its first message.
+    test("the voice input's live region is shown, empty, on the first press, before any message", async ({
       page,
     }) => {
       await page.goto("/");
       await expect(voiceButton(page)).toBeVisible();
-      await expect(page.locator(VOICE_STATUS)).toHaveCount(0);
+      await expect(voiceStatus(page)).toHaveCount(0);
       await voiceButton(page).click();
       await expect(voiceStatus(page)).toHaveCount(1);
       await expect(voiceStatus(page)).toBeEmpty();
@@ -431,11 +442,11 @@ test.describe("with a speech recognition whose start throws", () => {
     await expect.poll(() => recognitionCount(page)).toBe(2);
   });
 
-  // The first press adds the live region. A screen reader can miss text that is already in a
-  // region when the region is added, so the message is written in a later task than the press,
-  // after the region is in the page empty. A mutation observer's callback runs at the end of the
+  // The first press shows the live region. A screen reader can miss text that is already in a
+  // region when the region appears, so the message is written in a later task than the press,
+  // after the region is shown empty. A mutation observer's callback runs at the end of the
   // press's task, so what it records is the region's text in that task.
-  test("the first press adds the region empty, and writes the message in a later task", async ({
+  test("the first press shows the region empty, and writes the message in a later task", async ({
     page,
   }) => {
     await stubSpeechRecognition(page, ["SpeechRecognition", "webkitSpeechRecognition"], {
@@ -443,17 +454,20 @@ test.describe("with a speech recognition whose start throws", () => {
     });
     await page.goto("/");
     await page.evaluate((selector) => {
+      const region = document.querySelector(selector);
+      if (!(region instanceof HTMLElement)) {
+        throw new Error(`No ${selector} in the page`);
+      }
       const observer = new MutationObserver(() => {
-        const region = document.querySelector(selector);
-        if (region !== null) {
-          document.body.dataset.voiceStatusWhenAdded = region.textContent ?? "";
+        if (!region.hidden) {
+          document.body.dataset.voiceStatusWhenShown = region.textContent ?? "";
           observer.disconnect();
         }
       });
-      observer.observe(document.body, { childList: true, subtree: true });
+      observer.observe(region, { attributes: true, attributeFilter: ["hidden"] });
     }, VOICE_STATUS);
     await voiceButton(page).click();
-    await expect(page.locator("body")).toHaveAttribute("data-voice-status-when-added", "");
+    await expect(page.locator("body")).toHaveAttribute("data-voice-status-when-shown", "");
     await expect(voiceStatus(page).locator(".alert")).toHaveText(VOICE_MESSAGES.unavailable);
   });
 

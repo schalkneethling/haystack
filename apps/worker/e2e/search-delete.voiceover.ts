@@ -15,7 +15,7 @@
 //
 // The last test repeats the confirm with the voice input's live region in the page (#216). A
 // second, empty `role="status"` region silenced "Deleted …" on the saved links page when it was
-// written 100 ms after focus moved (#275, 1.3). The voice input adds its region on the button's
+// written 100 ms after focus moved (#275, 1.3). The voice input shows its region on the button's
 // first press, and Playwright's WebKit has no speech recognition, so the stub adds one and the
 // test presses the button once. That test was written without a local run too. On CI, VoiceOver
 // spoke "Deleted …" at its first try in each of runs 42122353135, 42126761913, 42256328190 and
@@ -60,7 +60,7 @@ async function addTheVoiceRegion(page: Page): Promise<void> {
 /**
  * Saves a link at an address that starts with `prefix`, searches for it, and puts keyboard focus
  * on its result's Delete button, with VoiceOver in the page. With `withVoiceRegion`, the voice
- * input's live region is added first. Returns the bookmark's ID.
+ * input's live region is shown first. Returns the bookmark's ID.
  */
 async function focusDeleteButton(
   page: Page,
