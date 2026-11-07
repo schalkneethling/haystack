@@ -35,6 +35,7 @@ describe("SearchRequest", () => {
   it("holds the query, trimmed by the shared search input", () => {
     expect(v.parse(SearchRequest, { query: "  a tool for testing  " })).toEqual({
       query: "a tool for testing",
+      inputMode: "typed",
     });
   });
 
@@ -59,8 +60,29 @@ describe("SearchRequest", () => {
   // part of the body, and the parsed body does not carry it on.
   it("leaves out any other field, so a user or a channel in the body is never passed on", () => {
     expect(v.parse(SearchRequest, { query: "a", userId: "someone-else", channel: "eval" })).toEqual(
-      { query: "a" },
+      { query: "a", inputMode: "typed" },
     );
+  });
+
+  // How the query was entered: `typed`, or `web-speech` when the query is the browser's transcript
+  // (#217).
+  it.each(["typed", "web-speech"] as const)("holds the input mode %s", (inputMode) => {
+    expect(v.parse(SearchRequest, { query: "a", inputMode })).toEqual({ query: "a", inputMode });
+  });
+
+  it("means typed when the input mode is missing", () => {
+    expect(v.parse(SearchRequest, { query: "a" })).toEqual({ query: "a", inputMode: "typed" });
+  });
+
+  // `whisper` is reserved for the backlog's second voice mode, which the page can't send yet.
+  it.each([
+    ["whisper", "whisper"],
+    ["an unknown mode", "keyboard"],
+    ["an empty mode", ""],
+    ["null", null],
+    ["a number", 1],
+  ])("rejects %s as the input mode", (_, inputMode) => {
+    expect(v.safeParse(SearchRequest, { query: "a", inputMode }).success).toBe(false);
   });
 });
 

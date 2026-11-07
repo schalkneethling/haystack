@@ -2,12 +2,15 @@
 // speech recognition, which the page renders hidden and shows only when the browser has it, and which puts what it
 // heard in the field for the person to check, never searching on its own. Playwright's Chromium
 // has a real `SpeechRecognition`, and a test can't use a microphone, so every test here either
-// replaces the constructor with the stub in speech-recognition.ts or removes it. Logging whether a
-// query was spoken or typed is #217's. The design's checks, axe, html-validate, 320 px and forced
-// colors, are in design.e2e.ts with the search page's other states.
+// replaces the constructor with the stub in speech-recognition.ts or removes it. The last part of
+// the file searches through the Worker's own /api/search, and reads the run it logs, to show how a
+// query was entered (#217). The design's checks, axe, html-validate, 320 px and forced colors, are
+// in design.e2e.ts with the search page's other states.
 import type { Page } from "@playwright/test";
-import { expect, test } from "./fixtures.ts";
-import { answerSearches, SEARCH_STATUS } from "./search-answers.ts";
+import { expect, type HaystackWorker, test } from "./fixtures.ts";
+import { answerSearches, SEARCH_STATUS, TRY_AGAIN } from "./search-answers.ts";
+import { answerBy, clearCollection, seedEnriched, signedInUserId } from "./search-collection.ts";
+import { SYSTEM_ONE_URL } from "../test/jev-fixture.ts";
 import {
   endListening,
   failWith,
@@ -53,6 +56,18 @@ async function pressToListen(page: Page, typed?: string): Promise<void> {
   }
   await voiceButton(page).click();
   await expect.poll(() => recognitionCount(page)).toBe(1);
+}
+
+/**
+ * Answers the first search the page sends with a server error, and each one after it with a
+ * result, so that Try again finds it. Returns the requests, as `answerSearches` does.
+ */
+function failFirstSearch(page: Page) {
+  let sent = 0;
+  return answerSearches(page, () => {
+    sent += 1;
+    return sent === 1 ? { status: 502 } : [{ title: "Rust error handling" }];
+  });
 }
 
 test.describe("without speech recognition", () => {
@@ -255,9 +270,145 @@ test.describe("with speech recognition", () => {
 
       await page.getByRole("button", { name: "Search", exact: true }).click();
       await expect(page.locator(SEARCH_STATUS)).toHaveText("1 saved link matches your search.");
-      expect(searches.map(({ body }) => body)).toEqual([{ query: "rust error handling" }]);
+      expect(searches.map(({ body }) => body)).toEqual([
+        { query: "rust error handling", inputMode: "web-speech" },
+      ]);
       // Searching ends the message about what was heard, which no longer describes the field.
       await expect(voiceStatus(page)).toBeEmpty();
+    });
+
+    // A transcript the person then types in is a typed query, and so is one they replace.
+    test("a transcript the person types over is searched as typed", async ({ page }) => {
+      const searches = await answerSearches(page, () => [{ title: "Rust error handling" }]);
+      await pressToListen(page);
+      await startListening(page);
+      await hear(page, "rust error handling");
+      await field(page).fill("rust error handling in tests");
+      await page.getByRole("button", { name: "Search", exact: true }).click();
+      await expect(page.locator(SEARCH_STATUS)).toHaveText("1 saved link matches your search.");
+      expect(searches.map(({ body }) => body)).toEqual([
+        { query: "rust error handling in tests", inputMode: "typed" },
+      ]);
+    });
+
+    // Try again repeats the search that failed, so the search it starts keeps how that one was
+    // entered: the first search fails, and the ones after it find a result.
+    test("Try again repeats a spoken search as spoken", async ({ page }) => {
+      const searches = await failFirstSearch(page);
+      await pressToListen(page);
+      await startListening(page);
+      await hear(page, "rust error handling");
+      await page.getByRole("button", { name: "Search", exact: true }).click();
+      await page.getByRole("button", { name: TRY_AGAIN }).click();
+      await expect(page.locator(SEARCH_STATUS)).toHaveText("1 saved link matches your search.");
+      expect(searches.map(({ body }) => body)).toEqual([
+        { query: "rust error handling", inputMode: "web-speech" },
+        { query: "rust error handling", inputMode: "web-speech" },
+      ]);
+    });
+
+    test("Try again repeats a search typed over a transcript as typed", async ({ page }) => {
+      const searches = await failFirstSearch(page);
+      await pressToListen(page);
+      await startListening(page);
+      await hear(page, "rust error handling");
+      await field(page).fill("rust error handling in tests");
+      await page.getByRole("button", { name: "Search", exact: true }).click();
+      await page.getByRole("button", { name: TRY_AGAIN }).click();
+      await expect(page.locator(SEARCH_STATUS)).toHaveText("1 saved link matches your search.");
+      expect(searches.map(({ body }) => body)).toEqual([
+        { query: "rust error handling in tests", inputMode: "typed" },
+        { query: "rust error handling in tests", inputMode: "typed" },
+      ]);
+    });
+
+    // Try again sends a restored spoken query as spoken. The field still holds it afterwards, so
+    // searching it again repeats that mode, until the person types.
+    test("searching a restored spoken query again keeps it spoken", async ({ page }) => {
+      const searches = await failFirstSearch(page);
+      await pressToListen(page);
+      await startListening(page);
+      await hear(page, "rust error handling");
+      await page.getByRole("button", { name: "Search", exact: true }).click();
+      await expect(page.getByRole("button", { name: TRY_AGAIN })).toBeVisible();
+      await field(page).press("End");
+      await page.keyboard.type("s");
+      await page.getByRole("button", { name: TRY_AGAIN }).click();
+      await expect(page.locator(SEARCH_STATUS)).toHaveText("1 saved link matches your search.");
+      await field(page).press("Enter");
+      await expect.poll(() => searches.length).toBe(3);
+      expect(searches.map(({ body }) => body)).toEqual([
+        { query: "rust error handling", inputMode: "web-speech" },
+        { query: "rust error handling", inputMode: "web-speech" },
+        { query: "rust error handling", inputMode: "web-speech" },
+      ]);
+    });
+
+    // A restored spoken query that the person edits is typed, even when the edit is undone and the
+    // words are the same as before.
+    test("typing in a restored spoken query, and undoing it, makes the next search typed", async ({
+      page,
+    }) => {
+      const searches = await failFirstSearch(page);
+      await pressToListen(page);
+      await startListening(page);
+      await hear(page, "rust error handling");
+      await page.getByRole("button", { name: "Search", exact: true }).click();
+      await expect(page.getByRole("button", { name: TRY_AGAIN })).toBeVisible();
+      await field(page).press("End");
+      await page.keyboard.type("s");
+      await page.getByRole("button", { name: TRY_AGAIN }).click();
+      await expect(page.locator(SEARCH_STATUS)).toHaveText("1 saved link matches your search.");
+      await field(page).press("End");
+      await page.keyboard.type("s");
+      await page.keyboard.press("Backspace");
+      await expect(field(page)).toHaveValue("rust error handling");
+      await field(page).press("Enter");
+      await expect.poll(() => searches.length).toBe(3);
+      expect(searches.map(({ body }) => body)).toEqual([
+        { query: "rust error handling", inputMode: "web-speech" },
+        { query: "rust error handling", inputMode: "web-speech" },
+        { query: "rust error handling", inputMode: "typed" },
+      ]);
+    });
+
+    // Selecting the transcript and typing over it is a typed query, though the text is new rather
+    // than an edit at its end.
+    test("a transcript the person selects and types over is searched as typed", async ({
+      page,
+    }) => {
+      const searches = await answerSearches(page, () => [{ title: "Rust error handling" }]);
+      await pressToListen(page);
+      await startListening(page);
+      await hear(page, "rust error handling");
+      await field(page).press("ControlOrMeta+a");
+      await page.keyboard.type("rust tests");
+      await page.getByRole("button", { name: "Search", exact: true }).click();
+      await expect(page.locator(SEARCH_STATUS)).toHaveText("1 saved link matches your search.");
+      expect(searches.map(({ body }) => body)).toEqual([
+        { query: "rust tests", inputMode: "typed" },
+      ]);
+    });
+
+    // The search that failed was spoken. The person then types in the field, so its text is no
+    // longer the transcript, but Try again still repeats the search as spoken.
+    test("Try again repeats a spoken search as spoken, after the person typed", async ({
+      page,
+    }) => {
+      const searches = await failFirstSearch(page);
+      await pressToListen(page);
+      await startListening(page);
+      await hear(page, "rust error handling");
+      await page.getByRole("button", { name: "Search", exact: true }).click();
+      await expect(page.getByRole("button", { name: TRY_AGAIN })).toBeVisible();
+      await field(page).press("End");
+      await page.keyboard.type("s");
+      await page.getByRole("button", { name: TRY_AGAIN }).click();
+      await expect(page.locator(SEARCH_STATUS)).toHaveText("1 saved link matches your search.");
+      expect(searches.map(({ body }) => body)).toEqual([
+        { query: "rust error handling", inputMode: "web-speech" },
+        { query: "rust error handling", inputMode: "web-speech" },
+      ]);
     });
 
     test("typing in the field after a transcript ends the message about it", async ({ page }) => {
@@ -370,7 +521,9 @@ test.describe("with speech recognition", () => {
       await hear(page, "spoken words");
       await expect(field(page)).toHaveValue("typed query");
       await expect(voiceStatus(page)).toBeEmpty();
-      expect(searches.map(({ body }) => body)).toEqual([{ query: "typed query" }]);
+      expect(searches.map(({ body }) => body)).toEqual([
+        { query: "typed query", inputMode: "typed" },
+      ]);
     });
 
     test("typing while it listens cancels listening, and a late result changes nothing", async ({
@@ -481,5 +634,87 @@ test.describe("with a speech recognition whose start throws", () => {
     await field(page).fill("typed instead");
     await page.clock.runFor(1000);
     await expect(voiceStatus(page)).toBeEmpty();
+  });
+});
+
+// No stub for the search: it reaches the Worker's own route, which searches the signed-in user's
+// bookmarks and asks Jev, answered by the page fixture (`pages`). The run it logs records how the
+// query was entered, which these tests read from D1.
+test.describe("recording how a query was entered, through the Worker's own /api/search", () => {
+  test.beforeEach(async ({ run, page }) => {
+    await clearCollection(run);
+    await stubSpeechRecognition(page);
+  });
+
+  // The Jev answer ranks the one bookmark, whose `match_text` is `rust-guide`.
+  async function seedRustGuide(
+    run: HaystackWorker["run"],
+    query: HaystackWorker["query"],
+    pages: HaystackWorker["pages"],
+  ): Promise<void> {
+    await seedEnriched(run, await signedInUserId(query), "voice", [
+      {
+        title: "Rust error handling guide",
+        matchText: "rust-guide",
+        createdAt: Date.UTC(2026, 9, 1),
+      },
+    ]);
+    pages.route(SYSTEM_ONE_URL, answerBy({ "rust-guide": { noul: 0.95, score: 2.9 } }));
+  }
+
+  test("a spoken query is searched, and its run records web-speech", async ({
+    page,
+    pages,
+    query,
+    run,
+  }) => {
+    await seedRustGuide(run, query, pages);
+    await pressToListen(page);
+    await startListening(page);
+    await hear(page, "rust error handling");
+    await page.getByRole("button", { name: "Search", exact: true }).click();
+    await expect(page.locator(SEARCH_STATUS)).toHaveText("1 saved link matches your search.");
+    expect(await query("SELECT query, input_mode FROM search_runs")).toEqual([
+      { query: "rust error handling", input_mode: "web-speech" },
+    ]);
+  });
+
+  test("a typed query is searched, and its run records typed", async ({
+    page,
+    pages,
+    query,
+    run,
+  }) => {
+    await seedRustGuide(run, query, pages);
+    await page.goto("/");
+    await field(page).fill("rust error handling");
+    await field(page).press("Enter");
+    await expect(page.locator(SEARCH_STATUS)).toHaveText("1 saved link matches your search.");
+    expect(await query("SELECT query, input_mode FROM search_runs")).toEqual([
+      { query: "rust error handling", input_mode: "typed" },
+    ]);
+  });
+
+  // The same words as the transcript, typed, so the field's text still equals it: only the typing
+  // makes this a typed query.
+  test("a transcript the person types over, with the same words, is recorded as typed", async ({
+    page,
+    pages,
+    query,
+    run,
+  }) => {
+    await seedRustGuide(run, query, pages);
+    await pressToListen(page);
+    await startListening(page);
+    await hear(page, "rust error handling");
+    await field(page).press("End");
+    await page.keyboard.type(" ");
+    await page.keyboard.press("Backspace");
+    await expect(field(page)).toHaveValue("rust error handling");
+    await field(page).press("Enter");
+    await expect(page.locator(SEARCH_STATUS)).toHaveText("1 saved link matches your search.");
+    expect(await query("SELECT query, input_mode FROM search_runs")).toEqual([
+      { query: "rust error handling", input_mode: "typed" },
+    ]);
   });
 });

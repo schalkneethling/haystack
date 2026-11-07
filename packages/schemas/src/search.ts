@@ -22,11 +22,22 @@ export const SearchQuery = v.pipe(
 );
 
 /**
- * The body of a web search, `POST /api/search`: the shared search input, as every channel sends
- * it. The page sends the query alone. Its input mode is `typed` until the voice input (Phase 13)
- * has the page send it.
+ * How a web query was entered, which the search run records (`search_runs.input_mode`): `typed`
+ * when the person typed it, and `web-speech` when it is the transcript the browser's speech
+ * recognition gave and the person didn't change it (#217). `whisper` is the backlog's second voice
+ * mode, which the page can't send yet, so it is refused with any other unknown value.
  */
-export const SearchRequest = v.object({ query: SearchQuery });
+const SearchInputMode = v.picklist(["typed", "web-speech"]);
+
+/**
+ * The body of a web search, `POST /api/search`: the shared search input, as every channel sends
+ * it, and how the query was entered. The page sends both. A body without an input mode is a typed
+ * query, so a caller that doesn't send one still gets the search it asked for.
+ */
+export const SearchRequest = v.object({
+  query: SearchQuery,
+  inputMode: v.optional(SearchInputMode, "typed"),
+});
 
 /**
  * A bookmark's ID, as the search page puts it into the IDs of a result's elements, which the
