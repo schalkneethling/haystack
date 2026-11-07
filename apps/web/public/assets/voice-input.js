@@ -1,0 +1,313 @@
+// @ts-check
+// Voice input for the search page (#216; plan, "Search page", "Voice"). It shows a button next to
+// the search field that starts the browser's own speech recognition, and puts what was heard in
+// the field for the person to check. It never searches on its own: the person presses Search, as
+// for a typed query. search.js calls `addVoiceInput` once it has enhanced the page, so a page
+// whose search isn't working has no button either.
+//
+// - The markup is the page's. The Worker renders the button, with its icon, the live region and
+//   the privacy note, all with `hidden` (search-page.ts), so they are hidden from everyone, and
+//   this module only shows them, and wires the button.
+// - Feature detection. The button is shown only when the browser has a speech recognition
+//   constructor, `SpeechRecognition` or the prefixed `webkitSpeechRecognition`. Chrome has both
+//   since 139 and Safari only the prefixed one (MDN's browser-compat-data 8.1.8, checked
+//   2026-11-05). Without either, nothing is shown: no button, no message and no privacy note.
+// - The button is a toggle, named "Search by voice", with `aria-pressed`. It is pressed while
+//   the browser listens, which the recognition's `start` event says, so it never claims to listen
+//   while the browser is still asking for the microphone. A press before then is ignored,
+//   because the browser's prompt is the place to cancel. Pressing it while it is pressed stops
+//   listening, which still returns what was heard. The `end` event, which the specification
+//   fires whatever ended the session, gives it back. Focus stays on it throughout, so Tab moves
+//   on to Search.
+// - Typing in the field or submitting the form while the browser listens cancels listening
+//   (`abort()`), so a result that arrives later never replaces what the person typed or the
+//   query whose results the page shows.
+// - Messages go to a live region of their own, next to the field: that it is listening, what to
+//   do with what was heard, and why it stopped. It is shown on the first press, so a person who
+//   never presses the button has no second live region. The page's other live region is in the
+//   message bar, above the form, and holds the search's own messages.
+// - The privacy note under the field says where the audio goes, and describes the button, so a
+//   screen reader reads it with the button, before the person speaks.
+
+/**
+ * The parts of a speech recognition that this module uses. TypeScript's DOM library has the
+ * events' types but not the recognition's own, so it is written out here from the Web Speech API
+ * specification (https://webaudio.github.io/web-speech-api/).
+ * @typedef {EventTarget & {
+ *   lang: string,
+ *   continuous: boolean,
+ *   interimResults: boolean,
+ *   maxAlternatives: number,
+ *   start(): void,
+ *   stop(): void,
+ *   abort(): void,
+ * }} Recognition
+ * @typedef {new () => Recognition} RecognitionConstructor
+ */
+
+const BUTTON_ID = "voice-button";
+const STATUS_ID = "voice-status";
+const PRIVACY_ID = "voice-privacy";
+// How long after a press that couldn't start listening its message is written. The first press
+// shows the live region, and a screen reader can miss text that is already in a region when the
+// region appears, so the message waits for a later task. On the saved links page, VoiceOver
+// silenced a message written 100 ms after a change while a newly added, empty region was in the
+// page, and spoke it at 500 ms (#275, 1.3). 500 ms is also search.js's delay on this page.
+const ANNOUNCE_DELAY_MS = 500;
+
+const MESSAGES = {
+  listening: "Listening. Say what you're looking for, then pause.",
+  heard: "Check what was heard in the field, then press Search.",
+  notAllowed:
+    "This browser isn't allowing Haystack to use the microphone. You can type your search instead.",
+  noSpeech: "No speech was recognized. You can try again, or type your search.",
+  network:
+    "Speech recognition couldn't reach its service. Check your connection, or type your search.",
+  unavailable:
+    "Searching by voice isn't working in this browser right now. You can type your search instead.",
+};
+
+/**
+ * The message for each error code of the specification's `SpeechRecognitionErrorCode`, or null
+ * for `aborted`, which a browser reports when listening was cancelled, by the page or by the
+ * browser's own controls, so there is nothing to explain. A code this doesn't name gets the
+ * general message, so listening never ends without one.
+ * @param {string} code
+ * @returns {string | null}
+ */
+function errorMessage(code) {
+  switch (code) {
+    case "aborted":
+      return null;
+    case "not-allowed":
+      return MESSAGES.notAllowed;
+    case "no-speech":
+      return MESSAGES.noSpeech;
+    case "network":
+      return MESSAGES.network;
+    default:
+      return MESSAGES.unavailable;
+  }
+}
+
+/**
+ * The browser's speech recognition constructor, unprefixed or prefixed, or null without one.
+ * @returns {RecognitionConstructor | null}
+ */
+function recognitionConstructor() {
+  for (const name of ["SpeechRecognition", "webkitSpeechRecognition"]) {
+    /** @type {unknown} */
+    const found = Reflect.get(window, name);
+    if (typeof found === "function") {
+      return /** @type {RecognitionConstructor} */ (found);
+    }
+  }
+  return null;
+}
+
+/**
+ * The transcript of a result event's final results, joined, from its `resultIndex` on. A
+ * recognition that isn't continuous returns one final result.
+ * @param {Event} event
+ */
+function transcriptOf(event) {
+  if (!("results" in event) || !("resultIndex" in event)) {
+    return "";
+  }
+  const { results, resultIndex } = /** @type {SpeechRecognitionEvent} */ (event);
+  let transcript = "";
+  for (let index = resultIndex; index < results.length; index += 1) {
+    const result = results[index];
+    if (result?.isFinal) {
+      transcript += result[0]?.transcript ?? "";
+    }
+  }
+  return transcript.trim();
+}
+
+/**
+ * Shows the page's voice button and its privacy note, and wires the button to the field, when
+ * the browser has speech recognition. Without it, or on a page without the voice input's markup,
+ * everything stays hidden.
+ * @param {HTMLInputElement} field
+ * @param {HTMLFormElement} form
+ */
+export function addVoiceInput(field, form) {
+  const Recognizer = recognitionConstructor();
+  const button = document.getElementById(BUTTON_ID);
+  const status = document.getElementById(STATUS_ID);
+  const privacy = document.getElementById(PRIVACY_ID);
+  if (Recognizer !== null && button !== null && status !== null && privacy !== null) {
+    enhance(field, form, { button, status, privacy }, Recognizer);
+  }
+}
+
+/**
+ * Shows the voice input and wires it to the field.
+ * @param {HTMLInputElement} field
+ * @param {HTMLFormElement} form
+ * @param {{ button: HTMLElement, status: HTMLElement, privacy: HTMLElement }} parts The page's
+ *   voice button, its live region and the privacy note, all hidden.
+ * @param {RecognitionConstructor} Recognizer The browser's speech recognition constructor.
+ */
+function enhance(field, form, { button, status, privacy }, Recognizer) {
+  // The live region stays hidden until the first press, which shows it, empty. A screen reader
+  // announces a change only to a live region that is already in the page, and the browser fires
+  // `start` in a later task than the press, so the region is shown before its first message. A
+  // press whose `start()` throws has no `start` event to wait for, so its message waits
+  // ANNOUNCE_DELAY_MS instead. Hidden until then, it is absent for a person who never presses
+  // the button, so the search's own region is the page's only one for them.
+  button.hidden = false;
+  privacy.hidden = false;
+
+  /** @type {Recognition | null} */
+  let recognition = null;
+  // The message of a press that couldn't start listening, while it waits to be written.
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let announcement;
+  // Whether the browser listens: from the recognition's `start` event to its error or `end`.
+  let listening = false;
+
+  /** @param {string} text */
+  function say(text) {
+    const paragraph = document.createElement("p");
+    paragraph.textContent = text;
+    status.replaceChildren(paragraph);
+  }
+
+  // An error is the alert's box, as the page's other errors are, with its icon drawn in CSS.
+  /** @param {string} text */
+  function warn(text) {
+    const alert = document.createElement("div");
+    alert.className = "alert";
+    const paragraph = document.createElement("p");
+    paragraph.textContent = text;
+    alert.append(paragraph);
+    status.replaceChildren(alert);
+  }
+
+  // Empties the region, and drops a message still waiting to be written, so typing or a new
+  // press never brings back an earlier press's message.
+  function clear() {
+    clearTimeout(announcement);
+    status.replaceChildren();
+  }
+
+  /** @param {boolean} isListening */
+  function showListening(isListening) {
+    listening = isListening;
+    button.setAttribute("aria-pressed", String(isListening));
+  }
+
+  // Cancels a recognition that is running, so nothing it returns later reaches the field.
+  function cancel() {
+    if (recognition !== null) {
+      recognition.abort();
+      recognition = null;
+    }
+    showListening(false);
+    clear();
+  }
+
+  function listen() {
+    const current = new Recognizer();
+    // Whether this session has said how it went: what was heard, or why it stopped.
+    let reported = false;
+    /** @param {() => void} report */
+    function settle(report) {
+      reported = true;
+      report();
+    }
+    // The person's own language, which their browser names, rather than the page's `lang`,
+    // which is the language of Haystack's words, not of the person's speech.
+    current.lang = navigator.language;
+    // One final result, after a pause, and no interim results, which would change the field's
+    // text under the person, and under a screen reader's cursor, while they speak.
+    current.continuous = false;
+    current.interimResults = false;
+    current.maxAlternatives = 1;
+    // One handler for every event the recognition fires. A recognition the page has cancelled or
+    // replaced may still fire, and nothing it says may reach the field or the region, so the
+    // handler checks that first, once, for every event.
+    /** @param {Event} event */
+    function handle(event) {
+      if (recognition !== current) {
+        return;
+      }
+      switch (event.type) {
+        case "start":
+          showListening(true);
+          say(MESSAGES.listening);
+          break;
+        case "result": {
+          const transcript = transcriptOf(event);
+          if (transcript === "") {
+            settle(() => warn(MESSAGES.noSpeech));
+            break;
+          }
+          // A script's value isn't held to `maxlength`, which the search route's own cap
+          // matches, so what was heard is cut to it, as typing would be.
+          field.value = field.maxLength > 0 ? transcript.slice(0, field.maxLength) : transcript;
+          settle(() => say(MESSAGES.heard));
+          break;
+        }
+        case "nomatch":
+          settle(() => warn(MESSAGES.noSpeech));
+          break;
+        case "error": {
+          const message = errorMessage(/** @type {SpeechRecognitionErrorEvent} */ (event).error);
+          settle(() => {
+            if (message === null) {
+              clear();
+            } else {
+              warn(message);
+            }
+          });
+          // The specification fires `end` after an error, which ends listening. This doesn't
+          // wait for it, so an error always ends the listening state, whatever the browser does
+          // next.
+          recognition = null;
+          showListening(false);
+          break;
+        }
+        case "end":
+          recognition = null;
+          showListening(false);
+          // A session that ended with nothing to report, such as one stopped before anything
+          // was said, takes its "Listening" message with it.
+          if (!reported) {
+            clear();
+          }
+          break;
+      }
+    }
+    for (const type of ["start", "result", "nomatch", "error", "end"]) {
+      current.addEventListener(type, handle);
+    }
+    recognition = current;
+    clear();
+    try {
+      current.start();
+    } catch {
+      recognition = null;
+      announcement = setTimeout(() => warn(MESSAGES.unavailable), ANNOUNCE_DELAY_MS);
+    }
+  }
+
+  button.addEventListener("click", () => {
+    status.hidden = false;
+    if (recognition === null) {
+      listen();
+    } else if (listening) {
+      // Stops listening, and the browser still returns what it heard so far, then ends.
+      recognition.stop();
+    }
+    // Otherwise the browser hasn't started listening, and may be asking for the microphone,
+    // whose prompt is the place to cancel, so the press is ignored.
+  });
+
+  // The field's text is the person's from the moment they change it or search, so a recognition
+  // still running is cancelled, and the message about what was heard, or an error's, goes.
+  field.addEventListener("input", cancel);
+  form.addEventListener("submit", cancel);
+}

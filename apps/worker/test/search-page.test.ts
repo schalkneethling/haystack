@@ -110,6 +110,23 @@ describe("GET /", () => {
     );
   });
 
+  // The voice input (#216) is in the page, hidden from everyone, and voice-input.js only shows it
+  // when the browser has speech recognition, so the script builds no markup of its own. The
+  // button follows the field in its row and holds its icon. The live region and the privacy note
+  // follow the row.
+  it("has the voice button, with its icon, its live region and the privacy note, all hidden", async () => {
+    const main = mainContent(await searchPage());
+    const row = /<div class="search-row">([\s\S]*?)<\/div>/.exec(main)?.[1] ?? "";
+    expect(row).toMatch(
+      /<input id="search-query"[^>]*>\s*<button id="voice-button" class="button voice-button" type="button" aria-label="Search by voice" aria-pressed="false" aria-describedby="voice-privacy" hidden>\s*<svg class="voice-icon" viewBox="0 0 24 24" aria-hidden="true">[\s\S]*<\/svg>\s*<\/button>\s*<button class="button button-primary" type="submit">Search<\/button>/,
+    );
+    expect(row).toContain('class="voice-icon-microphone"');
+    expect(row).toContain('class="voice-icon-stop"');
+    expect(main).toMatch(
+      /<\/div>\s*<div id="voice-status" class="status voice-status" role="status" hidden><\/div>\s*<p id="voice-privacy" class="hint voice-privacy" hidden>In some browsers, including Chrome, searching by voice sends a recording of what you say to the browser maker's servers, which turn it into text.<\/p>\s*<\/form>/,
+    );
+  });
+
   // search.js builds each result from the saved links page's card (design review), so the card's
   // markup has one source, with a Delete form that returns to the search page.
   it("has the saved links page's card as a template for the results", async () => {
