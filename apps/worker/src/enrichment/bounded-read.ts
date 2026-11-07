@@ -1,6 +1,8 @@
 // Reading the start of a response's body, for the clients that need only so much of it: the GitHub
 // client (github-client.ts, #123), which reads a README's first kilobytes, and the Messages request
-// (anthropic-messages.ts), which reads a 400's error body to recognize a spend limit (#154).
+// (anthropic-messages.ts), which reads a 400's error body to recognize a spend limit (#154); and
+// the Jev client (jev-client.ts), which reads a 400's error body for `max_tokens_exceeded` (#211);
+// and the search route (search-route.ts), which reads a request body of up to 8 KiB (#214).
 
 /** The text read, and whether it is the whole body. */
 export interface BoundedText {
@@ -28,7 +30,9 @@ export async function readText(
       return { ok: true, text: text + decoder.decode(), complete: true };
     }
     const room = limit - bytes;
-    if (chunk.value.byteLength >= room) {
+    // A chunk that fills the room exactly is kept: the body is cut only once a byte past the limit
+    // arrives, so a body of exactly `limit` bytes is complete.
+    if (chunk.value.byteLength > room) {
       text += decoder.decode(chunk.value.subarray(0, room), { stream: true });
       await reader.cancel().catch(() => {
         // The rest of the body is not wanted.

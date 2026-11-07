@@ -1,0 +1,427 @@
+// The client-side limiter for search's requests to Jev (#211): it holds Haystack's ceilings for
+// requests per second and tokens per second, which #202 left to Haystack's own conservative
+// constants, and pauses after a `429`. Time is a fake clock (fake-clock.ts), so no test waits,
+// and each records the moment the limiter let every request through. See "Jev model limits" in
+// plans/haystack-v1-implementation-plan.md.
+import { describe, expect, it } from "vite-plus/test";
+import { JEV_MAX_RETRY_DELAY_MS } from "../src/enrichment/jev-client.ts";
+import {
+  JevLimiter,
+  LIMITER_DEFAULT_PAUSE_MS,
+  SEARCH_JEV_LIMITS,
+} from "../src/search/jev-limiter.ts";
+import { JEV_REQUEST_CONTEXT_TOKENS } from "../src/search/search-chunks.ts";
+import { type FakeClock, fakeClock } from "./fake-clock.ts";
+
+interface Sent {
+  readonly label: string;
+  readonly at: number;
+  readonly tokens: number;
+}
+
+// Asks `limiter` to let each request through at once, in order, and records when each is let
+// through. `wait` moves the clock until every request is through.
+function send(limiter: JevLimiter, clock: FakeClock, requests: readonly [string, number][]) {
+  const sent: Sent[] = [];
+  const done = Promise.all(
+    requests.map(async ([label, tokens]) => {
+      await limiter.acquire(tokens);
+      sent.push({ label, at: clock.now(), tokens });
+    }),
+  );
+  return {
+    sent,
+    async wait(milliseconds = 60_000) {
+      await clock.advance(milliseconds);
+      await done;
+      return sent;
+    },
+  };
+}
+
+// The most requests, and the most tokens, let through in any one second: in the second that
+// ends at each request, that request included.
+function busiestSecond(sent: readonly Sent[]): { requests: number; tokens: number } {
+  let requests = 0;
+  let tokens = 0;
+  for (const { at } of sent) {
+    const inSecond = sent.filter((other) => other.at > at - 1000 && other.at <= at);
+    requests = Math.max(requests, inSecond.length);
+    tokens = Math.max(
+      tokens,
+      inSecond.reduce((sum, other) => sum + other.tokens, 0),
+    );
+  }
+  return { requests, tokens };
+}
+
+function requests(count: number, tokens: number): [string, number][] {
+  return Array.from({ length: count }, (_, index) => [`r${index}`, tokens]);
+}
+
+describe("JevLimiter", () => {
+  // The account's own limits are deliberately not recorded (#202), so these are Haystack's,
+  // below the only figures TypeSafe ever published, 250,000 tokens per second and 1,200 requests
+  // a minute for Jev 1.13, and tuned later from real searches.
+  it("starts with Haystack's conservative ceilings", () => {
+    expect(SEARCH_JEV_LIMITS).toEqual({ requestsPerSecond: 10, tokensPerSecond: 100_000 });
+  });
+
+  it("lets no more requests through in a second than the requests-per-second ceiling", async () => {
+    const clock = fakeClock();
+    const limiter = new JevLimiter(SEARCH_JEV_LIMITS, clock);
+    const sent = await send(limiter, clock, requests(25, 1)).wait();
+    expect(sent).toHaveLength(25);
+    expect(busiestSecond(sent).requests).toBe(SEARCH_JEV_LIMITS.requestsPerSecond);
+    // Nothing early, and nothing later than it has to be: 10 at once, then the next 10 once the
+    // first ones are a second old, and so on.
+    expect(sent.map(({ at }) => at)).toEqual([
+      ...Array<number>(10).fill(0),
+      ...Array<number>(10).fill(1000),
+      ...Array<number>(5).fill(2000),
+    ]);
+  });
+
+  it("lets no more tokens through in a second than the tokens-per-second ceiling", async () => {
+    const clock = fakeClock();
+    const limiter = new JevLimiter(SEARCH_JEV_LIMITS, clock);
+    // Five requests of 40,000 tokens: well under the requests ceiling, but 200,000 tokens.
+    const sent = await send(limiter, clock, requests(5, 40_000)).wait();
+    expect(busiestSecond(sent).requests).toBeLessThan(SEARCH_JEV_LIMITS.requestsPerSecond);
+    expect(busiestSecond(sent).tokens).toBeLessThanOrEqual(SEARCH_JEV_LIMITS.tokensPerSecond);
+    expect(sent.map(({ at }) => at)).toEqual([0, 0, 1000, 1000, 2000]);
+  });
+
+  it("lets a full request of 64k tokens through alone when the second's tokens are spent", async () => {
+    const clock = fakeClock();
+    const limiter = new JevLimiter(SEARCH_JEV_LIMITS, clock);
+    const sent = await send(limiter, clock, requests(3, JEV_REQUEST_CONTEXT_TOKENS)).wait();
+    expect(sent.map(({ at }) => at)).toEqual([0, 1000, 2000]);
+  });
+
+  // The long-context option allows 262,000 tokens in one request, which Phase 11 never sends but
+  // Phase 12 may try. Such a request is over the tokens-per-second ceiling by itself, so it can
+  // never fit a second's share. It waits until no other request's tokens count, goes alone, and
+  // then counts for as many seconds as its tokens need at the ceiling, so the rate over time
+  // stays at the ceiling and the request doesn't wait for good.
+  it("lets a request larger than a second's tokens through alone, and makes the next one wait for it", async () => {
+    const clock = fakeClock();
+    const limiter = new JevLimiter(SEARCH_JEV_LIMITS, clock);
+    const sent = await send(limiter, clock, [
+      ["small", 10_000],
+      ["long-context", 262_000],
+      ["after", 10_000],
+    ]).wait();
+    expect(sent).toEqual([
+      { label: "small", at: 0, tokens: 10_000 },
+      { label: "long-context", at: 1000, tokens: 262_000 },
+      { label: "after", at: 1000 + 2620, tokens: 10_000 },
+    ]);
+  });
+
+  // A request that has to wait isn't overtaken by a smaller one that would fit sooner, so a large
+  // chunk can't be held back for good by a stream of small ones.
+  it("lets requests through in the order they asked", async () => {
+    const clock = fakeClock();
+    const limiter = new JevLimiter(SEARCH_JEV_LIMITS, clock);
+    const sent = await send(limiter, clock, [
+      ["first", 90_000],
+      ["large", 50_000],
+      ["small", 1000],
+    ]).wait();
+    expect(sent.map(({ label, at }) => [label, at])).toEqual([
+      ["first", 0],
+      ["large", 1000],
+      ["small", 1000],
+    ]);
+  });
+
+  // A timer wakes no earlier than it was asked to, but it may wake later. Jev counts the requests
+  // it receives, so the ceilings hold over the times requests are let through, not the times they
+  // reserved. These tests use a clock that shows the lateness, as Node and local workerd do.
+  // Cloudflare's production clock doesn't (see the limiter's module comment).
+  describe("when a timer wakes late", () => {
+    // `clock`, except that its first sleep wakes 100 ms after it was asked to.
+    function lateFirstSleep(clock: FakeClock): FakeClock {
+      let late = false;
+      return {
+        ...clock,
+        sleep: (milliseconds, signal) => {
+          if (!late) {
+            late = true;
+            return clock.sleep(milliseconds + 100, signal);
+          }
+          return clock.sleep(milliseconds, signal);
+        },
+      };
+    }
+
+    const ONE_A_SECOND = { requestsPerSecond: 1, tokensPerSecond: 100_000 };
+
+    // `late` reserves 1000 and wakes at 1100, so `after`, which reserved 2000, waits a second
+    // from 1100.
+    it("counts the request from when it goes, and holds the next one back", async () => {
+      const clock = fakeClock();
+      const limiter = new JevLimiter(ONE_A_SECOND, lateFirstSleep(clock));
+      const sent = await send(limiter, clock, [
+        ["first", 1],
+        ["late", 1],
+        ["after", 1],
+      ]).wait();
+      expect(sent.map(({ label, at }) => [label, at])).toEqual([
+        ["first", 0],
+        ["late", 1100],
+        ["after", 2100],
+      ]);
+      expect(busiestSecond(sent).requests).toBe(1);
+    });
+
+    // The late request's tokens count for the second after it goes, not after its reservation:
+    // `late` counts until 2100, so `after` can't add its 60,000 tokens at 2000.
+    it("counts its tokens from when it goes", async () => {
+      const clock = fakeClock();
+      const limiter = new JevLimiter(SEARCH_JEV_LIMITS, lateFirstSleep(clock));
+      const sent = await send(limiter, clock, [
+        ["first", 60_000],
+        ["late", 60_000],
+        ["after", 60_000],
+      ]).wait();
+      expect(sent.map(({ label, at }) => [label, at])).toEqual([
+        ["first", 0],
+        ["late", 1100],
+        ["after", 2100],
+      ]);
+      expect(busiestSecond(sent).tokens).toBeLessThanOrEqual(SEARCH_JEV_LIMITS.tokensPerSecond);
+    });
+
+    // `after` wakes at 2000 and waits again until 2100. Aborted at 2050, it gives back the time
+    // it logged for 2100, so a request that asks at 2050 goes at 2100, a second after `late`.
+    it("gives back the time of a request aborted while it waits again", async () => {
+      const clock = fakeClock();
+      const limiter = new JevLimiter(ONE_A_SECOND, lateFirstSleep(clock));
+      const line = send(limiter, clock, [
+        ["first", 1],
+        ["late", 1],
+      ]);
+      const controller = new AbortController();
+      const aborted = limiter.acquire(1, controller.signal);
+      await clock.advance(2050);
+      controller.abort();
+      expect(await aborted).toBe(false);
+      expect(await line.wait(0)).toHaveLength(2);
+      expect(await send(limiter, clock, [["next", 1]]).wait()).toEqual([
+        { label: "next", at: 2100, tokens: 1 },
+      ]);
+    });
+
+    // `after` waits again until 2100, and a 429 at 2050 pauses everything until 3050.
+    it("holds a request that waits again for a pause that starts meanwhile", async () => {
+      const clock = fakeClock();
+      const limiter = new JevLimiter(ONE_A_SECOND, lateFirstSleep(clock));
+      const line = send(limiter, clock, [
+        ["first", 1],
+        ["late", 1],
+        ["after", 1],
+      ]);
+      await clock.advance(2050);
+      limiter.throttled(1000);
+      expect((await line.wait()).map(({ label, at }) => [label, at])).toEqual([
+        ["first", 0],
+        ["late", 1100],
+        ["after", 3050],
+      ]);
+    });
+
+    // Two a second. `late` goes at 1100, between `B` at 1000 and `C`, reserved for 2000, so the
+    // log has to place it between them. A request that asks at 1100 then goes at 2100, once
+    // `late` is a second old, beside `C`.
+    it("keeps the log in the order of send times", async () => {
+      const clock = fakeClock();
+      const limiter = new JevLimiter(
+        { requestsPerSecond: 2, tokensPerSecond: 100_000 },
+        lateFirstSleep(clock),
+      );
+      const line = send(limiter, clock, [
+        ["r1", 1],
+        ["r2", 1],
+        ["late", 1],
+        ["B", 1],
+        ["C", 1],
+      ]);
+      await clock.advance(1100);
+      const next = send(limiter, clock, [["next", 1]]);
+      const sent = [...(await line.wait()), ...(await next.wait(0))];
+      expect(sent.map(({ label, at }) => [label, at])).toEqual([
+        ["r1", 0],
+        ["r2", 0],
+        ["B", 1000],
+        ["late", 1100],
+        ["C", 2000],
+        ["next", 2100],
+      ]);
+      expect(busiestSecond(sent).requests).toBe(2);
+    });
+  });
+
+  describe("after a 429", () => {
+    it.each([
+      ["the wait the response asked for", 3000, 3000],
+      ["a second, when it asked for none", undefined, LIMITER_DEFAULT_PAUSE_MS],
+      ["no longer than the client would wait to retry", 60_000, JEV_MAX_RETRY_DELAY_MS],
+    ])("holds every request for %s", async (_, retryAfterMs, pause) => {
+      const clock = fakeClock();
+      const limiter = new JevLimiter(SEARCH_JEV_LIMITS, clock);
+      limiter.throttled(retryAfterMs);
+      const sent = await send(limiter, clock, requests(2, 1)).wait();
+      expect(sent.map(({ at }) => at)).toEqual([pause, pause]);
+    });
+
+    it("keeps the longer pause when a shorter one follows", async () => {
+      const clock = fakeClock();
+      const limiter = new JevLimiter(SEARCH_JEV_LIMITS, clock);
+      limiter.throttled(4000);
+      limiter.throttled(1000);
+      const sent = await send(limiter, clock, requests(1, 1)).wait();
+      expect(sent.map(({ at }) => at)).toEqual([4000]);
+    });
+
+    // A request that reserved its time before the 429 is already asleep, and its time may fall
+    // inside the pause. It checks the pause when it wakes, and goes after it instead.
+    it("holds a request that was already waiting, when its time falls inside the pause", async () => {
+      const clock = fakeClock();
+      const limiter = new JevLimiter(SEARCH_JEV_LIMITS, clock);
+      const first = await send(limiter, clock, requests(10, 1)).wait(0);
+      expect(first.map(({ at }) => at)).toEqual(Array<number>(10).fill(0));
+      // The 11th reserves 1000, the first moment the second holds room for it, and sleeps.
+      const eleventh = send(limiter, clock, [["eleventh", 1]]);
+      await clock.advance(500);
+      limiter.throttled(3000);
+      expect(await eleventh.wait()).toEqual([{ label: "eleventh", at: 3500, tokens: 1 }]);
+    });
+
+    // Order holds except across a pause: a request that wakes inside it goes behind every
+    // reservation made so far, which is safe, because each still goes no earlier than its own.
+    it("sends a request that wakes inside the pause behind the ones reserved after it", async () => {
+      const clock = fakeClock();
+      const limiter = new JevLimiter({ requestsPerSecond: 1, tokensPerSecond: 100_000 }, clock);
+      const line = send(limiter, clock, [
+        ["first", 1],
+        ["A", 1],
+        ["B", 1],
+        ["C", 1],
+      ]);
+      await clock.advance(500);
+      limiter.throttled(1000);
+      expect((await line.wait()).map(({ label, at }) => [label, at])).toEqual([
+        ["first", 0],
+        ["B", 2000],
+        ["C", 3000],
+        ["A", 4000],
+      ]);
+    });
+  });
+
+  it("lets nothing through for an aborted wait, and doesn't count it", async () => {
+    const clock = fakeClock();
+    const limiter = new JevLimiter({ requestsPerSecond: 1, tokensPerSecond: 100_000 }, clock);
+    expect(await limiter.acquire(1)).toBe(true);
+    const controller = new AbortController();
+    const aborted = limiter.acquire(1, controller.signal);
+    await clock.advance(100);
+    controller.abort();
+    expect(await aborted).toBe(false);
+    // The aborted request gave its place back, so a request that asks after it goes as soon as
+    // the first is a second old.
+    expect(await send(limiter, clock, [["after", 1]]).wait()).toEqual([
+      { label: "after", at: 1000, tokens: 1 },
+    ]);
+  });
+
+  // A request aborted in the middle of the line gives its place back, but the one that reserved
+  // after it keeps its time: later than it needs to be, never early.
+  it("keeps the time of a request that reserved behind an aborted one", async () => {
+    const clock = fakeClock();
+    const limiter = new JevLimiter({ requestsPerSecond: 1, tokensPerSecond: 100_000 }, clock);
+    const controller = new AbortController();
+    const first = send(limiter, clock, [["first", 1]]);
+    const aborted = limiter.acquire(1, controller.signal);
+    const after = send(limiter, clock, [["after", 1]]);
+    await clock.advance(100);
+    controller.abort();
+    expect(await aborted).toBe(false);
+    expect(await first.wait(0)).toEqual([{ label: "first", at: 0, tokens: 1 }]);
+    expect(await after.wait()).toEqual([{ label: "after", at: 2000, tokens: 1 }]);
+  });
+
+  // Cloudflare can cancel a request's pending work when its client disconnects, and a cancelled
+  // request's timer never fires, so it never comes back to the limiter. The limiter is the
+  // isolate's, shared by every search, so a request that never comes back mustn't hold up the
+  // ones after it. Here the clock's first sleep never wakes, which is that request's timer.
+  describe("when a request never comes back", () => {
+    // `clock`, except that its first sleep never wakes.
+    function losingFirstSleep(clock: FakeClock): FakeClock {
+      let lost = false;
+      return {
+        ...clock,
+        sleep: (milliseconds, signal) => {
+          if (!lost) {
+            lost = true;
+            return new Promise<void>(() => {
+              // Never settles, as a cancelled request's timer never fires.
+            });
+          }
+          return clock.sleep(milliseconds, signal);
+        },
+      };
+    }
+
+    it.each([
+      ["at the head of the line", ["lost", "next"]],
+      ["waiting behind another", ["first", "lost", "next"]],
+    ])("still lets the next one through on time when it is %s", async (_, line) => {
+      const clock = fakeClock();
+      const limiter = new JevLimiter(
+        { requestsPerSecond: 1, tokensPerSecond: 100_000 },
+        losingFirstSleep(clock),
+      );
+      // A 429 makes the head wait too, so that its sleep is the first.
+      if (line[0] === "lost") {
+        limiter.throttled(1000);
+      }
+      const admitted: Record<string, number> = {};
+      for (const label of line) {
+        void limiter.acquire(1).then(() => {
+          admitted[label] = clock.now();
+        });
+      }
+      await clock.advance(10_000);
+      // One request a second, and the lost one keeps its second, so the next one goes a second
+      // after it would have, and never waits for good.
+      expect(admitted.next).toBe(2000);
+      expect(admitted.lost).toBeUndefined();
+    });
+
+    // The lost request's reservation counts for its second and then expires, so a request that
+    // asks long after it goes at once.
+    it("lets a request through at once when it asks after the lost one's second", async () => {
+      const clock = fakeClock();
+      const limiter = new JevLimiter(
+        { requestsPerSecond: 1, tokensPerSecond: 100_000 },
+        losingFirstSleep(clock),
+      );
+      limiter.throttled(1000);
+      void limiter.acquire(1);
+      await clock.advance(10_000);
+      expect(await send(limiter, clock, [["later", 1]]).wait(0)).toEqual([
+        { label: "later", at: 10_000, tokens: 1 },
+      ]);
+    });
+  });
+
+  it("refuses a token count that isn't a whole number from 0", async () => {
+    const limiter = new JevLimiter(SEARCH_JEV_LIMITS, fakeClock());
+    for (const tokens of [-1, 0.5, Number.NaN]) {
+      await expect(limiter.acquire(tokens)).rejects.toThrow(RangeError);
+    }
+  });
+});

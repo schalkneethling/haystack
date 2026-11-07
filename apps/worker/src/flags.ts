@@ -61,10 +61,11 @@ export const SWEEP_ENABLED_FLAG = "sweep-enabled";
 export const SWEEP_BATCH_SIZE_FLAG = "sweep-batch-size";
 
 /**
- * Whether the search page is the home page: a boolean flag (#235). Search answers nothing until
- * /api/search is built (#214), so until the owner turns this on (#218), `/` sends a signed-in
- * user on to the saved links, and the header has no Search link. A deploy in between therefore
- * never puts a page whose every search fails on the home page.
+ * Whether the search page is the home page: a boolean flag (#235). It was added when `/api/search`
+ * did not exist yet, so that no deploy put a page whose every search fails on the home page.
+ * The route exists since #214, and the switch stays until the release (#218), when the owner turns
+ * it on: until then, `/` sends a signed-in user on to the saved links, and the header has no
+ * Search link.
  */
 export const SEARCH_ENABLED_FLAG = "search-enabled";
 
@@ -109,8 +110,8 @@ export interface SearchFlags {
 
 /**
  * The default: search off, which is also what a Flagship outage gives, because the search page
- * is only worth showing once /api/search answers (#214). Off, the saved links are the home page,
- * which every bookmark reaches.
+ * is only worth showing once the release has judged search ready (#218). Off, the saved links are
+ * the home page, which every bookmark reaches.
  */
 export const SEARCH_FLAG_DEFAULTS: SearchFlags = Object.freeze({ enabled: false });
 
@@ -295,7 +296,8 @@ export const SEARCH_REQUEST_MODE_FLAG = "search-request-mode";
 /** The search settings, as one search uses them, named as `search_runs`' columns are. */
 export interface SearchSettings {
   readonly questions: (typeof SEARCH_QUESTIONS)[number];
-  // Not checked against `questions`, which may leave it out (#212 decides what happens then).
+  // Not checked against `questions`, which may leave it out. The search service then ranks by
+  // the signal that was asked (usedSearchSettings in search/search-ranking.ts, #212).
   readonly displaySignal: (typeof SEARCH_DISPLAY_SIGNALS)[number];
   // From 0 to 1.
   readonly noulThreshold: number;
@@ -363,7 +365,8 @@ function checkedThreshold(flag: string, value: unknown, max: number, fallback: n
  * they fail at once, as all five do for a missing binding, that is the first in the order below.
  * A value out of range gives that flag's default, with a warning that names the flag and not the
  * value. Each flag is checked on its own: whether the questions include the display signal is
- * not checked here, because what a search does then is the search service's decision (#212). A
+ * not checked here, because what a search does then is the search service's decision: it ranks
+ * by the signal that was asked (usedSearchSettings in search/search-ranking.ts, #212). A
  * missing flag is not logged: each is created only when Phase 12 needs
  * a value other than its default (#225), as `sweep-batch-size` is, so its absence is the expected
  * state, and a warning on every search would bury the ones that matter. A flag that the getter

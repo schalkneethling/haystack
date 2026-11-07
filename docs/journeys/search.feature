@@ -5,14 +5,17 @@ Feature: Searching my saved links
   built for the keyboard and for a screen reader: focus stays in the field,
   the count of matches is announced, and each result is a heading.
 
-  Searching itself comes with Phase 11 (#214). Until then, the browser tests
-  answer every search with a stubbed answer, and Haystack's own search answers
-  "not found", so every real search fails, as the scenario "A search that
-  fails" describes. So the search page is behind a switch, the
-  `search-enabled` flag, which the owner turns on when search is released
-  (#218). Until then the home page is the saved links, and the header has no
-  "Search" link. Every scenario but the first is with the switch on, as the
-  browser tests run. Each result can be deleted from its card (#208), through
+  Searching is real since Phase 11 (#214): a search asks Jev about my saved
+  links and the page shows the answer. Most of the browser tests still answer
+  the search with a stubbed answer, because a stub decides the answer and when
+  it arrives, which the scenarios about a slow, incomplete or failed search
+  need. The scenarios "A search that finds links", "A search that finds
+  nothing", "A search that is answered in part" and "A search that cannot be
+  answered" are the ones that run through Haystack's own search. The search
+  page is behind a switch, the `search-enabled` flag, which the owner turns on
+  when search is released (#218). Until then the home page is the saved links,
+  and the header has no "Search" link. Every scenario but the first is with
+  the switch on, as the browser tests run. Each result can be deleted from its card (#208), through
   the same dialog and confirmation page as on the saved links page, which
   delete.feature describes under "From the search results". The scenarios
   here say what the search page shows afterwards.
@@ -22,6 +25,21 @@ Feature: Searching my saved links
   it is searching, shows what it found with a notice when some links could not
   be searched, and shows an error with a way to try again when the search
   failed, never an empty list, which would look like nothing matched (#207).
+
+  Following a result is recorded (#215), as a hint of which results helped,
+  which the evaluation of the search (Phase 12) can use. Nothing about the
+  page changes for me, and a failed record never keeps me from the saved page.
+
+  In a browser with speech recognition, such as Chrome or Safari, I can say
+  my query instead of typing it (#216). A button next to the field starts the
+  browser's own recognition, and what it heard goes in the field for me to
+  check. It never searches on its own: I press Search, as for a typed query.
+  A browser without speech recognition shows the plain search. The browser
+  tests replace the browser's speech recognition with a stub, because a test
+  can't use a microphone, so a real microphone is only checked by hand, in
+  Chrome. The search records whether a query was spoken or typed. The words the
+  browser heard are stored as the query, as typed words are, but the audio is
+  never stored (#217).
 
   Background:
     Given I am signed in to Haystack
@@ -64,6 +82,90 @@ Feature: Searching my saved links
       | testing | two links | 2 saved links match your search.  | two cards, in the order found |
       | one     | one link  | 1 saved link matches your search. | one card                      |
       | nothing | no link   | No saved links match your search. | no cards, and no error        |
+
+  @playwright:apps/worker/e2e/search.e2e.ts
+  @integration:apps/worker/test/search-api.test.ts
+  Scenario: A search that finds links
+    Haystack asks the service that judges each of my links, whether it would
+    help with what I described. The links that clear the threshold are shown,
+    the best match first. Haystack also keeps, for every link it asked about,
+    both of the service's answers, whether or not the link is shown, so that
+    the ranking can be judged later. The query is kept with them, and in no
+    log.
+
+    Given I have saved several links, and Haystack has described them
+    And two of them match what I describe, one better than the other
+    When I search for what I describe
+    Then the page says "2 saved links match your search."
+    And it shows the two cards, the better match first
+    And Haystack has kept both answers for every link it asked about, the one that did not match too
+
+  @playwright:apps/worker/e2e/search.e2e.ts
+  Scenario: A search that finds nothing
+    A search that finds nothing is an answer, and not an error.
+
+    Given I have saved links, and none of them matches what I describe
+    When I search for what I describe
+    Then the page says "No saved links match your search."
+    And it shows no cards, and no error
+
+  @playwright:apps/worker/e2e/search.e2e.ts
+  @integration:apps/worker/test/search-api.test.ts
+  Scenario: A search that is answered in part
+    Haystack asks about my links in several requests when there are many. If
+    only some of them are answered, it shows what those found, with the notice
+    that there may be more matches, and says so in its log.
+
+    Given I have saved so many links that Haystack asks about them in several requests
+    And the service that judges them answers only some of the requests
+    When I search
+    Then the page shows the cards that the answered requests found
+    And the page says "Some of your links could not be searched, so there may be more matches. You can press Search to try again."
+
+  @playwright:apps/worker/e2e/search.e2e.ts
+  @integration:apps/worker/test/search-api.test.ts
+  Scenario: A search that cannot be answered
+    When the service that judges my links answers none of the requests,
+    Haystack answers the page with an error. It does not answer with an empty
+    list, which would look like nothing matched. The page shows the error with
+    "Try again", and trying again searches again once the service is back. The
+    search is logged as failed.
+
+    Given the service that judges my links is not answering
+    When I search
+    Then the page shows the error "Something went wrong, so your links could not be searched." with the button "Try again"
+    And it shows no cards, and does not say that nothing matched
+    When the service is answering again, and I press "Try again"
+    Then the page shows the cards that the search found
+
+  @integration:apps/worker/test/search-api.test.ts
+  Scenario: Searching only my own links
+    The search reads the links of the person who is signed in, and the person
+    comes from the session, never from what the page sends.
+
+    Given another person has saved links of their own
+    When I search
+    Then the page shows none of their links
+    And none of their links is sent to the service that judges them
+    And the log of my search holds none of their links
+
+  @integration:apps/worker/test/search-api.test.ts
+  @integration:apps/worker/test/search-bookmarks.test.ts
+  Scenario: Leaving a search that is still running
+    Changing the query while a search runs, giving up on it after 30 seconds or
+    leaving the page ends the search I abandoned. It asks the service that
+    judges my links about no more of them, because each request costs money,
+    and it is still logged, with the reason "aborted", even if the page has
+    already gone, because Haystack keeps the search running for the log. A
+    request already on its way can't be taken back, so it is finished. If the
+    search is still running when the page is gone, Haystack answers 499, a
+    closed request, and Cloudflare's metrics count a disconnect as a status of
+    their own, so neither is read as an outage of that service.
+
+    Given I started a search that is asking about my links in several requests
+    When I change the query, so the page gives up on that search
+    Then the search I gave up on sends no more requests
+    And it is logged as a search that was cut short
 
   @playwright:apps/worker/e2e/search.e2e.ts
   Scenario: Searching again replaces the results
@@ -168,6 +270,72 @@ Feature: Searching my saved links
     And the card is the one my saved links show for the same link
     And the saved site is not told that I came from Haystack, when I follow the link
 
+  @playwright:apps/worker/e2e/search-click.e2e.ts
+  @integration:apps/worker/test/search-click.test.ts
+  Scenario Outline: Following a result is recorded
+    The page tells Haystack which of the search's results I followed, and
+    Haystack marks that one link as followed in the log of that search. No
+    other link of that search, and no link of another search, is marked, and
+    each result is recorded against the search that showed it, so a result of
+    an earlier search still counts for that one after I search again. Nothing
+    is recorded for a click on the card outside its link, on "Delete", or with
+    the right button. Following the same result again leaves it marked as
+    followed.
+
+    Given I searched, and the page shows two results
+    When I follow the second result by <how>
+    Then I reach the saved page, <where>
+    And Haystack has marked only the second result of that search as followed
+
+    Examples:
+      | how                                              | where                                          |
+      | clicking its title                               | in this tab                                    |
+      | focusing its title and pressing Enter            | in this tab                                    |
+      | clicking its title with the middle button        | in a new tab, and the results stay in this one |
+      | clicking its title while holding Ctrl or Command | in a new tab, and the results stay in this one |
+
+  @playwright:apps/worker/e2e/search-click.e2e.ts
+  Scenario: Recording a followed result never slows or breaks the visit
+    The page sends the record in a way that the browser finishes after the
+    page has gone, so I reach the saved page without waiting for it. If the
+    record fails, for example because Haystack can't be reached or the browser
+    can't send it, nothing is shown and the link still opens.
+
+    Given I searched, and the page shows two results
+    And Haystack has not yet received the record of a result I followed
+    When I follow the result
+    Then I reach the saved page, with no wait for the record
+    And the record still arrives afterwards
+    When the record fails instead
+    Then I still reach the saved page, and the page shows no error
+
+  @playwright:apps/worker/e2e/search-click.e2e.ts
+  @playwright:apps/worker/e2e/search.e2e.ts
+  Scenario: Following a result changes nothing I can see or reach
+    The title is still a link that tells the saved site nothing about where I
+    came from, and the card has no new control: Tab reaches only its link and
+    its "Delete" button.
+
+    Given I searched, and the page shows two results
+    Then each title's link keeps the attribute that keeps the saved site from learning where I came from
+    And a card holds only two controls that Tab can reach, its link and its "Delete" button
+
+  @integration:apps/worker/test/search-click.test.ts
+  Scenario: Only my own searches can be marked
+    The record names a search and a link, and Haystack finds the answer
+    through the search and the search through the person who is signed in. A
+    search of another person, one that does not exist, a link that was not
+    among that search's answers and a link I deleted all get the same answer,
+    "not found", and change nothing, so the answer never says that another
+    person's search exists. A request without a session is refused, and so is
+    one from another site.
+
+    Given another person has searched
+    When a request names their search and one of their links
+    Then Haystack answers that the answer was not found, and marks nothing
+    When a request comes without my session, or from another site
+    Then Haystack refuses it, and marks nothing
+
   @playwright:apps/worker/e2e/search-delete.e2e.ts
   Scenario: Deleting every result of a search
     The message doesn't say that I have saved nothing, because the search
@@ -241,15 +409,20 @@ Feature: Searching my saved links
   @playwright:apps/worker/e2e/search.e2e.ts
   Scenario: Searching with the keyboard alone
     Focus stays where I searched from, so I can change the query and search
-    again straight away. The results come after the field and the button.
+    again straight away. The results come after the field and the buttons.
+    In a browser with speech recognition, the button "Search by voice" is
+    between the field and "Search", which the test makes so with the stub.
 
-    When I press Tab six times
-    Then the focus moves through the Haystack wordmark, the links "Search" and "Saved links", the button "Sign out", the field and the button "Search"
-    When I press Shift+Tab
+    Given my browser has speech recognition
+    When I press Tab eight times
+    Then the focus moves through the Haystack wordmark, the links "Search" and "Saved links", the button "Sign out", the button "Close messages", the field, the button "Search by voice" and the button "Search"
+    When I press Shift+Tab twice
     Then the field has focus
     When I type a query and press Enter
     Then the page says how many links match, and the field still has focus
     When I press Tab
+    Then the button "Search by voice" has focus
+    When I press Tab again
     Then the button "Search" has focus
     When I press Tab again
     Then the first result's title has focus
@@ -305,11 +478,15 @@ Feature: Searching my saved links
   @playwright:apps/worker/e2e/search.e2e.ts
   @playwright:apps/worker/e2e/design.e2e.ts
   Scenario Outline: A search that fails
-    Until searching is built (#214), Haystack answers every search with "not
-    found", and the page treats that as a failure. The error is in the page's
-    one live region, in the alert box of the save form's errors, and it does
-    not take focus, so I can go on typing. The browser tests check that the
-    results of the search before go only for an answer with an error.
+    The page shows an error for any answer that isn't a list of results, which
+    the tests stub. Of the ways Haystack's own search answers with an error,
+    "A search that cannot be answered", where Jev answers nothing, is the only
+    one that a valid search can meet because of Jev. The others, a body that is
+    refused (400) or too large (413) and a fault of Haystack's own (500), are
+    not something the page sends. The error is in the search's live region,
+    in the alert box of the save form's errors, and it does not take focus, so
+    I can go on typing. The browser tests check that the results of the search
+    before go only for an answer with an error.
 
     Given I searched, and the page shows what it found
     When my next search fails because <the reason>
@@ -362,6 +539,7 @@ Feature: Searching my saved links
     And the link signs me in and brings me back to the search page
 
   @playwright:apps/worker/e2e/search.e2e.ts
+  @playwright:apps/worker/e2e/search-voice.e2e.ts
   @integration:apps/worker/test/search-page.test.ts
   Scenario: Searching without JavaScript
     The results are built in the browser, so searching needs JavaScript. The
@@ -372,5 +550,133 @@ Feature: Searching my saved links
     When I open the search page
     Then it says "Searching needs JavaScript, which isn't running in this browser."
     And the link "Go to your saved links" takes me to my saved links
+    And there is no button "Search by voice", and no note about it
     When I type a query and press Enter
     Then the search page loads again, with no query in its address
+
+  @playwright:apps/worker/e2e/search-voice.e2e.ts
+  @playwright:apps/worker/e2e/design.e2e.ts
+  Scenario: Searching by voice
+    The button is added only when my browser has speech recognition, after
+    the field and before "Search". It is a toggle, pressed while the browser
+    listens, which it shows by turning straw with a stop square in place of
+    the microphone. It says it is listening only once the browser does, so not
+    while the browser is still asking me for the microphone. The browser
+    listens in my browser's language, for one query, and stops when I pause.
+    Focus stays on the button, so Tab takes me to "Search".
+
+    Given my browser has speech recognition
+    When I open the search page
+    Then the button "Search by voice" is next to the field
+    And under the field it says "In some browsers, including Chrome, searching by voice sends a recording of what you say to the browser maker's servers, which turn it into text."
+    When I press "Search by voice" and the browser starts listening
+    Then the button is pressed, and the page says "Listening. Say what you're looking for, then pause."
+    When I say "rust error handling" and pause
+    Then the field holds "rust error handling", in place of anything I had typed
+    And the button is no longer pressed, and the page says "Check what was heard in the field, then press Search."
+    And nothing has been searched
+    When I press "Search"
+    Then "rust error handling" is searched, and the message about what was heard goes
+    And the search is recorded as spoken, with the words it heard as its query
+
+  @playwright:apps/worker/e2e/search-voice.e2e.ts
+  Scenario: Trying a failed spoken search again
+    A search that failed says so, with "Try again". Trying again repeats the
+    search as it was entered, so a spoken query is searched and recorded as
+    spoken, even when I typed in the field after it failed. Once I type in the
+    field again, a search of what I typed is recorded as typed.
+
+    Given I searched by voice, and the search failed
+    When I type in the field, then press "Try again"
+    Then "rust error handling" is searched again, and the search is recorded as spoken
+    When I press "Search" with the same words in the field
+    Then that search is recorded as spoken too
+
+  @playwright:apps/worker/e2e/search-voice.e2e.ts
+  Scenario: Stopping or changing what was heard
+    Given I pressed "Search by voice" and the browser is listening
+    When I press "Search by voice" again
+    Then the browser stops listening, and puts what it heard so far in the field
+    When I change the text in the field
+    Then the message about what was heard goes
+    And a search of the changed text is recorded as typed, not as spoken
+
+  @playwright:apps/worker/e2e/search-voice.e2e.ts
+  Scenario: Typing or searching while the browser listens
+    What I type or search for is mine, so the browser stops listening, and
+    anything it would have heard later never replaces it. Before the browser
+    starts listening, while it may still be asking me for the microphone,
+    pressing "Search by voice" again does nothing: the browser's own prompt
+    is where I cancel.
+
+    Given I pressed "Search by voice" and the browser is listening
+    When I type in the field, or search for what I typed
+    Then the browser stops listening, the button is no longer pressed, and the page says nothing about it
+    And the field keeps what I typed, and the results are for it
+    And a search for what I typed is recorded as typed
+
+  @playwright:apps/worker/e2e/search-voice.e2e.ts
+  @playwright:apps/worker/e2e/design.e2e.ts
+  Scenario Outline: Searching by voice fails
+    Each failure ends listening and says why next to the field, in the alert
+    box of the page's other errors, and leaves the field as it was. Pressing
+    "Search by voice" again listens again. When listening was cancelled, by the
+    browser's own controls, nothing is said.
+
+    Given I pressed "Search by voice"
+    When <what happens>
+    Then the button is no longer pressed
+    And the page says "<message>" under the field
+    And the field still holds what I had typed
+
+    Examples:
+      | what happens                                            | message                                                                                       |
+      | I don't allow the browser to use the microphone         | This browser isn't allowing Haystack to use the microphone. You can type your search instead. |
+      | I say nothing                                           | No speech was recognized. You can try again, or type your search.                             |
+      | the browser recognizes none of what I said              | No speech was recognized. You can try again, or type your search.                             |
+      | the browser can't reach its recognition service         | Speech recognition couldn't reach its service. Check your connection, or type your search.    |
+      | the browser fails in another way, such as no microphone | Searching by voice isn't working in this browser right now. You can type your search instead. |
+
+  @playwright:apps/worker/e2e/search-voice.e2e.ts
+  Scenario: A browser without speech recognition
+    Given my browser has no speech recognition
+    When I open the search page
+    Then it is the plain search, with the field and the button "Search"
+    And there is no button "Search by voice", no disabled control and no message about it
+
+  @voiceover:apps/worker/e2e/search-voice.voiceover.ts
+  Scenario: Reaching the voice button with a screen reader
+    The test stubs the browser's speech recognition, because a test can't use
+    a microphone.
+
+    Given I use VoiceOver
+    When I move with Tab from the field to the button
+    Then VoiceOver reads its name, "Search by voice"
+    When I press it and the browser starts listening
+    Then VoiceOver still reads its name, "Search by voice"
+
+  @untested
+  Scenario: Hearing that the browser listens, and why it stopped, with a screen reader
+    The messages are written to the voice button's own live region while
+    focus stays on the button. VoiceOver doesn't speak them yet: on CI it said
+    only the button's hint, "You are currently on a toggle button", after the
+    press (#275). search-voice.voiceover.ts has a test of each marked as
+    failing, which shows the problem but doesn't cover this journey.
+
+    Given I use VoiceOver
+    And I have moved with Tab from the field to the button "Search by voice"
+    When I press it and the browser starts listening
+    Then VoiceOver says "Listening"
+    When I say nothing
+    Then VoiceOver says "No speech was recognized"
+
+  @untested
+  Scenario: Searching by voice with a real microphone in Chrome
+    No automated test uses a real microphone or Chrome's recognition service.
+    The manual check in the plan, under "Search page", "Voice", covers it.
+
+    Given I use Chrome with a microphone
+    When I press "Search by voice", allow the microphone, and say a query
+    Then the field holds what I said, and nothing is searched
+    When I press "Search"
+    Then the page shows what matches

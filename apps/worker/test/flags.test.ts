@@ -504,8 +504,8 @@ describe("readSearchSettings", () => {
     },
   );
 
-  // Each flag is checked on its own. Whether the questions include the display signal is the
-  // search service's decision (#212), so the module hands on both as they are.
+  // Each flag is checked on its own. What a search does when the questions leave out the display
+  // signal is the search service's decision (#212), so the module hands on both as they are.
   it("keeps live questions of noul when the display signal falls back to the Score", async () => {
     const flags = fakeFlags({
       [SEARCH_QUESTIONS_FLAG]: "noul",

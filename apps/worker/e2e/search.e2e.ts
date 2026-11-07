@@ -1,11 +1,21 @@
 // The search page at `/` (#206): typed search, its results and the live region that counts them,
 // and how a slow search, an incomplete one and a failed one look (#207), against answers stubbed
-// in the browser (search-answers.ts). The design's checks, axe and the 320 px width, are in
-// design.e2e.ts with the other pages'.
+// in the browser (search-answers.ts), and a few searches through the Worker's own /api/search
+// (#214), which end the file. The design's checks, axe and the 320 px width, are in design.e2e.ts
+// with the other pages'.
 import { isHttpsUrl } from "@haystack/schemas";
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
 import { installPausedClock } from "./held-lookups.ts";
+import { SYSTEM_ONE_URL, status as jevStatus } from "../test/jev-fixture.ts";
+import {
+  answerBy,
+  clearCollection,
+  type EnrichedBookmark,
+  seedEnriched,
+  seedManyEnriched,
+  signedInUserId,
+} from "./search-collection.ts";
 import {
   answerSearches,
   type HeldSearch,
@@ -18,6 +28,7 @@ import {
   type StubbedResult,
   TRY_AGAIN,
 } from "./search-answers.ts";
+import { stubSpeechRecognition, VOICE_NAME } from "./speech-recognition.ts";
 
 test.beforeEach(async ({ signIn }) => {
   await signIn();
@@ -64,11 +75,14 @@ async function expectFailure(page: Page, message: string): Promise<void> {
   await expect(status(page)).not.toContainText(SEARCH_MESSAGES.none);
 }
 
+// In a browser with speech recognition, as Chrome is, the voice button (#216) is a stop between
+// the field and Search. The stub makes it so in any browser the test runs in.
 test("the page works with the keyboard alone, and focus stays in the field", async ({ page }) => {
+  await stubSpeechRecognition(page);
   await answerSearches(page, () => GUIDES);
   await page.goto("/");
   // The header's four stops come first, then the message bar's Close, which is shown because the
-  // notice about private links is (design review), then the field and the button.
+  // notice about private links is (design review), then the field, the voice button and Search.
   const nav = page.getByRole("navigation", { name: "Main" });
   for (const control of [
     page.getByRole("link", { name: "Haystack", exact: true }),
@@ -77,11 +91,13 @@ test("the page works with the keyboard alone, and focus stays in the field", asy
     page.getByRole("button", { name: "Sign out" }),
     page.getByRole("button", { name: "Close messages" }),
     field(page),
+    page.getByRole("button", { name: VOICE_NAME }),
     page.getByRole("button", { name: "Search", exact: true }),
   ]) {
     await page.keyboard.press("Tab");
     await expect(control).toBeFocused();
   }
+  await page.keyboard.press("Shift+Tab");
   await page.keyboard.press("Shift+Tab");
   await expect(field(page)).toBeFocused();
   await page.keyboard.type("testing in a browser");
@@ -91,6 +107,8 @@ test("the page works with the keyboard alone, and focus stays in the field", asy
   await expect(results(page)).toHaveCount(2);
   // Focus is where the search was made, so the query can be changed and sent again.
   await expect(field(page)).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: VOICE_NAME })).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(page.getByRole("button", { name: "Search", exact: true })).toBeFocused();
   await page.keyboard.press("Tab");
@@ -177,7 +195,7 @@ test("a search posts the trimmed query as JSON, and puts nothing in the address"
   expect(new URL(request.url()).search).toBe("");
   expect(await request.headerValue("content-type")).toBe("application/json");
   expect(await request.headerValue("accept")).toBe("application/json");
-  expect(body).toEqual({ query: "a tool for testing" });
+  expect(body).toEqual({ query: "a tool for testing", inputMode: "typed" });
   expect(new URL(page.url()).pathname + new URL(page.url()).search).toBe("/");
 });
 
@@ -611,8 +629,8 @@ test.describe("an incomplete search", () => {
 });
 
 // A search whose every chunk failed (the `failed` outcome, #212) is an error status, as are a
-// network error and an answer of the wrong shape. Until #214 the real route answers 404, which
-// is a failure too.
+// network error and an answer of the wrong shape. The real route answers the `failed` outcome with
+// 502 (#214), and the tests of that are with the real route's, below.
 test.describe("a failed search", () => {
   test("shows the error state in place of the results, not an empty list", async ({ page }) => {
     let fail = false;
@@ -624,7 +642,7 @@ test.describe("a failed search", () => {
     fail = true;
     await field(page).press("Enter");
     await expectFailure(page, SEARCH_MESSAGES.failed);
-    // The page's one live region holds it, so it is not a second one.
+    // The search's live region holds it, so it is not a second region for the search's messages.
     await expect(page.getByRole("alert")).toHaveCount(0);
     await expect(field(page)).toBeFocused();
   });
@@ -739,15 +757,162 @@ test.describe("a failed search", () => {
   }
 });
 
-// No stub: these reach the Worker's own route.
+// No stub: these reach the Worker's own route (#214), which searches the signed-in user's
+// bookmarks and asks Jev, answered by the page fixture (`pages`), as every request the Worker
+// makes is.
 test.describe("against the Worker's own /api/search", () => {
-  test("a search gets the 404 of a route that doesn't exist yet, as a failure", async ({
+  test.beforeEach(async ({ run }) => {
+    await clearCollection(run);
+  });
+
+  const ranked: readonly EnrichedBookmark[] = [
+    {
+      title: "Vitest browser mode guide",
+      description: "Run tests in a real browser.",
+      matchText: "best",
+      createdAt: SAVED_AT,
+    },
+    { title: "Playwright locators", matchText: "next", createdAt: SAVED_AT + 1_000 },
+    { title: "A bread recipe", matchText: "below", createdAt: SAVED_AT + 2_000 },
+  ];
+
+  test("a search shows the ranked cards, and the log holds both signals for every candidate", async ({
     page,
+    pages,
+    query,
+    run,
   }) => {
+    const [best, next, below] = await seedEnriched(
+      run,
+      await signedInUserId(query),
+      "real-ranked",
+      ranked,
+    );
+    pages.route(
+      SYSTEM_ONE_URL,
+      answerBy({ best: { noul: 0.95, score: 2.9 }, next: { noul: 0.7, score: 1.8 } }),
+    );
     await page.goto("/");
-    await field(page).fill("testing");
+    await field(page).fill("testing in a browser");
+    await field(page).press("Enter");
+
+    await expect(status(page)).toHaveText("2 saved links match your search.");
+    await expect(resultTitles(page)).toHaveText([
+      "Vitest browser mode guide",
+      "Playwright locators",
+    ]);
+    await expect(results(page).first()).toContainText("Run tests in a real browser.");
+    await expect(status(page).locator(".alert")).toHaveCount(0);
+
+    const runs = await query("SELECT * FROM search_runs");
+    expect(runs).toEqual([
+      expect.objectContaining({
+        channel: "web",
+        input_mode: "typed",
+        outcome: "ok",
+        query: "testing in a browser",
+      }),
+    ]);
+    const answers = await query(
+      "SELECT bookmark_id, noul, score, score_probabilities, shown FROM search_answers WHERE search_run_id = ?",
+      String(runs[0]?.id),
+    );
+    // The answers are in no order that the test relies on, so each side is sorted.
+    const byText = (left: string, right: string) => left.localeCompare(right);
+    expect(answers.map(({ bookmark_id }) => String(bookmark_id)).sort(byText)).toEqual(
+      [best, next, below].sort(byText),
+    );
+    for (const row of answers) {
+      expect(row.noul).toEqual(expect.any(Number));
+      expect(row.score).toEqual(expect.any(Number));
+      expect(row.score_probabilities).toEqual(expect.any(String));
+    }
+    // Exactly the two above the threshold are shown, so the one below it is not.
+    expect(
+      answers
+        .filter(({ shown }) => shown === 1)
+        .map(({ bookmark_id }) => String(bookmark_id))
+        .sort(byText),
+    ).toEqual([best, next].sort(byText));
+  });
+
+  test("a search that finds nothing says so, and is not an error", async ({
+    page,
+    pages,
+    query,
+    run,
+  }) => {
+    await seedEnriched(run, await signedInUserId(query), "real-none", ranked);
+    pages.route(SYSTEM_ONE_URL, answerBy());
+    await page.goto("/");
+    await field(page).fill("something else");
+    await field(page).press("Enter");
+    await expect(status(page)).toHaveText(SEARCH_MESSAGES.none);
+    await expect(page.locator("#search-results")).toBeHidden();
+    await expect(status(page).locator(".alert")).toHaveCount(0);
+  });
+
+  // The route answers 502 for a search that Jev answered not at all (#214), so the page shows
+  // the error state, never an empty list, and Try again searches once Jev is back.
+  test("a search that Jev can't answer shows the error state, and Try again finds the results", async ({
+    page,
+    pages,
+    jev,
+    query,
+    run,
+  }) => {
+    await seedEnriched(run, await signedInUserId(query), "real-failed", ranked);
+    jev.unavailable();
+    await page.goto("/");
+    await field(page).fill("testing in a browser");
     await field(page).press("Enter");
     await expectFailure(page, SEARCH_MESSAGES.failed);
+    const runs = await query("SELECT outcome, error FROM search_runs");
+    expect(runs).toEqual([{ outcome: "failed", error: "status:503" }]);
+
+    pages.route(SYSTEM_ONE_URL, answerBy({ best: { noul: 0.95, score: 2.9 } }));
+    await status(page).getByRole("button", { name: TRY_AGAIN }).click();
+    await expect(status(page)).toHaveText("1 saved link matches your search.");
+    await expect(resultTitles(page)).toHaveText(["Vitest browser mode guide"]);
+    expect(await query("SELECT outcome FROM search_runs ORDER BY created_at, rowid")).toEqual([
+      { outcome: "failed" },
+      { outcome: "ok" },
+    ]);
+  });
+
+  // The collection is too big for one request, and Jev answers only the first: the rest is
+  // unanswered, so the page shows what was found, with the notice that there may be more.
+  test("a search that Jev answers in part shows the results with the notice that they may be incomplete", async ({
+    page,
+    pages,
+    query,
+    run,
+  }) => {
+    const ids = await seedManyEnriched(run, await signedInUserId(query), "real-partial", 120);
+    const everyBookmarkMatches = answerBy(
+      Object.fromEntries(
+        ids.map((_, index) => [`${index} ${"x".repeat(2000)}`, { noul: 0.9, score: 2.9 }]),
+      ),
+    );
+    let first = true;
+    pages.route(SYSTEM_ONE_URL, async (request) => {
+      if (first) {
+        first = false;
+        return everyBookmarkMatches(request);
+      }
+      // The body is read before the refusal, because a request of this size that is answered
+      // unread makes Miniflare's stream throw "Controller is already closed".
+      await request.text();
+      return jevStatus(400)(request);
+    });
+    await page.goto("/");
+    await field(page).fill("testing in a browser");
+    await field(page).press("Enter");
+
+    await expect(status(page)).toContainText(SEARCH_MESSAGES.incomplete);
+    await expect(results(page).first()).toBeVisible();
+    await expect(status(page).locator(".alert")).toHaveCount(0);
+    expect(await query("SELECT outcome FROM search_runs")).toEqual([{ outcome: "partial" }]);
   });
 
   // The Worker answers a script's request without a session with 401, and the page says the

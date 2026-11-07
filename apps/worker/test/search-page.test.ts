@@ -1,6 +1,6 @@
 // The search page at `/` (#206), with the `search-enabled` flag on (#235). The browser tests
 // answer /api/search with a stub (e2e/search-answers.ts), so these check what the Worker serves
-// itself: the page, and that the real route answers no search until #214. search-switch.test.ts
+// itself: the page. The route is checked in search-api.test.ts. search-switch.test.ts
 // checks the flag off. A delete from a result returns here (#208); the dialog that deletes in
 // place is checked in the browser, in e2e/search-delete.e2e.ts.
 import { normalizeUrl, SEARCH_QUERY_CAP } from "@haystack/schemas";
@@ -107,6 +107,23 @@ describe("GET /", () => {
     );
     expect(main).toContain(
       '<p id="empty-state" class="empty-state" hidden>You deleted every link this search found. Search again to find others.</p>',
+    );
+  });
+
+  // The voice input (#216) is in the page, hidden from everyone, and voice-input.js only shows it
+  // when the browser has speech recognition, so the script builds no markup of its own. The
+  // button follows the field in its row and holds its icon. The live region and the privacy note
+  // follow the row.
+  it("has the voice button, with its icon, its live region and the privacy note, all hidden", async () => {
+    const main = mainContent(await searchPage());
+    const row = /<div class="search-row">([\s\S]*?)<\/div>/.exec(main)?.[1] ?? "";
+    expect(row).toMatch(
+      /<input id="search-query"[^>]*>\s*<button id="voice-button" class="button voice-button" type="button" aria-label="Search by voice" aria-pressed="false" aria-describedby="voice-privacy" hidden>\s*<svg class="voice-icon" viewBox="0 0 24 24" aria-hidden="true">[\s\S]*<\/svg>\s*<\/button>\s*<button class="button button-primary" type="submit">Search<\/button>/,
+    );
+    expect(row).toContain('class="voice-icon-microphone"');
+    expect(row).toContain('class="voice-icon-stop"');
+    expect(main).toMatch(
+      /<\/div>\s*<div id="voice-status" class="status voice-status" role="status" hidden><\/div>\s*<p id="voice-privacy" class="hint voice-privacy" hidden>In some browsers, including Chrome, searching by voice sends a recording of what you say to the browser maker's servers, which turn it into text.<\/p>\s*<\/form>/,
     );
   });
 
@@ -261,32 +278,5 @@ describe("POST /bookmarks/:id/delete from a search result", () => {
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe("/auth/sign-in?return_to=%2F");
     expect(await bookmarkIds()).toEqual([bookmarkId]);
-  });
-});
-
-// The page's script asks for JSON, as a script must (plan, "Site sign-in"), so it gets a status
-// it can act on rather than a redirect.
-describe("POST /api/search, until #214", () => {
-  function postSearch(headers: Record<string, string>) {
-    return server.fetch("/api/search", {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json", ...headers },
-      body: JSON.stringify({ query: "a tool for testing" }),
-      redirect: "manual",
-    });
-  }
-
-  it("answers 401 without a session, which the page calls signed out", async () => {
-    expect((await postSearch({ origin })).status).toBe(401);
-  });
-
-  // So a deploy before the real route cannot show results that no search produced.
-  it("answers 404 with a session, so no search is made", async () => {
-    expect((await postSearch({ origin, cookie: owner.cookie })).status).toBe(404);
-  });
-
-  it("rejects a request from another site", async () => {
-    const response = await postSearch({ origin: "https://evil.example", cookie: owner.cookie });
-    expect(response.status).toBe(403);
   });
 });

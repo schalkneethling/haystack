@@ -2,8 +2,13 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "haystack",
   "main": "src/index.ts",
-  // The newest date the installed workerd (1.20261001.1) supports.
+  // The newest date the installed workerd supports (`vp why workerd` shows its version).
   "compatibility_date": "2026-10-01",
+  // `request.signal` aborts when the client disconnects, which POST /api/search passes on so that
+  // a search the page abandoned stops asking Jev (#214). It is on by default from the compatibility
+  // date 2026-11-17 (https://developers.cloudflare.com/workers/configuration/compatibility-flags/,
+  // read on 2026-11-05), so remove this flag when the date moves past it.
+  "compatibility_flags": ["enable_request_signal"],
   "d1_databases": [
     {
       "binding": "DB",

@@ -22,6 +22,24 @@ export const SearchQuery = v.pipe(
 );
 
 /**
+ * How a web query was entered, which the search run records (`search_runs.input_mode`): `typed`
+ * when the person typed it, and `web-speech` when it is the transcript the browser's speech
+ * recognition gave and the person didn't change it (#217). `whisper` is the backlog's second voice
+ * mode, which the page can't send yet, so it is refused with any other unknown value.
+ */
+const SearchInputMode = v.picklist(["typed", "web-speech"]);
+
+/**
+ * The body of a web search, `POST /api/search`: the shared search input, as every channel sends
+ * it, and how the query was entered. The page sends both. A body without an input mode is a typed
+ * query, so a caller that doesn't send one still gets the search it asked for.
+ */
+export const SearchRequest = v.object({
+  query: SearchQuery,
+  inputMode: v.optional(SearchInputMode, "typed"),
+});
+
+/**
  * A bookmark's ID, as the search page puts it into the IDs of a result's elements, which the
  * Delete control's `aria-labelledby` refers to (#208). An IDREF list is split on whitespace, so
  * an ID must be non-empty and hold none. Bookmark IDs come from `crypto.randomUUID()`, whose
@@ -74,3 +92,21 @@ export const SearchAnswer = v.object({
 });
 
 export type SearchAnswer = v.InferOutput<typeof SearchAnswer>;
+
+/**
+ * One ID in the body that records a followed result: a run's, which is a UUID, or a bookmark's.
+ * It is bounded and has the pattern of a bookmark's ID, so a body that is no ID is refused before
+ * it reaches the database. The pattern leaves out whitespace, which no ID holds.
+ */
+const RecordedId = v.pipe(
+  v.string(),
+  v.maxLength(64),
+  v.regex(RESULT_ID, "Must be letters, digits, underscores or hyphens"),
+);
+
+/**
+ * The body that records a followed result, `POST /api/search/click` (#215): the search run whose
+ * answer the person followed, and the bookmark of that answer. The user is never in it, because
+ * it comes from the session.
+ */
+export const SearchClickRequest = v.object({ runId: RecordedId, bookmarkId: RecordedId });

@@ -1,10 +1,10 @@
 // @ts-check
 // Searches the saved links from the search page at `/` (plan, "Search page"). The Worker renders
 // the form, an empty live region and an empty results list, and this script does the rest: it
-// sends the query to /api/search with `fetch`, and builds each result from the JSON answer with
-// DOM APIs and `textContent`, so no bookmark data is ever parsed as markup. Searching needs this
-// script. Until it runs, the page says so and links to the saved links, and the script hides that
-// message.
+// sends the query, and how it was entered, to /api/search with `fetch`, and builds each result
+// from the JSON answer with DOM APIs and `textContent`, so no bookmark data is ever parsed as
+// markup. Searching needs this script. Until it runs, the page says so and links to the saved
+// links, and the script hides that message.
 //
 // - Focus stays where it was, in the field after Enter or on the button after a press, so a
 //   person can change the query and search again straight away, and Tab moves on to the button
@@ -26,14 +26,32 @@
 // - Each result is a saved link's card (design review), cloned from the template that the Worker
 //   renders from the saved links page's card, with its Delete control (#208), which the delete
 //   dialog handles: it finds the form when it is used, because the results come after the page
-//   loaded. After a delete, the dialog moves focus and writes "Deleted …" to the one live region,
-//   in place of the count, and shows the empty state when no result is left. The next search's
-//   outcome hides the empty state again.
+//   loaded. After a delete, the dialog moves focus and writes "Deleted …" to the search's live
+//   region, in place of the count, and shows the empty state when no result is left. The next
+//   search's outcome hides the empty state again.
 //
-// The page's one script, so it imports the delete dialog's module and the message bar's (plan,
-// "Search page", "Performance").
+// - Following a result is recorded (#215), as a weak relevance label for the evaluations of Phase
+//   12. A click on a result's link, Enter on it and a middle click send the search run's ID and
+//   the bookmark's ID to /api/search/click with `navigator.sendBeacon`, and the visit goes on as
+//   it would without the script: nothing is awaited, no default is prevented, and a failure,
+//   which only a browser without `sendBeacon` or a refused request can cause, is dropped. The
+//   browser sends a beacon after the page has gone, and it adds the session cookie and the Origin
+//   header to it as to any POST, which the Worker checks as it checks every POST (plan, "Search
+//   page"). A beacon was chosen over `fetch` with `keepalive` because both outlived the
+//   navigation in Chromium and WebKit, and a beacon is the one made for it (plan, "Search page",
+//   "Built in #215").
+//
+// - Voice input (#216) is voice-input.js's: a button next to the field, shown once the page's
+//   search can run and only when the browser has speech recognition, which puts what it heard in
+//   the field and never searches on its own. Each search says how its query was entered (#217):
+//   `web-speech` when the field still holds the transcript voice input placed, and `typed`
+//   otherwise. Try again repeats the mode of the search that failed.
+//
+// The page's one script, so it imports the delete dialog's module, the message bar's and the
+// voice input's (plan, "Search page", "Performance").
 import "./delete-dialog.js";
 import "./message-bar.js";
+import { addVoiceInput } from "./voice-input.js";
 
 const FORM = "form[data-search-form]";
 const FIELD_ID = "search-query";
@@ -45,7 +63,8 @@ const RESULTS_HEADING_ID = "results-heading";
 const NEEDS_SCRIPT_ID = "search-needs-script";
 // The template of a saved link's card: CARD_TEMPLATE_ID in apps/worker/src/bookmark-card.ts.
 const CARD_TEMPLATE_ID = "bookmark-card-template";
-// The page's one live region, which the delete dialog finds by the same ID (#208).
+// The search's live region, in the message bar, which the delete dialog finds by the same ID
+// (#208). The voice input's messages have a region of their own, next to the field (#216).
 const STATUS_ID = "list-status";
 // What the delete dialog shows when the last result is deleted (#208).
 const EMPTY_STATE_ID = "empty-state";
@@ -62,8 +81,18 @@ const SAVED_DATE = new Intl.DateTimeFormat("en", { dateStyle: "long", timeZone: 
 // (packages/schemas/src/search.ts), because a later one can't be formatted.
 const LATEST_DATE = 8.64e15;
 
-/** The route that searches (#214). It answers 404 until then, which the page calls a failure. */
+/** The route that searches (SEARCH_API_PATH in apps/worker/src/search-route.ts). */
 const SEARCH_PATH = "/api/search";
+
+/** The route that records a followed result (SEARCH_CLICK_PATH in apps/worker/src/search-click.ts). */
+const CLICK_PATH = "/api/search/click";
+
+/**
+ * How a query was entered, which the search run records: `web-speech` for the transcript of the
+ * browser's speech recognition, and `typed` for anything else (`SearchRequest` in
+ * packages/schemas).
+ * @typedef {"typed" | "web-speech"} InputMode
+ */
 
 /** The Search button's label while a search runs: the address form's word for the same state. */
 const PROCESSING_LABEL = "Processing…";
@@ -101,16 +130,20 @@ const MESSAGES = {
 
 // How long the page waits for an answer. It is the ceiling that the search's whole budget must
 // fit under: every chunk, its retries, the waits of the client-side limiter and the halves of a
-// chunk that was split and retried (#212, plan, "Jev model limits" and "Jev client"). If Phase 11
-// lets a search run longer, this changes with it. A search the page abandons here keeps running
-// on the Worker, unless the route passes its request's signal on (#214). The timer is an ordinary
+// chunk that was split and retried (plan, "Jev model limits" and "Jev client"). The search service
+// stops asking Jev at its deadline (SEARCH_DEADLINE_MS in the Worker's search-bookmarks.ts, #212),
+// which leaves an attempt under way and the response inside this limit.
+// apps/worker/test/search-bookmarks.test.ts reads this value, so the two change together. A search
+// the page abandons here, by this limit, by a changed query or by leaving, stops asking Jev: the
+// route passes its request's signal on (`postSearch` in the Worker's search-route.ts, #214), so
+// what had not been sent is not sent, and the search is still logged. The timer is an ordinary
 // setTimeout that aborts the request, as on the address form, rather than AbortSignal.timeout, so
 // that one AbortController ends the request either way, and a test's clock can reach it.
 const TIMEOUT_MS = 30_000;
 
 /**
  * @typedef {{ id: string, title: string, description: string | null, url: string, createdAt: number }} Result
- * @typedef {{ kind: "found", results: Result[], complete: boolean }
+ * @typedef {{ kind: "found", runId: string, results: Result[], complete: boolean }
  *   | { kind: "timeout" | "network" | "failed" | "signedOut" }} Outcome
  */
 
@@ -128,13 +161,14 @@ const RESULT_ID = /^[\w-]+$/;
 const OUTCOMES = ["ok", "partial"];
 
 /**
- * The results in a success answer, in its order, and whether every link was searched, or null
- * when the answer doesn't have the shape of `SearchAnswer` in packages/schemas. The assets have
+ * The search run's ID, the results in a success answer, in its order, and whether every link was
+ * searched, or null when the answer doesn't have the shape of `SearchAnswer` in
+ * packages/schemas. The assets have
  * no build step, so the page can't import that schema. It checks the fields it reads instead,
  * and the browser tests build every answer they give with the schema, so the two can't drift
  * apart unnoticed.
  * @param {unknown} body
- * @returns {{ results: Result[], complete: boolean } | null}
+ * @returns {{ runId: string, results: Result[], complete: boolean } | null}
  */
 function answerIn(body) {
   if (
@@ -166,7 +200,7 @@ function answerIn(body) {
     const { id, title, description, url, createdAt } = result;
     results.push({ id, title, description, url, createdAt });
   }
-  return { results, complete: body.outcome === "ok" };
+  return { runId: body.runId, results, complete: body.outcome === "ok" };
 }
 
 // The rule of `isHttpsUrl` in packages/schemas, which the saved links page links by: an https
@@ -313,8 +347,9 @@ async function outcomeOf(response, signal) {
  * @param {HTMLTemplateElement} template
  * @param {HTMLElement} status
  * @param {HTMLElement | null} emptyState
+ * @param {() => string | null} transcriptInField The transcript the field holds, from voice input.
  */
-function enhance(form, field, button, list, template, status, emptyState) {
+function enhance(form, field, button, list, template, status, emptyState, transcriptInField) {
   const idleLabel = button.textContent ?? "";
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let announcement;
@@ -323,6 +358,16 @@ function enhance(form, field, button, list, template, status, emptyState) {
   // query: an answer already on its way when the abort comes can still reach the script.
   /** @type {{ query: string, controller: AbortController } | null} */
   let inFlight = null;
+  // The query that Try again restored, with how it was entered. Searching it again, with the field
+  // unchanged, repeats that mode. The person's first edit forgets it, as voice input forgets the
+  // transcript, so a query they then type is typed.
+  /** @type {{ query: string, inputMode: InputMode } | null} */
+  let restored = null;
+  // Which search run found each result, and the bookmark's ID, by the result's `li`. Each search
+  // replaces the list, so a result is always recorded against the run that showed it, never a
+  // later one's.
+  /** @type {WeakMap<Element, { runId: string, bookmarkId: string }>} */
+  const runOf = new WeakMap();
 
   /**
    * Writes a message to the live region after the delay, in place of the one there. A message
@@ -349,12 +394,23 @@ function enhance(form, field, button, list, template, status, emptyState) {
   // next search ran. The results are about to be removed, and focus with them would fall to the
   // page, so it moves to the Search button first, as Try again's does, where a person searches
   // again.
-  /** @param {Result[]} results */
-  function show(results) {
+  /**
+   * @param {Result[]} results
+   * @param {string} [runId] The search run that found them, which recording a follow needs. None
+   *   for the empty list of an outcome that has no run.
+   */
+  function show(results, runId) {
     if (list.contains(document.activeElement)) {
       button.focus();
     }
-    list.replaceChildren(...results.map((result) => resultItem(template, result)));
+    const items = results.map((result) => resultItem(template, result));
+    for (const [index, item] of items.entries()) {
+      const result = results[index];
+      if (runId !== undefined && result !== undefined) {
+        runOf.set(item, { runId, bookmarkId: result.id });
+      }
+    }
+    list.replaceChildren(...items);
     list.hidden = results.length === 0;
     document.getElementById(RESULTS_HEADING_ID)?.toggleAttribute("hidden", list.hidden);
     emptyState?.setAttribute("hidden", "");
@@ -362,12 +418,14 @@ function enhance(form, field, button, list, template, status, emptyState) {
 
   /**
    * The error state, which replaces the results: the alert's box, with what went wrong and Try
-   * again, which sends the same query again. It is in the live region, so it is announced, and the
-   * page has one live region (#208).
+   * again, which sends the same query again. It is in the search's live region, so it is
+   * announced, and it has no `alert` role, which would make it a second region for the search's
+   * messages (#208).
    * @param {string} text
    * @param {string} query The query that failed.
+   * @param {InputMode} inputMode How the query that failed was entered.
    */
-  function failure(text, query) {
+  function failure(text, query, inputMode) {
     const alert = element("div");
     alert.className = "alert";
     const body = element("div");
@@ -381,8 +439,10 @@ function enhance(form, field, button, list, template, status, emptyState) {
       // The query that failed goes back in the field, so the field always holds the query whose
       // results the page shows. Focus moves to the Search button before the search empties the
       // region, so it does not fall to the page with Try again. The form is then submitted, so
-      // the search goes through the submit handler's rules, as a press of Search does.
+      // the search goes through the submit handler's rules, as a press of Search does, and the
+      // handler gives it the mode of the search that failed, through `restored`.
       field.value = query;
+      restored = { query, inputMode };
       button.focus();
       form.requestSubmit();
     });
@@ -394,11 +454,12 @@ function enhance(form, field, button, list, template, status, emptyState) {
   /**
    * @param {Outcome} outcome
    * @param {string} query The query that was sent.
+   * @param {InputMode} inputMode How the query was entered.
    */
-  function settle(outcome, query) {
+  function settle(outcome, query, inputMode) {
     if (outcome.kind === "found") {
-      const { results, complete } = outcome;
-      show(results);
+      const { runId, results, complete } = outcome;
+      show(results, runId);
       if (complete) {
         announce(
           paragraphOf(results.length === 0 ? MESSAGES.none : MESSAGES.found(results.length)),
@@ -426,11 +487,14 @@ function enhance(form, field, button, list, template, status, emptyState) {
       announce(paragraphOf(`${MESSAGES.signedOut} `, signIn));
       return;
     }
-    announce(failure(MESSAGES[outcome.kind], query));
+    announce(failure(MESSAGES[outcome.kind], query, inputMode));
   }
 
-  /** @param {string} query */
-  async function send(query) {
+  /**
+   * @param {string} query
+   * @param {InputMode} inputMode How the query was entered, which the search run records.
+   */
+  async function send(query, inputMode) {
     const controller = new AbortController();
     const request = { query, controller };
     inFlight = request;
@@ -448,7 +512,7 @@ function enhance(form, field, button, list, template, status, emptyState) {
       const response = await fetch(SEARCH_PATH, {
         method: "POST",
         headers: { accept: "application/json", "content-type": "application/json" },
-        body: JSON.stringify({ query }),
+        body: JSON.stringify({ query, inputMode }),
         signal: controller.signal,
       });
       outcome = await outcomeOf(response, controller.signal);
@@ -463,8 +527,45 @@ function enhance(form, field, button, list, template, status, emptyState) {
     }
     inFlight = null;
     button.textContent = idleLabel;
-    settle(outcome, query);
+    settle(outcome, query, inputMode);
   }
+
+  /**
+   * Records that a result's link was followed, from a click, Enter or a middle click, and does
+   * nothing else: no default is prevented and nothing is awaited, so the visit is neither delayed
+   * nor changed. `sendBeacon` queues the request in the browser, which sends it even after the
+   * page has gone. It has no custom headers, so the request is a POST with the session cookie
+   * and the Origin header that the Worker checks. A browser that has no `sendBeacon`, or throws,
+   * is not told about: the person still reaches the page.
+   * @param {Event} event
+   */
+  function recordFollow(event) {
+    const link = event.target instanceof Element ? event.target.closest("h3 a[href]") : null;
+    const item = link?.closest("li");
+    const followed = item ? runOf.get(item) : undefined;
+    if (followed === undefined) {
+      return;
+    }
+    try {
+      navigator.sendBeacon(
+        CLICK_PATH,
+        new Blob([JSON.stringify(followed)], { type: "application/json" }),
+      );
+    } catch {
+      // Recording is best effort.
+    }
+  }
+
+  // A click is a press, and also Enter on the link, which the browser turns into one. A middle
+  // click, which opens a new tab, is an `auxclick` with button 1, and a right click is another
+  // button, which opens the browser's menu and records nothing. The results are replaced by each
+  // search, so one listener on the list serves them all.
+  list.addEventListener("click", recordFollow);
+  list.addEventListener("auxclick", (event) => {
+    if (event.button === 1) {
+      recordFollow(event);
+    }
+  });
 
   // Ends the search in flight, if there is one, and gives the button its own label back.
   function stop() {
@@ -473,14 +574,12 @@ function enhance(form, field, button, list, template, status, emptyState) {
     button.textContent = idleLabel;
   }
 
-  // A press of Search or Enter in the field submits the form. The browser's own submission is
-  // stopped, and the query that is already being searched for is not sent again.
-  form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const query = field.value.trim();
-    if (query !== "" && inFlight?.query === query) {
-      return;
-    }
+  /**
+   * Starts a search for `query`, which was entered as `inputMode` says.
+   * @param {string} query
+   * @param {InputMode} inputMode
+   */
+  function search(query, inputMode) {
     stop();
     if (query === "") {
       // The query was replaced with nothing, so an answer to the one before is not wanted either.
@@ -488,7 +587,41 @@ function enhance(form, field, button, list, template, status, emptyState) {
       announce(paragraphOf(MESSAGES.empty));
       return;
     }
-    void send(query);
+    void send(query, inputMode);
+  }
+
+  /**
+   * How the query in the field was entered. Text that voice input placed is spoken, whatever came
+   * before it. Otherwise it is the mode of the query Try again restored, when it is that query.
+   * Anything else is typed. Both sides are trimmed, because the query is.
+   * @param {string} query The trimmed query in the field.
+   * @returns {InputMode}
+   */
+  function inputModeOf(query) {
+    if (transcriptInField() === query) {
+      return "web-speech";
+    }
+    if (restored !== null && restored.query === query) {
+      return restored.inputMode;
+    }
+    return "typed";
+  }
+
+  // The person's first edit forgets the restored query, as voice input forgets the transcript.
+  field.addEventListener("input", () => {
+    restored = null;
+  });
+
+  // A press of Search or Enter in the field submits the form. The browser's own submission is
+  // stopped, and the query that is already being searched for is not sent again.
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const query = field.value.trim();
+    const inputMode = inputModeOf(query);
+    if (query !== "" && inFlight?.query === query) {
+      return;
+    }
+    search(query, inputMode);
   });
 
   // Following a result and coming back can restore this page from the back-forward cache as it
@@ -547,6 +680,18 @@ if (
   status !== null &&
   fillsTheTemplate(template)
 ) {
-  enhance(form, field, button, list, template, status, document.getElementById(EMPTY_STATE_ID));
+  // The voice input is set up before the search is wired, so the search can ask it, at submit,
+  // whether the field holds a transcript.
+  const transcriptInField = addVoiceInput(field, form);
+  enhance(
+    form,
+    field,
+    button,
+    list,
+    template,
+    status,
+    document.getElementById(EMPTY_STATE_ID),
+    transcriptInField,
+  );
   document.getElementById(NEEDS_SCRIPT_ID)?.setAttribute("hidden", "");
 }
