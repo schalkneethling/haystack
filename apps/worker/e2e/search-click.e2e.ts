@@ -206,6 +206,58 @@ test("a result is recorded against the search that showed it, not the latest", a
   ).toEqual([{ clicked: 0 }, { clicked: 0 }, { clicked: 0 }]);
 });
 
+// While a newer search is on its way, the page still shows the results of the one before, and a
+// person can follow one of them. It belongs to the search that showed it, not to the one pending.
+// A middle click follows it, because a click that leaves the page would end the pending search.
+test("a result followed while a newer search is pending is recorded against the search that showed it", async ({
+  page,
+  pages,
+  run,
+  query,
+}) => {
+  const ids = await searchCollection({ page, pages, run, query });
+  const [best] = ids;
+  const [first] = await query("SELECT id FROM search_runs");
+  const firstRun = String(first?.id);
+  // The second search goes on to the Worker only when the test releases it.
+  let release: () => void = () => {};
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let held = false;
+  await page.route("**/api/search", async (route) => {
+    held = true;
+    await released;
+    await route.continue();
+  });
+  const requests = recordRequests(page);
+  // A failed step before the release would leave the search held until teardown, so it is
+  // released whatever happens.
+  try {
+    await field(page).fill("a second search");
+    await field(page).press("Enter");
+    await expect.poll(() => held).toBe(true);
+    await link(page, "Vitest browser mode guide").click({ button: "middle" });
+
+    await expect.poll(() => ids.visited).toEqual(["https://example.com/click-0"]);
+    await expect.poll(() => clickedIds(query)).toEqual([best]);
+    expect(requests[0]?.postDataJSON()).toEqual({ runId: firstRun, bookmarkId: best });
+
+    // Once the second search answers, its results replace the first's, and none of its answers is
+    // clicked: the follow stays with the first run.
+    release();
+    await expect.poll(async () => (await query("SELECT id FROM search_runs")).length).toBe(2);
+    await expect(status(page)).toHaveText(FOUND);
+    expect(
+      await query(
+        "SELECT search_run_id AS runId, bookmark_id AS bookmarkId FROM search_answers WHERE clicked = 1",
+      ),
+    ).toEqual([{ runId: firstRun, bookmarkId: best }]);
+  } finally {
+    release();
+  }
+});
+
 test("a click on the card outside its link, and on Delete, records nothing", async ({
   page,
   pages,

@@ -17,12 +17,16 @@
 // - 400 with `{ code: "SEARCH_CLICK_INVALID" }` for a body that isn't the shape of
 //   `SearchClickRequest`, and 413 with `SEARCH_CLICK_TOO_LARGE` for one over MAX_BODY_BYTES. A body
 //   is never echoed.
+// - 499 with no body when the update failed after the page had gone, which nobody reads. The
+//   failure is logged by `errorCode` only. While the page is connected, a failed update reaches the entry
+//   point, which logs it and answers 500.
 import { SearchClickRequest } from "@haystack/schemas";
 import { and, eq, exists } from "drizzle-orm";
 import * as v from "valibot";
 import type { Db } from "./db/client.ts";
 import { searchAnswers, searchRuns } from "./db/schema.ts";
 import { readText } from "./enrichment/bounded-read.ts";
+import { errorCode } from "./error-code.ts";
 import { jsonResponse } from "./page.ts";
 
 /** The route's path. search.js has its own copy of it, because the assets can't import this. */
@@ -102,7 +106,28 @@ export async function postSearchClick(
     )
     .returning({ bookmarkId: searchAnswers.bookmarkId })
     .get();
-  context.waitUntil(marking.catch(() => undefined));
-  const marked = await marking;
+  // The promise given to `waitUntil` never rejects. While the page is connected, a failure is the
+  // handler's to rethrow to the entry point, which logs it. After a disconnect the handler may be
+  // cancelled before it does, so the background branch logs it, by its code only, and the handler
+  // then answers 499 instead of rethrowing, so that the failure is logged once, as the search
+  // route does (search-route.ts). A rejection's two readers run in the same step, so both see the
+  // same `request.signal.aborted`.
+  context.waitUntil(
+    marking.catch((error: unknown) => {
+      if (request.signal.aborted) {
+        console.error("Search click failed after the page left:", errorCode(error));
+      }
+    }),
+  );
+  let marked: Awaited<typeof marking>;
+  try {
+    marked = await marking;
+  } catch (error) {
+    if (request.signal.aborted) {
+      // Logged by the background branch, and nobody reads an answer.
+      return new Response(null, { status: 499 });
+    }
+    throw error;
+  }
   return marked === undefined ? refusal(REFUSALS.notFound) : new Response(null, { status: 204 });
 }
