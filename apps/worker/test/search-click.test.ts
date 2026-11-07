@@ -2,9 +2,9 @@
 // setting `clicked` on that run's answer for that bookmark, as a weak relevance label for Phase 12.
 // The tests send requests to the Worker, as `navigator.sendBeacon` does from the page: the body is
 // JSON, but the request has `Accept: */*`, as `fetch` sends, and no custom header, so the session
-// cookie and the Origin check are the only things that tell who sent it and from where. A last
-// test calls the route's function in this process with a fake context, to show what it gives
-// `waitUntil`. See "Search page" and "Deleting bookmarks" in plans/haystack-v1-implementation-plan.md.
+// cookie and the Origin check are the only things that tell who sent it and from where. The last
+// tests call the route's function in this process with a fake context, to show what it gives
+// `waitUntil` and what it logs. See "Search page" and "Deleting bookmarks" in plans/haystack-v1-implementation-plan.md.
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { createDb } from "../src/db/client.ts";
 import { postSearchClick } from "../src/search-click.ts";
@@ -364,5 +364,102 @@ describe("postSearchClick, called in this process", () => {
 
     expect(response.status).toBe(204);
     expect(prepared).toHaveLength(1);
+  });
+
+  /**
+   * The database, but every statement fails when it runs, as a D1 failure does, with a message no
+   * log may hold. Preparing and binding succeed, so the failure arrives as the update's rejection.
+   * `whileRunning` is called as the statement runs, before it fails.
+   */
+  async function failingDb(whileRunning: () => void = () => {}) {
+    const DB = await d1();
+    const fail = async () => {
+      whileRunning();
+      throw Object.assign(new Error("secret detail"), { code: "D1_ERROR" });
+    };
+    const statement = { all: fail, raw: fail, run: fail, first: fail };
+    const failing = new Proxy(DB, {
+      get(target, property, receiver) {
+        if (property === "prepare") {
+          return () => ({ ...statement, bind: () => statement });
+        }
+        const value: unknown = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    return createDb(failing);
+  }
+
+  function fakeContext() {
+    const registered: Promise<unknown>[] = [];
+    return {
+      registered,
+      waitUntil: vi.fn((promise: Promise<unknown>) => {
+        registered.push(promise);
+      }),
+    };
+  }
+
+  // When the page has gone, the handler may be cancelled before it rethrows to the entry point,
+  // which is the only code that logs, so the update given to waitUntil logs the failure, by its
+  // code only, and the handler answers 499 instead of throwing, so the failure is logged once.
+  it("logs the code of a failed update when the page has gone, and answers 499 instead of throwing", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { runId, first } = await seedRun(owner);
+    const page = new AbortController();
+    const context = fakeContext();
+
+    const handling = postSearchClick(
+      new Request("https://haystack.test/api/search/click", {
+        method: "POST",
+        body: JSON.stringify({ runId, bookmarkId: first }),
+        signal: page.signal,
+      }),
+      context,
+      // The page goes while the update runs, as when the tab is closed right after the click.
+      await failingDb(() => page.abort()),
+      owner.userId,
+    );
+    // Only what waitUntil holds is awaited, as for a cancelled handler.
+    await vi.waitFor(() => expect(context.waitUntil).toHaveBeenCalledTimes(1));
+    await context.registered[0];
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledWith(
+      "Search click failed after the page left:",
+      expect.any(String),
+    );
+    // Drizzle wraps D1's error in its own, whose message holds the statement and whose fields hold
+    // the IDs it was given, so the log holds what `errorCode` gives and nothing of either.
+    const logged = JSON.stringify(error.mock.calls);
+    for (const secret of ["secret detail", "search_answers", runId, first, owner.userId]) {
+      expect(logged).not.toContain(secret);
+    }
+    expect((await handling).status).toBe(499);
+    error.mockRestore();
+  });
+
+  // The entry point logs a failure that reaches it, so the update given to waitUntil must not
+  // log it too.
+  it("does not log a failed update itself while the page is connected, and rethrows it", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { runId, first } = await seedRun(owner);
+    const context = fakeContext();
+
+    const handling = postSearchClick(
+      new Request("https://haystack.test/api/search/click", {
+        method: "POST",
+        body: JSON.stringify({ runId, bookmarkId: first }),
+      }),
+      context,
+      await failingDb(),
+      owner.userId,
+    );
+    // The handler's rejection is watched from the start, as the entry point watches it.
+    const handled = expect(handling).rejects.toMatchObject({ cause: { code: "D1_ERROR" } });
+    await vi.waitFor(() => expect(context.waitUntil).toHaveBeenCalledTimes(1));
+    await expect(context.registered[0]).resolves.toBeUndefined();
+    await handled;
+    expect(error).not.toHaveBeenCalled();
+    error.mockRestore();
   });
 });
