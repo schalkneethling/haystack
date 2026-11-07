@@ -81,3 +81,21 @@ export const SearchAnswer = v.object({
 });
 
 export type SearchAnswer = v.InferOutput<typeof SearchAnswer>;
+
+/**
+ * One ID in the body that records a followed result: a run's, which is a UUID, or a bookmark's.
+ * It is bounded and has the pattern of a bookmark's ID, so a body that is no ID is refused before
+ * it reaches the database. The pattern leaves out whitespace, which no ID holds.
+ */
+const RecordedId = v.pipe(
+  v.string(),
+  v.maxLength(64),
+  v.regex(RESULT_ID, "Must be letters, digits, underscores or hyphens"),
+);
+
+/**
+ * The body that records a followed result, `POST /api/search/click` (#215): the search run whose
+ * answer the person followed, and the bookmark of that answer. The user is never in it, because
+ * it comes from the session.
+ */
+export const SearchClickRequest = v.object({ runId: RecordedId, bookmarkId: RecordedId });

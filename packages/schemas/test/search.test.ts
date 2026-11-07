@@ -1,6 +1,12 @@
 import * as v from "valibot";
 import { describe, expect, it } from "vite-plus/test";
-import { SEARCH_QUERY_CAP, SearchAnswer, SearchQuery, SearchRequest } from "../src/index.ts";
+import {
+  SEARCH_QUERY_CAP,
+  SearchAnswer,
+  SearchClickRequest,
+  SearchQuery,
+  SearchRequest,
+} from "../src/index.ts";
 
 describe("SearchQuery", () => {
   it("trims the query", () => {
@@ -134,5 +140,39 @@ describe("SearchAnswer", () => {
   it("accepts the latest saved time a Date can hold", () => {
     const answer = { ...valid, results: [{ ...result, createdAt: 8.64e15 }] };
     expect(v.safeParse(SearchAnswer, answer).success).toBe(true);
+  });
+});
+
+describe("SearchClickRequest", () => {
+  const ids = { runId: "0b3c8e2a-5f7d-4c11-9a64-2d1e7f9b0a33", bookmarkId: "bookmark-1" };
+
+  it("holds the run's ID and the bookmark's", () => {
+    expect(v.parse(SearchClickRequest, ids)).toEqual(ids);
+  });
+
+  it("accepts an ID of 64 characters and rejects one more", () => {
+    expect(v.safeParse(SearchClickRequest, { ...ids, runId: "a".repeat(64) }).success).toBe(true);
+    expect(v.safeParse(SearchClickRequest, { ...ids, bookmarkId: "a".repeat(65) }).success).toBe(
+      false,
+    );
+    expect(v.safeParse(SearchClickRequest, { ...ids, runId: "a".repeat(65) }).success).toBe(false);
+  });
+
+  it.each([
+    ["no run", { bookmarkId: "b" }],
+    ["no bookmark", { runId: "r" }],
+    ["an empty run", { runId: "", bookmarkId: "b" }],
+    ["an empty bookmark", { runId: "r", bookmarkId: "" }],
+    ["an ID that is not a string", { runId: 1, bookmarkId: "b" }],
+    ["an ID with a space", { runId: "r r", bookmarkId: "b" }],
+    ["null", null],
+  ])("rejects %s", (_, body) => {
+    expect(v.safeParse(SearchClickRequest, body).success).toBe(false);
+  });
+
+  it("leaves out any other field, so a user in the body is never passed on", () => {
+    expect(v.parse(SearchClickRequest, { ...ids, userId: "someone-else", clicked: false })).toEqual(
+      ids,
+    );
   });
 });
