@@ -13,14 +13,15 @@
 //   Jev answered not at all. This is the route's one mapping that isn't a pass-through (see
 //   `postSearch`). The page shows its error state for any status but 200 and 401.
 // - 499 with no body for a search the page abandoned (see `postSearch`), the route's other.
-// - 400 with `{ code }` for a body that isn't JSON (`SEARCH_REQUEST_INVALID`) or whose query
-//   the shared schema refuses (`SEARCH_QUERY_INVALID`, also the service's rejection code), and
-//   413 with `SEARCH_REQUEST_TOO_LARGE` for a body past MAX_BODY_BYTES. A body is never echoed,
-//   so no answer holds the query.
+// - 400 with `{ code }` for a body that isn't JSON, or whose input mode the shared schema refuses,
+//   with a query the schema accepts (`SEARCH_REQUEST_INVALID`). A body whose query the schema
+//   refuses gets `SEARCH_QUERY_INVALID`, which is also the service's rejection code. 413 with
+//   `SEARCH_REQUEST_TOO_LARGE` is for a body past MAX_BODY_BYTES. A body is never echoed, so no
+//   answer holds the query.
 //
 // Anything else that goes wrong, such as an empty key or a failed database read, throws to the
 // entry point, which answers 500 and logs the error's code and never its message.
-import { SearchRequest } from "@haystack/schemas";
+import { SearchQuery, SearchRequest } from "@haystack/schemas";
 import type { SearchAnswer } from "@haystack/schemas";
 import * as v from "valibot";
 import type { Db } from "./db/client.ts";
@@ -64,9 +65,9 @@ function refusal({ status, code }: (typeof REFUSALS)[keyof typeof REFUSALS]): Re
 }
 
 /**
- * Searches the user's bookmarks for the query in the request's body, for the search page, which
- * types its query: the channel is `web` and the input mode `typed`, until the page's voice input
- * (Phase 13) sends its own.
+ * Searches the user's bookmarks for the query in the request's body, for the search page: the
+ * channel is `web`, and the input mode is the body's, which is `typed` when the body has none
+ * (`SearchRequest`, where the page's voice input (#217) sets it to `web-speech` for a transcript).
  *
  * Two answers aren't the service's result as it is. A `failed` search is 502, because it isn't an
  * answer: Jev answered none of it, and a 200 with no results would read, on the page and to an
@@ -112,7 +113,11 @@ export async function postSearch(
   }
   const parsed = v.safeParse(SearchRequest, json);
   if (!parsed.success) {
-    return refusal(REFUSALS.invalidQuery);
+    // A query the schema accepts means the refusal is of another field, so the request is
+    // invalid, and the code doesn't blame the query.
+    const query =
+      typeof json === "object" && json !== null && "query" in json ? json.query : undefined;
+    return refusal(v.is(SearchQuery, query) ? REFUSALS.invalidRequest : REFUSALS.invalidQuery);
   }
 
   // The search is started here, given to `waitUntil` and then awaited for the answer. When the
@@ -130,7 +135,7 @@ export async function postSearch(
     search(
       userId,
       parsed.output.query,
-      { channel: "web", inputMode: "typed" },
+      { channel: "web", inputMode: parsed.output.inputMode },
       {
         db,
         jev: env,
