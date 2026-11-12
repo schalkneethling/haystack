@@ -79,6 +79,22 @@ function isManifestVersion(version: string): boolean {
   );
 }
 
+// The icon sizes in every build. Chrome asks for 16, 32, 48 and 128
+// (https://developer.chrome.com/docs/extensions/reference/manifest/icons), and Firefox for 48
+// and 96 (https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json/icons).
+// icons.ts makes them from the hay bale art.
+export const ICON_SIZES = [16, 32, 48, 96, 128] as const;
+export type IconSize = (typeof ICON_SIZES)[number];
+
+/** Where an icon is in a build, as the manifest names it. */
+export function iconPath(size: IconSize): string {
+  return `icons/icon-${size}.png`;
+}
+
+function iconsFor(sizes: readonly IconSize[]): Record<string, string> {
+  return Object.fromEntries(sizes.map((size) => [String(size), iconPath(size)]));
+}
+
 // The keys every browser's build shares. A browser's own keys are added in manifestFor.
 function sharedManifest(version: string) {
   return {
@@ -86,7 +102,13 @@ function sharedManifest(version: string) {
     name: "Haystack",
     version,
     description: "Save the current page to Haystack.",
-    action: { default_title: "Save to Haystack", default_popup: "index.html" },
+    icons: iconsFor(ICON_SIZES),
+    // The toolbar shows the button at 16 pixels, and at 32 on a high-density screen.
+    action: {
+      default_title: "Save to Haystack",
+      default_popup: "index.html",
+      default_icon: iconsFor([16, 32]),
+    },
     permissions: ["activeTab", "scripting"],
   } satisfies chrome.runtime.ManifestV3;
 }
