@@ -6,7 +6,7 @@ This file is also the README that addons.mozilla.org's reviewers receive with th
 
 ## Building it from source
 
-The build needs macOS or Linux, Git, and Vite+, the toolchain the repository uses. Vite+ installs Node.js and pnpm itself, so neither has to be installed first: pnpm at the version in `devEngines` in the root `package.json`, and Node.js at its current long-term support release.
+The build needs macOS or Linux, Git, and Vite+, the toolchain the repository uses. Vite+ installs Node.js and pnpm itself, so neither has to be installed first: pnpm at the version in `devEngines` in the root `package.json`. The repository pins no Node.js version, so Vite+ uses your default from `vp env default`, or the latest long-term support release if you have none.
 
 1. Install Vite+ (https://viteplus.dev/guide/):
 

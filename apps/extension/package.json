@@ -8,9 +8,10 @@
     "icons": "node icons.ts",
     "build:local": "HAYSTACK_ORIGIN=http://localhost:5173 node build.ts",
     "build:production": "HAYSTACK_ORIGIN=https://haystack.volume4-schalk.workers.dev node build.ts",
-    "package": "pnpm build:production && web-ext build --source-dir dist/chrome --artifacts-dir dist/packages --filename haystack-chrome-{version}.zip --overwrite-dest && web-ext build --source-dir dist/firefox --artifacts-dir dist/packages --filename haystack-firefox-{version}.zip --overwrite-dest",
+    "check:clean": "test -z \"$(git status --porcelain)\" || { echo 'Commit or remove every change first, so that what is built and published is a commit.' >&2; exit 1; }",
+    "package": "pnpm check:clean && pnpm build:production && web-ext build --source-dir dist/chrome --artifacts-dir dist/packages --filename haystack-chrome-{version}.zip --overwrite-dest && web-ext build --source-dir dist/firefox --artifacts-dir dist/packages --filename haystack-firefox-{version}.zip --overwrite-dest",
     "run:firefox": "pnpm build:local && web-ext run --source-dir dist/firefox --no-reload --no-input --start-url http://localhost:5173",
-    "package:source": "test -z \"$(git status --porcelain)\" || { echo 'Commit or remove every change first: the source archive is made from the last commit, so it must match what is built.' >&2; exit 1; }; mkdir -p dist/packages && git -C ../.. archive --format=zip --add-file=apps/extension/README.md --output=apps/extension/dist/packages/haystack-source.zip HEAD",
+    "package:source": "pnpm check:clean && mkdir -p dist/packages && git -C ../.. archive --format=zip --add-file=apps/extension/README.md --output=apps/extension/dist/packages/haystack-source.zip HEAD",
     "sign:firefox": "pnpm package:source && pnpm build:production && web-ext sign --source-dir dist/firefox --artifacts-dir dist/packages --channel unlisted --upload-source-code dist/packages/haystack-source.zip",
     "test:e2e": "playwright test",
     "e2e:install": "playwright install --no-shell chromium"
