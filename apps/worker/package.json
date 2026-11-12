@@ -33,7 +33,7 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",
     "@cloudflare/vite-plugin": "^1.67.0",
-    "@guidepup/guidepup": "^0.38.0",
+    "@guidepup/guidepup": "^0.40.0",
     "@guidepup/playwright": "^0.21.0",
     "@guidepup/setup": "^0.29.3",
     "@playwright/test": "catalog:",
