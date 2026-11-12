@@ -111,7 +111,7 @@ vp run quality
 vp -C apps/worker build
 ```
 
-`vp run quality` runs the type checks, `vp check` (formatting, linting and type checking), `vp test`, the end-to-end tests, Stylelint and Knip, and then checks the environment schema with varlock. The end-to-end tests need Playwright's Chromium, which you install once for each package:
+`vp run quality` runs the type checks, `vp check` (formatting, linting and type checking), `vp test`, the end-to-end tests, Stylelint and Knip, and then checks the environment schema with varlock. The end-to-end tests need Playwright's Chromium, which you install once for each package, and again after a Playwright upgrade:
 
 ```sh
 vp -C apps/worker run e2e:install
