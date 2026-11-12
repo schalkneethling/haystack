@@ -8,6 +8,16 @@ import { BROWSERS, manifestFor } from "../manifest.ts";
 
 const ORIGIN = "https://haystack.example";
 
+// A PNG starts with an 8-byte signature and then the IHDR chunk, whose data begins with the
+// width and height as 4-byte big-endian numbers at offsets 16 and 20
+// (https://www.w3.org/TR/png-3/#11IHDR).
+function pngSize(png: Buffer): { width: number; height: number } | undefined {
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  if (png.length < 24 || !png.subarray(0, 8).equals(signature)) return undefined;
+  if (png.subarray(12, 16).toString("latin1") !== "IHDR") return undefined;
+  return { width: png.readUInt32BE(16), height: png.readUInt32BE(20) };
+}
+
 describe("parseHaystackOrigin", () => {
   for (const [value, origin] of [
     ["https://haystack.example", "https://haystack.example"],
@@ -118,7 +128,11 @@ describe("buildExtension", () => {
 
   describe("the Chrome build", () => {
     let files: string[];
-    let manifest: Record<string, unknown> & { action: { default_popup: string } };
+    let manifest: Record<string, unknown> & {
+      action: { default_popup: string; default_icon?: Record<string, string> };
+      icons?: Record<string, string>;
+    };
+    let pngs: Map<string, Buffer>;
     let scripts: string[];
     let styles: string[];
 
@@ -132,6 +146,13 @@ describe("buildExtension", () => {
         files
           .filter((file) => file.endsWith(".js"))
           .map((file) => readFile(join(outDir.path, file), "utf8")),
+      );
+      pngs = new Map(
+        await Promise.all(
+          files
+            .filter((file) => file.endsWith(".png"))
+            .map(async (file) => [file, await readFile(join(outDir.path, file))] as const),
+        ),
       );
       styles = await Promise.all(
         files
@@ -150,6 +171,23 @@ describe("buildExtension", () => {
       expect(manifest.permissions).toEqual(["activeTab", "scripting"]);
       expect(manifest).not.toHaveProperty("host_permissions");
       expect(manifest).not.toHaveProperty("optional_permissions");
+    });
+
+    // Chrome asks for 16, 32, 48 and 128, and Firefox for 48 and 96
+    // (plans/haystack-v1-implementation-plan.md, "## Extension"). The toolbar button uses the two
+    // smallest.
+    it("has an icon at every size the browsers ask for, each the size its key names", () => {
+      const icons = manifest.icons ?? {};
+      expect(Object.keys(icons).map(Number)).toEqual([16, 32, 48, 96, 128]);
+      expect(manifest.action.default_icon).toEqual({ 16: icons[16], 32: icons[32] });
+      for (const [size, file] of Object.entries(icons)) {
+        const png = pngs.get(file);
+        expect(png, file).toBeDefined();
+        expect(pngSize(png ?? Buffer.alloc(0)), file).toEqual({
+          width: Number(size),
+          height: Number(size),
+        });
+      }
     });
 
     // The popup does everything (Q4), so there is nothing that runs in the background or in

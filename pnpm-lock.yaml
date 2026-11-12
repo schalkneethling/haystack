@@ -242,6 +242,9 @@ importers:
       '@types/node':
         specifier: ^25.9.9
         version: 25.9.9
+      sharp:
+        specifier: ^0.35.5
+        version: 0.35.5(@types/node@25.9.9)
       web-ext:
         specifier: ^10.8.0
         version: 10.8.0(jiti@2.7.0)(supports-color@10.2.2)
