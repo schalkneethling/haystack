@@ -42,7 +42,7 @@ const ICONS: Record<IconSize, IconSpec> = {
   128: { art: 96, withoutStraws: false, crisp: false },
 };
 
-interface RawImage {
+export interface RawImage {
   data: Buffer;
   width: number;
   height: number;
@@ -102,17 +102,39 @@ async function squareCrop(image: RawImage): Promise<Sharp> {
   );
 }
 
+// A one-channel image, the size of `image`, as sharp's input.
+function grey({ width, height }: RawImage, values: Buffer): Sharp {
+  return sharp(values, { raw: { width, height, channels: 1 } });
+}
+
+// Runs `pipeline` and returns its first channel, one value per pixel. sharp can write a
+// one-channel result back out as sRGB, with the value in each of three channels.
+async function oneChannel({ width, height }: RawImage, pipeline: Sharp): Promise<Buffer> {
+  const { data, info } = await pipeline.raw().toBuffer({ resolveWithObject: true });
+  if (info.width !== width || info.height !== height) {
+    throw new Error(`A mask step returned ${info.width}x${info.height}, not ${width}x${height}.`);
+  }
+  if (info.channels === 1) return data;
+  const values = Buffer.alloc(width * height);
+  for (let pixel = 0; pixel < values.length; pixel++) {
+    values[pixel] = data[pixel * info.channels] ?? 0;
+  }
+  return values;
+}
+
 // Removes the loose straws. Blurring the alpha channel averages a thin straw with the empty
 // space around it, so it falls under the threshold, while the round body stays above it. The
 // blur is a share of the image's width, so it does the same at any source size.
-async function withoutStraws(image: RawImage): Promise<RawImage> {
-  const mask = await fromRaw(image)
-    .extractChannel("alpha")
-    .blur(image.width * 0.052)
-    .threshold(160)
-    .blur(image.width * 0.0023)
-    .raw()
-    .toBuffer();
+//
+// Each step runs in a pipeline of its own. sharp keeps one setting per operation in a pipeline,
+// so a second blur() or extractChannel() replaces the first, and it runs the operations in its
+// own order, whatever the call order: it thresholds before it blurs, for example (`blur` in
+// sharp's lib/operation.js, and the order in src/pipeline.cc).
+export async function withoutStraws(image: RawImage): Promise<RawImage> {
+  const alpha = await oneChannel(image, fromRaw(image).extractChannel("alpha"));
+  const averaged = await oneChannel(image, grey(image, alpha).blur(image.width * 0.052));
+  const body = await oneChannel(image, grey(image, averaged).threshold(160));
+  const mask = await oneChannel(image, grey(image, body).blur(image.width * 0.0023));
   const data = Buffer.from(image.data);
   for (let pixel = 0; pixel < mask.length; pixel++) {
     const alpha = pixel * 4 + 3;
