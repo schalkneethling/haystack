@@ -32,20 +32,20 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",
-    "@cloudflare/vite-plugin": "^1.65.0",
-    "@guidepup/guidepup": "^0.38.0",
+    "@cloudflare/vite-plugin": "^1.67.0",
+    "@guidepup/guidepup": "^0.40.0",
     "@guidepup/playwright": "^0.21.0",
     "@guidepup/setup": "^0.29.3",
     "@playwright/test": "catalog:",
     "@types/node": "^25.9.9",
     "@valibot/to-json-schema": "^1.8.0",
-    "@varlock/1password-plugin": "^2.0.5",
-    "@varlock/cloudflare-integration": "^1.6.2",
+    "@varlock/1password-plugin": "^2.0.6",
+    "@varlock/cloudflare-integration": "^1.6.3",
     "drizzle-kit": "^0.31.11",
-    "html-validate": "^11.17.0",
+    "html-validate": "^11.18.0",
     "msw": "^3.0.3",
-    "varlock": "^1.23.0",
+    "varlock": "^1.24.0",
     "vite": "catalog:",
-    "wrangler": "4.153.0"
+    "wrangler": "4.156.2"
   }
 }
