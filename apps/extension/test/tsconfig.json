@@ -5,5 +5,13 @@
   "compilerOptions": {
     "types": ["node", "chrome"]
   },
-  "include": [".", "../src", "../e2e", "../build.ts", "../manifest.ts", "../playwright.config.ts"]
+  "include": [
+    ".",
+    "../src",
+    "../e2e",
+    "../build.ts",
+    "../icons.ts",
+    "../manifest.ts",
+    "../playwright.config.ts"
+  ]
 }
