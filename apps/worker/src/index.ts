@@ -31,6 +31,7 @@ import { errorCode } from "./error-code.ts";
 import { readSearchFlags, type SearchFlags } from "./flags.ts";
 import { readReviewPolicy, releaseBookmark, retryBookmark, showHeld } from "./held.ts";
 import { withoutSearchLink } from "./page.ts";
+import { PRIVACY_PATH, privacyPage } from "./privacy-page.ts";
 import { showRecentSaves } from "./recent-saves.ts";
 import { runScheduled } from "./scheduled.ts";
 import { showSearchPage } from "./search-page.ts";
@@ -335,8 +336,13 @@ async function answer(request: Request, env: Env, ctx: ExecutionContext): Promis
   if (!SAFE_METHODS.has(request.method) && !isSameOriginRequest(request)) {
     return text("Forbidden", 403);
   }
-  const db = createDb(env.DB);
   const path = new URL(request.url).pathname;
+  // The privacy policy is for anyone, signed in or not: the Chrome Web Store listing links to it,
+  // and its reviewers can't sign in (#116). It reads nothing, so it needs no database.
+  if (path === PRIVACY_PATH && isReadRequest(request)) {
+    return privacyPage();
+  }
+  const db = createDb(env.DB);
   if (path.startsWith("/auth/")) {
     return handleAuthRoute(request, env, db, path);
   }
