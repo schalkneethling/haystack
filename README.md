@@ -102,6 +102,10 @@ After a new build, choose **Reload** under the add-on on the same page.
 
 Once the add-on is signed on addons.mozilla.org (#116), the local add-on will have the same ID as the signed one, so Firefox will replace one with the other. If you use the signed add-on day to day, load the local one in another Firefox profile, or in Firefox Developer Edition.
 
+### Publishing it
+
+How a version is built for production, signed, published to both stores and installed from them is in [the release document](docs/extension-release.md). [The extension's README](apps/extension/README.md) says how to build it from source, for addons.mozilla.org's reviewers.
+
 ## Checking a change
 
 Before you open a pull request, run the whole repository's checks and build the Worker, as [PR.md](PR.md) asks:
