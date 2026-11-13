@@ -50,7 +50,7 @@ vp run @haystack/extension#package
 
 Like signing, this stops if the checkout has any change. It writes `haystack-chrome-<version>.zip` (and Firefox's unsigned `haystack-firefox-<version>.zip`) to `apps/extension/dist/packages`. Then, in the Chrome Web Store Developer Dashboard **(owner)**:
 
-- **First version:** create a new item from the zip, then fill in the tabs below. Review usually takes a few days, but "it can take up to a few weeks" (https://developer.chrome.com/docs/webstore/review-process). After approval you have 30 days to publish.
+- **First version:** check that the privacy policy is live before you submit, because the store's reviewers open it without signing in, and merging to `main` doesn't deploy the Worker. Open https://haystack.volume4-schalk.workers.dev/privacy in a private window, where you aren't signed in. If it sends you to Google instead of showing the policy, deploy the Worker first with `vp -C apps/worker run deploy`, following "Deploys" under "Secrets and configuration" in `plans/haystack-v1-implementation-plan.md`. Then create a new item from the zip, then fill in the tabs below. Review usually takes a few days, but "it can take up to a few weeks" (https://developer.chrome.com/docs/webstore/review-process). After approval you have 30 days to publish.
 - **Later versions:** upload the new zip to the existing item with "Upload New Package" (https://developer.chrome.com/docs/webstore/update), and submit it for review.
 
 The first version needs these tabs:
