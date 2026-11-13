@@ -2118,17 +2118,14 @@ The extension's browser tests (#70):
 
 **Firefox manual check** (#71). Firefox is covered by a manual check and by `web-ext lint`, not by Playwright. Playwright cannot load extensions in Firefox, and Selenium with geckodriver still could not click the toolbar button. The lint runs in `vp run quality` (see "Built in #71" under "Extension"), so a manifest that addons.mozilla.org would reject fails CI. The manual check covers what the lint cannot: the popup running in Firefox. Run it before Phase 5 is called done, and after any change to the popup, the manifest or the Firefox build. It needs Firefox 140 or later, the version the manifest requires.
 
-1. Install dependencies with `vp install`. The first time, create the local database with `vp -C apps/worker run db:migrate:local`.
-2. In a terminal, start the Worker with `vp -C apps/worker run dev`, and wait until it listens on `http://localhost:5173`. 1Password may ask you to approve access to the secrets.
-3. In a second terminal, build both targets against the local Worker with `vp -C apps/extension run build:local`.
-4. Open Firefox from the Dock or Finder, not from a terminal (the note after these steps says why). Go to `about:debugging#/runtime/this-firefox`, choose "Load Temporary Add-on…", and pick `apps/extension/dist/firefox/manifest.json`. Firefox keeps a temporary add-on until it quits, so load it again after a restart, and after each new build.
-5. Open `http://localhost:5173`. Haystack redirects to Google sign-in. Sign in with an address that is in `ALLOWED_EMAILS`. The session lasts 30 days and stays in that Firefox profile, so later checks need no sign-in.
-6. Find the "Save to Haystack" button in the toolbar, or in the Extensions menu (the puzzle piece). Pin it to the toolbar if you like. Note any prompt Firefox shows about the add-on or about data collection, and what it says.
-7. **Check A, an https page.** Open `https://example.com/` in a new tab and click the button. Expect a new tab with Haystack's save form, which shows `https://example.com/` as read-only text after "Address:", and whose Title field holds "Example Domain". The popup closes by itself.
-8. **Check B, a sensitive URL.** Open `https://example.com/?access_token=manual-check` and click the button. Expect the popup to stay open with the heading "This page can't be saved" and an explanation about access tokens, and no new tab.
-9. **Check C, a page that cannot be scripted.** Open `https://addons.mozilla.org/en-US/firefox/` and click the button. Firefox does not let extensions run scripts on that site, so the popup falls back to the tab's own title. Expect a new tab with the save form, holding that page's address and its title. The popup closes by itself.
-10. **Check D, the popup closes.** In checks A and C, the popup is gone once the save form has opened. In check B it stays, because it is showing the reason.
-11. Record the Firefox version (Firefox menu, About Firefox) and one line per check, A to D, saying passed or what happened instead. Put them in the pull request, and in the Q4 result line.
+1. Start the Worker, build the extension with `build:local`, and load it in Firefox, as "Running Haystack locally" and "Running the extension locally" in [the README](../README.md#running-the-extension-locally) describe. Open Firefox from the Dock or Finder, not from a terminal (the note after these steps says why).
+2. Open `http://localhost:5173`. Haystack redirects to Google sign-in. Sign in with an address that is in `ALLOWED_EMAILS`. The session lasts 30 days and stays in that Firefox profile, so later checks need no sign-in.
+3. Find the "Save to Haystack" button in the toolbar, or in the Extensions menu (the puzzle piece). Pin it to the toolbar if you like. Note any prompt Firefox shows about the add-on or about data collection, and what it says.
+4. **Check A, an https page.** Open `https://example.com/` in a new tab and click the button. Expect a new tab with Haystack's save form, which shows `https://example.com/` as read-only text after "Address:", and whose Title field holds "Example Domain". The popup closes by itself.
+5. **Check B, a sensitive URL.** Open `https://example.com/?access_token=manual-check` and click the button. Expect the popup to stay open with the heading "This page can't be saved" and an explanation about access tokens, and no new tab.
+6. **Check C, a page that cannot be scripted.** Open `https://addons.mozilla.org/en-US/firefox/` and click the button. Firefox does not let extensions run scripts on that site, so the popup falls back to the tab's own title. Expect a new tab with the save form, holding that page's address and its title. The popup closes by itself.
+7. **Check D, the popup closes.** In checks A and C, the popup is gone once the save form has opened. In check B it stays, because it is showing the reason.
+8. Record the Firefox version (Firefox menu, About Firefox) and one line per check, A to D, saying passed or what happened instead. Put them in the pull request, and in the Q4 result line.
 
 Stop the Worker with Ctrl+C.
 
