@@ -38,7 +38,15 @@ WEB_EXT_API_SECRET="op://<vault>/<item>/<secret field>" \
 op run -- vp run @haystack/extension#sign:firefox
 ```
 
-To get each reference, open the item in the 1Password app, open the field's menu, and choose **Copy Secret Reference**. If `op` asks which account to use, name the one `apps/worker/.env.schema` uses, before the `--`: `op run --account my.1password.com -- vp run @haystack/extension#sign:firefox`. The 1Password setup is the same as for local development: [the README's "Secrets" section](../README.md#secrets) lists it.
+To get each reference, open the item in the 1Password app, open the field's menu, and choose **Copy Secret Reference**. If `op` asks which account to use, add the one `apps/worker/.env.schema` uses with `--account`, before the `--`. The variables stay in front of `op run`, because they're set only for the command on that line:
+
+```sh
+WEB_EXT_API_KEY="op://<vault>/<item>/<issuer field>" \
+WEB_EXT_API_SECRET="op://<vault>/<item>/<secret field>" \
+op run --account my.1password.com -- vp run @haystack/extension#sign:firefox
+```
+
+The 1Password setup is the same as for local development: [the README's "Secrets" section](../README.md#secrets) lists it.
 
 The script does three things:
 
