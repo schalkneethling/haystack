@@ -118,4 +118,9 @@ vp -C apps/worker run e2e:install
 vp -C apps/extension run e2e:install
 ```
 
-On Linux, Playwright's Chromium also needs system libraries. CI installs them with `--with-deps` (`.github/workflows/quality.yml`).
+On Linux, Playwright's Chromium also needs system libraries, which the two scripts don't install. Run CI's commands from `.github/workflows/quality.yml` instead, which install each browser together with its libraries:
+
+```sh
+vp exec --filter @haystack/worker --fail-if-no-match playwright install --with-deps --only-shell chromium
+vp exec --filter @haystack/extension --fail-if-no-match playwright install --with-deps --no-shell chromium
+```
