@@ -14,7 +14,7 @@ The version is `version` in `apps/extension/package.json`, and the build copies 
 
 ## One-time setup (owner)
 
-1. **AMO:** sign in at https://addons.mozilla.org/developers/ and accept the distribution agreement. Then create API credentials at https://addons.mozilla.org/en-US/developers/addon/api/key/. The page gives a "JWT issuer" and a "JWT secret". Keep both in your password manager, never in the repository or a `.env` file in it.
+1. **AMO:** sign in at https://addons.mozilla.org/developers/ and accept the distribution agreement. Then create API credentials at https://addons.mozilla.org/en-US/developers/addon/api/key/. The page gives a "JWT issuer" and a "JWT secret". Keep both in 1Password, never in the repository or a `.env` file in it.
 2. **Chrome Web Store:** register at https://developer.chrome.com/docs/webstore/register. Registration is a one-time fee, which the dashboard shows. The account's email address cannot be changed afterwards. 2-Step Verification must be on before you can publish (https://developer.chrome.com/docs/webstore/program-policies/policies).
 
 ## Publishing a version
@@ -23,22 +23,36 @@ Start from a clean checkout of `main` that includes the version bump. Run `vp in
 
 ### Firefox
 
-web-ext reads the two credentials from `WEB_EXT_API_KEY` and `WEB_EXT_API_SECRET` (https://extensionworkshop.com/documentation/develop/web-ext-command-reference/). Paste them at the prompts `read -rs` gives, which don't show what you type, rather than into the command itself, because the shell saves every command line in its history file:
+web-ext reads the two credentials from environment variables (https://extensionworkshop.com/documentation/develop/web-ext-command-reference/). AMO's page and web-ext name them differently:
+
+| AMO's page | web-ext's variable   |
+| ---------- | -------------------- |
+| JWT issuer | `WEB_EXT_API_KEY`    |
+| JWT secret | `WEB_EXT_API_SECRET` |
+
+`op run`, the 1Password CLI's command for this, passes them only to the command it runs, and the processes that command starts, never to your shell. Each variable holds a secret reference, an `op://` address of the field in 1Password, rather than the credential. `op run` replaces each reference with its value, after you approve the access in the 1Password app, and runs the script with the values in its environment (https://www.1password.dev/cli/secrets-environment-variables). A reference isn't a secret, so it's fine in the shell's history, and the values never reach your shell, so nothing needs clearing afterwards. `op run` also tries to mask a value the script prints, but its help calls that best effort, not a guarantee.
 
 ```sh
-read -rs "WEB_EXT_API_KEY?JWT issuer: " && export WEB_EXT_API_KEY && echo
-read -rs "WEB_EXT_API_SECRET?JWT secret: " && export WEB_EXT_API_SECRET && echo
-vp run @haystack/extension#sign:firefox
-unset WEB_EXT_API_KEY WEB_EXT_API_SECRET
+WEB_EXT_API_KEY="op://<vault>/<item>/<issuer field>" \
+WEB_EXT_API_SECRET="op://<vault>/<item>/<secret field>" \
+op run -- vp run @haystack/extension#sign:firefox
 ```
 
-The `name?prompt` form is zsh's, the macOS default. In bash, use `read -rsp "JWT issuer: " WEB_EXT_API_KEY` instead.
+To get each reference, open the item in the 1Password app, open the field's menu, and choose **Copy Secret Reference**. If `op` asks which account to use, add the one `apps/worker/.env.schema` uses with `--account`, before the `--`. The variables stay in front of `op run`, because they're set only for the command on that line:
+
+```sh
+WEB_EXT_API_KEY="op://<vault>/<item>/<issuer field>" \
+WEB_EXT_API_SECRET="op://<vault>/<item>/<secret field>" \
+op run --account my.1password.com -- vp run @haystack/extension#sign:firefox
+```
+
+The 1Password setup is the same as for local development: [the README's "Secrets" section](../README.md#secrets) lists it.
 
 The script does three things:
 
 1. `package:source` stops if the checkout has any change (`check:clean`), then writes the last commit to `apps/extension/dist/packages/haystack-source.zip`, with `apps/extension/README.md` at its root. AMO requires the source of every version whose code was bundled or minified, unlisted ones included, with a README that explains how to build it (https://extensionworkshop.com/documentation/publish/source-code-submission/).
 2. `build:production` builds against `https://haystack.volume4-schalk.workers.dev`.
-3. `web-ext sign --channel unlisted` uploads the build and the source archive. Every version goes through automated validation, and signing "can take up to 24 hours" (https://extensionworkshop.com/documentation/publish/signing-and-distribution-overview/). web-ext waits 15 minutes, then downloads the signed `.xpi` file into `apps/extension/dist/packages`. If it times out, the version is still being signed: download the file from the version's page in the Developer Hub once it's ready. Don't run `sign:firefox` again for the same version. The rebuild deletes web-ext's record of the upload, so it would upload the version a second time, which AMO refuses.
+3. `web-ext sign --channel unlisted` uploads the build and the source archive. The first upload also creates the add-on on AMO, under the ID in the manifest, `bookmarks@schalkneethling.com`. Every version goes through automated validation, and signing "can take up to 24 hours" (https://extensionworkshop.com/documentation/publish/signing-and-distribution-overview/). web-ext waits 15 minutes, then downloads the signed `.xpi` file into `apps/extension/dist/packages`. If it times out, the version is still being signed: download the file from the version's page in the Developer Hub once it's ready. Don't run `sign:firefox` again for the same version. The rebuild deletes web-ext's record of the upload, so it would upload the version a second time, which AMO refuses.
 
 The signing is scripted because web-ext is Mozilla's own tool, it is maintained (10.8.0 was released on 2026-10-15), and it is already a dependency for linting.
 
@@ -70,7 +84,7 @@ The Chrome Web Store API could upload versions from a script, but it needs a Goo
 
 Remove a temporary or unpacked copy first, so the two copies don't both add a toolbar button.
 
-- **Firefox:** drag the signed `.xpi` file onto a Firefox window, or open it with File → Open File, and confirm the installation. The first time, write down what Firefox's prompt says about data collection, and check that it names the two kinds the manifest declares: browsing activity and website content.
+- **Firefox:** drag the signed `.xpi` file onto a Firefox window, or open it with File → Open File, and confirm the installation. Firefox's prompt should list, under "Required data collection", the two kinds the manifest declares. For 0.1.0 it said: "The developer says this extension collects: browsing activity, website content" (#116). If a new version's prompt says anything else, check whether the manifest's `data_collection_permissions` changed, because then the privacy policy may need to change with it. Leave "Allow extension to run in private windows" unchecked, because Haystack doesn't need it.
 - **Chrome:** open the item's store link, which the dashboard shows once it's published, and choose "Add to Chrome". Then pin the button from the Extensions menu.
 
 ## Updates
