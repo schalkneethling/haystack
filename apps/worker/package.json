@@ -26,7 +26,7 @@
   "dependencies": {
     "@haystack/schemas": "workspace:*",
     "drizzle-orm": "^0.45.4",
-    "entities": "^8.1.0",
+    "entities": "^9.0.0",
     "oauth4webapi": "^3.8.8",
     "valibot": "^1.5.0"
   },
